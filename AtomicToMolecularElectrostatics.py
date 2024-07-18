@@ -155,7 +155,7 @@ class AtomicToMolecularElectrostatics:
             list: List of interaction matrices as numpy arrays.
         """
         try:
-            interaction_matrices = []
+            interaction_matrices = list()
             for analysis_file in os.listdir(self.target_directory):
                 if analysis_file.endswith(".csv"):
                     full_path = os.path.join(self.target_directory, analysis_file)
@@ -175,8 +175,8 @@ class AtomicToMolecularElectrostatics:
         Returns:
             list: List of interaction matrices as numpy arrays.
         """
-        aggregated_energies_futures = []
-        interaction_matrices = []
+        aggregated_energies_futures = list()
+        interaction_matrices = list()
 
         with ProcessPoolExecutor() as executor:
             for analysis_file in os.listdir(self.target_directory):
@@ -195,7 +195,7 @@ class AtomicToMolecularElectrostatics:
                     logging.error(f"Error processing aggregated energies for file {analysis_file}: {e}")
                     raise
 
-        final_matrices = []
+        final_matrices = list()
         for future in as_completed(interaction_matrices):
             try:
                 final_matrices.append(future.result())
