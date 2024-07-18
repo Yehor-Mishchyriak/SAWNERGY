@@ -209,9 +209,6 @@ class AtomicToMolecularElectrostatics:
         """
         Process all CSV files in the target directory.
 
-        Args:
-            parallel (bool): Flag to determine whether to process files in parallel or sequentially. Defaults to True.
-
         Returns:
             list: List of interaction matrices as numpy arrays.
 
