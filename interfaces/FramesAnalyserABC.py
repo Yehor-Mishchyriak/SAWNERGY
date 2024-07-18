@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod, abstractstaticmethod
+from abc import ABC, abstractmethod
 
 class FramesAnalyserABC(ABC):
     """
@@ -33,7 +33,7 @@ class FramesAnalyserABC(ABC):
             output_directory (str, optional): The directory where output files will be saved.
         """
 
-    @abstractstaticmethod
+    @abstractmethod
     def _create_output_dir(output_directory: str = None) -> str:
         """
         Create a unique output directory based on the current time.
@@ -48,7 +48,7 @@ class FramesAnalyserABC(ABC):
             OSError: If there is an error creating the directory.
         """
 
-    @abstractstaticmethod
+    @abstractmethod
     def _analysis_function(topology_file: str, trajectory_file: str, cpptraj_analysis_command: str, cpptraj_output_type: str, output_directory: str):
         """
         Create the analysis function to run cpptraj with the given parameters.

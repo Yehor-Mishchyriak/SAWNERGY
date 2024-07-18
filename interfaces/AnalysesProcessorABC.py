@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod, abstractstaticmethod
+from abc import ABC, abstractmethod
 
 class AnalysesProcessorABC(ABC):
     """
@@ -19,7 +19,7 @@ class AnalysesProcessorABC(ABC):
             output_directory (str, optional): The directory to save the output CSV files.
         """
 
-    @abstractstaticmethod
+    @abstractmethod
     def _create_output_dir(output_directory: str = None) -> str:
         """
         Create a unique output directory based on the current time.
