@@ -4,7 +4,7 @@ import os
 import logging
 import shutil
 from pathlib import Path
-from typing import Union, Callable, Dict
+from typing import Union, Dict
 from datetime import datetime
 from subprocess import run, CalledProcessError
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -24,7 +24,8 @@ class FramesAnalyzer:
         batch_size (int): The number of frames to process in each batch.
         number_batches (int): The number of full batches to process.
         residual_frames (int): The number of frames remaining after full batches are processed.
-        _analyse (Callable): The function to run the cpptraj analysis.
+        cpptraj_analysis_command (str): The cpptraj command to be executed for analysis.
+        cpptraj_output_type (str): The type of output expected from cpptraj.
     """
 
     def __init__(self, topology_file: Union[str, Path], trajectory_file: Union[str, Path], number_frames: int,
@@ -45,12 +46,15 @@ class FramesAnalyzer:
             output_directory (Union[str, Path], optional): The directory where output files will be saved. Defaults to the current working directory.
         """
         try:
-            self.output_directory = self._create_output_dir(output_directory)
-            self._analyse = self._analysis_function(topology_file, trajectory_file, cpptraj_analysis_command, cpptraj_output_type, self.output_directory)
+            self.topology_file = topology_file
+            self.trajectory_file = trajectory_file
             self.number_frames = number_frames
+            self.cpptraj_analysis_command = cpptraj_analysis_command
+            self.cpptraj_output_type = cpptraj_output_type
             self.start_frame = start_frame
             self.batch_size = number_frames if in_one_batch else batch_size
             self.number_batches, self.residual_frames = divmod(self.number_frames, self.batch_size)
+            self.output_directory = self._create_output_dir(output_directory)
         except Exception as e:
             logging.error(f"Error initializing FramesAnalyzer: {e}")
             raise
@@ -79,36 +83,27 @@ class FramesAnalyzer:
             logging.error(f"Error creating output directory: {e}")
             raise
 
-    @staticmethod
-    def _analysis_function(topology_file: Union[str, Path], trajectory_file: Union[str, Path],
-                           cpptraj_analysis_command: str, cpptraj_output_type: str, output_directory: Path) -> Callable:
+    def _run_cpptraj(self, start_frame: int, end_frame: int) -> None:
         """
-        Create the analysis function to run cpptraj with the given parameters.
+        Run cpptraj with the given parameters.
 
         Args:
-            topology_file (Union[str, Path]): Path to the topology file.
-            trajectory_file (Union[str, Path]): Path to the trajectory file.
-            cpptraj_analysis_command (str): The cpptraj command to be executed for analysis.
-            cpptraj_output_type (str): The type of output expected from cpptraj.
-            output_directory (Path): The directory to save output files.
+            start_frame (int): The starting frame for cpptraj analysis.
+            end_frame (int): The ending frame for cpptraj analysis.
 
-        Returns:
-            Callable: A function to run cpptraj analysis for given frame ranges.
+        Raises:
+            CalledProcessError: If cpptraj command fails.
         """
-        def inner(start_frame: int, end_frame: int) -> None:
-            nonlocal topology_file, trajectory_file, cpptraj_analysis_command, cpptraj_output_type, output_directory
-            try:
-                output_file_path = output_directory / f"{start_frame}-{end_frame}.dat"
-                command = f"""echo \"parm {topology_file}
-                        trajin {trajectory_file} {start_frame} {end_frame}
-                        {cpptraj_analysis_command} {cpptraj_output_type} {output_file_path} run\" | cpptraj"""
-                run(command, check=True, shell=True)
-                logging.info(f"Successfully processed frames {start_frame} to {end_frame}")
-            except CalledProcessError as e:
-                logging.error(f"Error running cpptraj for frames {start_frame} to {end_frame}: {e}")
-                raise
-
-        return inner
+        try:
+            output_file_path = self.output_directory / f"{start_frame}-{end_frame}.dat"
+            command = f"""echo \"parm {self.topology_file}
+                        trajin {self.trajectory_file} {start_frame} {end_frame}
+                        {self.cpptraj_analysis_command} {self.cpptraj_output_type} {output_file_path} run\" | cpptraj"""
+            run(command, check=True, shell=True)
+            logging.info(f"Successfully processed frames {start_frame} to {end_frame}")
+        except CalledProcessError as e:
+            logging.error(f"Error running cpptraj for frames {start_frame} to {end_frame}: {e}")
+            raise
 
     def _sequential_processor(self) -> Path:
         """
@@ -121,12 +116,12 @@ class FramesAnalyzer:
         current_end_frame = self.start_frame + self.batch_size - 1
 
         for _ in range(self.number_batches):
-            self._analyse(current_start_frame, current_end_frame)
+            self._run_cpptraj(current_start_frame, current_end_frame)
             current_start_frame += self.batch_size
             current_end_frame += self.batch_size
 
         if self.residual_frames > 0:
-            self._analyse(current_start_frame, current_start_frame + self.residual_frames - 1)
+            self._run_cpptraj(current_start_frame, current_start_frame + self.residual_frames - 1)
 
         return self.output_directory
 
@@ -143,12 +138,12 @@ class FramesAnalyzer:
         tasks = []
         with ProcessPoolExecutor() as executor:
             for _ in range(self.number_batches):
-                tasks.append(executor.submit(self._analyse, current_start_frame, current_end_frame))
+                tasks.append(executor.submit(self._run_cpptraj, current_start_frame, current_end_frame))
                 current_start_frame += self.batch_size
                 current_end_frame += self.batch_size
 
             if self.residual_frames > 0:
-                tasks.append(executor.submit(self._analyse, current_start_frame, current_start_frame + self.residual_frames - 1))
+                tasks.append(executor.submit(self._run_cpptraj, current_start_frame, current_start_frame + self.residual_frames - 1))
 
             for future in as_completed(tasks):
                 try:
