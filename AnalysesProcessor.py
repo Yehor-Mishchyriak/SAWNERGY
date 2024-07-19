@@ -7,7 +7,7 @@ import logging
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class ElectrostaticAnalysesProcessor(AnalysesProcessorABC):
+class AnalysesProcessor(AnalysesProcessorABC):
     """
     A class to process analysis files, convert them to CSV format, and save them to an output directory.
 
@@ -18,7 +18,7 @@ class ElectrostaticAnalysesProcessor(AnalysesProcessorABC):
 
     def __init__(self, target_directory: str = None, output_directory=None) -> None:
         """
-        Initialize the ElectrostaticAnalysesProcessor with the target directory.
+        Initialize the AnalysesProcessor with the target directory.
 
         Args:
             target_directory (str): The directory containing the analysis files.
@@ -183,7 +183,7 @@ class ElectrostaticAnalysesProcessor(AnalysesProcessorABC):
             with open(output_file_path, "w") as output_file:
                 output_file.write(header)
                 for line in lines:
-                    parsed_line = ElectrostaticAnalysesProcessor._parse_line(line)
+                    parsed_line = AnalysesProcessor._parse_line(line)
                     output_file.write(parsed_line)
                 logging.info(f"Written CSV file to: {output_file_path}")
         except IOError as e:
@@ -202,8 +202,8 @@ class ElectrostaticAnalysesProcessor(AnalysesProcessorABC):
             str: The parsed line in CSV format.
         """
         res_atm_A, _, _, res_atm_B, _, _, _, energy = line.split()
-        res_A, res_A_index = ElectrostaticAnalysesProcessor._split_residue(res_atm_A)
-        res_B, res_B_index = ElectrostaticAnalysesProcessor._split_residue(res_atm_B)
+        res_A, res_A_index = AnalysesProcessor._split_residue(res_atm_A)
+        res_B, res_B_index = AnalysesProcessor._split_residue(res_atm_B)
         return f"{res_A},{res_A_index},{res_B},{res_B_index},{energy}\n"
 
     @staticmethod
@@ -226,7 +226,7 @@ def main():
     """
     Main function to execute the processor.
     """
-    eap = ElectrostaticAnalysesProcessor(target_directory="/Users/yehormishchyriak/Desktop/research_project/test_set", output_directory="/Users/yehormishchyriak/Desktop/research_project/output_files")
+    eap = AnalysesProcessor(target_directory="/Users/yehormishchyriak/Desktop/research_project/test_set", output_directory="/Users/yehormishchyriak/Desktop/research_project/output_files")
     eap.process_target_directory()
 
 

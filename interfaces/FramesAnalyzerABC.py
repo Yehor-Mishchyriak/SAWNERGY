@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-class FramesAnalyserABC(ABC):
+class FramesAnalyzerABC(ABC):
     """
     An abstract base class for processing frames from topology and trajectory files using cpptraj.
 
