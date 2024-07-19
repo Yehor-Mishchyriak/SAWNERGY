@@ -1,3 +1,5 @@
+#!/usr/bin/env python3.9
+
 import os
 import logging
 import shutil
