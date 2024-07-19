@@ -52,6 +52,7 @@ class FramesElectrostaticsAnalyser(FramesAnalyserABC):
 
     @staticmethod
     def _create_output_dir(output_directory: str = None) -> str:
+        # output directory must always be Processed_Frames_{%m-%d-%Y-%H-%M-%S}
         """
         Create a unique output directory based on the current time.
 
@@ -67,7 +68,7 @@ class FramesElectrostaticsAnalyser(FramesAnalyserABC):
         try:
             current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
             root_directory = output_directory if output_directory else os.getcwd()
-            output_directory = os.path.join(root_directory, f"OUTPUT_{current_time}")
+            output_directory = os.path.join(root_directory, f"Processed_Frames_{current_time}")
             os.makedirs(output_directory, exist_ok=True)
             return output_directory
         except OSError as e:
@@ -76,6 +77,7 @@ class FramesElectrostaticsAnalyser(FramesAnalyserABC):
 
     @staticmethod
     def _analysis_function(topology_file: str, trajectory_file: str, cpptraj_analysis_command: str, cpptraj_output_type: str, output_directory: str):
+        # output files must always be ({start_frame}-{end_frame}).dat
         """
         Create the analysis function to run cpptraj with the given parameters.
 
@@ -148,6 +150,7 @@ class FramesElectrostaticsAnalyser(FramesAnalyserABC):
         return self.output_directory
 
     def analyse_frames(self) -> str:
+        # returns Processed_Frames_{%m-%d-%Y-%H-%M-%S} directory where ({start_frame}-{end_frame}).dat files are stored
         """
         Analyse the frames by processing them in batches.
 

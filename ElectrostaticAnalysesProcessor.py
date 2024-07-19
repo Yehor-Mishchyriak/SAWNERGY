@@ -44,7 +44,7 @@ class ElectrostaticAnalysesProcessor(AnalysesProcessorABC):
         try:
             current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
             root_directory = output_directory if output_directory else os.getcwd()
-            output_directory = os.path.join(root_directory, f"OUTPUT_{current_time}")
+            output_directory = os.path.join(root_directory, f"Raw_Electrostatics_{current_time}")
             os.makedirs(output_directory, exist_ok=True)
             logging.info(f"Created output directory: {output_directory}")
             return output_directory
@@ -123,6 +123,7 @@ class ElectrostaticAnalysesProcessor(AnalysesProcessorABC):
         return self.output_directory
 
     def process_target_directory(self) -> str:
+        # returns Raw_Electrostatics_{"%m-%d-%Y-%H-%M-%S"} directory where ({start_frame}-{end_frame}).csv files are stored
         """
         Process all .dat files in the target directory and convert them to CSV format.
 

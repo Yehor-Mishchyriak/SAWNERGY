@@ -47,12 +47,10 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
         try:
             current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
             root_directory = output_directory if output_directory else os.getcwd()
-            output_directory = os.path.join(root_directory, f"OUTPUT_{current_time}")
+            output_directory = os.path.join(root_directory, f"Probabilities_{current_time}")
             os.makedirs(output_directory, exist_ok=True)
-            probability_matrices_directory = os.path.join(output_directory, "probability_matrices")
-            os.makedirs(probability_matrices_directory, exist_ok=True)
-            logging.info(f"Created output directory: {probability_matrices_directory}")
-            return probability_matrices_directory
+            logging.info(f"Created output directory: {output_directory}")
+            return output_directory
         except OSError as e:
             logging.error(f"Error creating output directory: {e}")
             raise
@@ -90,7 +88,7 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
                     interaction_matrix = np.load(path)
                     probability_matrix = self.convert_to_probabilities(interaction_matrix)
                     probability_matrices.append(probability_matrix)
-                    output_file_name = f"probabilities_from_{npy_file.replace('.npy', '')}.npy"
+                    output_file_name = npy_file.replace("interactions", "probabilities")
                     if zip:
                         output_directory_name = f"probabilities_from_{npy_file.replace('.npy', '')}"
                         save_to = self.match_and_save(output_directory_name)
@@ -129,7 +127,7 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
             try:
                 probability_matrix = future.result()
                 probability_matrices.append(probability_matrix)
-                output_file_name = f"probabilities_from_{npy_file.replace('.npy', '')}.npy"
+                output_file_name = npy_file.replace("interactions", "probabilities")
 
                 if zip:
                     output_directory_name = f"probabilities_from_{npy_file.replace('.npy', '')}"
@@ -149,6 +147,10 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
         return probability_matrices
 
     def process_target_directory(self, zip_interactions_and_probs=False) -> list:
+        # output dir stores: probabilities_matrix_residue_level_({start_frame}-{end_frame}).npy
+        # and potentially probabilities_from_interactions_matrix_residue_level_({start_frame}-{end_frame}) folders
+        # each folder having probabilities_matrix_residue_level_({start_frame}-{end_frame}).npy 
+        # and interactions_matrix_residue_level_({start_frame}-{end_frame}).npy files
         """
         Process the target directory of interactions matrices.
 

@@ -55,7 +55,7 @@ class AtomicToMolecularElectrostatics:
         try:
             current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
             root_directory = output_directory if output_directory else os.getcwd()
-            output_directory = os.path.join(root_directory, f"OUTPUT_{current_time}")
+            output_directory = os.path.join(root_directory, f"Residue_Level_{current_time}")
             aggregated_energies_directory = os.path.join(output_directory, "aggregated_energies")
             interaction_matrices_directory = os.path.join(output_directory, "interaction_matrices")
 
@@ -95,7 +95,7 @@ class AtomicToMolecularElectrostatics:
             aggregated = df.groupby("pair")["energy"].sum().reset_index()
 
             if self.save_output:
-                output_file = f"aggregated_{os.path.basename(input_file)}"
+                output_file = f"residue_level_{os.path.basename(input_file)}"
                 aggregated.to_csv(os.path.join(self.aggregated_energies_directory, output_file), index=False)
                 logging.info(f"Aggregated energies saved to {output_file}")
 
@@ -138,11 +138,13 @@ class AtomicToMolecularElectrostatics:
 
             if self.save_output:
                 number_existing_matrices = len(os.listdir(self.interaction_matrices_directory))
-                output_file_name = f"interaction_matrix_{number_existing_matrices + 1}.npy"
+                if output_file_name is None:
+                    output_file_name = f"interaction_matrix_{number_existing_matrices + 1}.npy"
                 np.save(os.path.join(self.interaction_matrices_directory, output_file_name), matrix)
                 logging.info(f"Interaction matrix saved to {output_file_name}")
 
             return matrix
+
         except Exception as e:
             logging.error(f"Error converting DataFrame to numpy array: {e}")
             raise
@@ -160,7 +162,10 @@ class AtomicToMolecularElectrostatics:
                 if analysis_file.endswith(".csv"):
                     full_path = os.path.join(self.target_directory, analysis_file)
                     aggregated_energies = self.aggregate_energies(full_path)
-                    output_file = analysis_file.replace(".csv", "") if self.save_output else None
+                    if self.save_output:
+                        output_file = f"interactions_matrix_{analysis_file.replace(".csv", "")}"
+                    else:
+                        output_file = None
                     interaction_matrices.append(self.convert_to_numpy(aggregated_energies, output_file_name=output_file))
             logging.info(f"Processed all .csv files sequentially in directory: {self.target_directory}")
             return interaction_matrices
@@ -189,7 +194,10 @@ class AtomicToMolecularElectrostatics:
             for future, analysis_file in aggregated_energies_futures:
                 try:
                     aggregated_energies = future.result()
-                    output_file = analysis_file.replace(".csv", "") if self.save_output else None
+                    if self.save_output:
+                        output_file = f"interactions_matrix_{analysis_file.replace(".csv", "")}"
+                    else:
+                        output_file = None
                     interaction_matrices.append(executor.submit(self.convert_to_numpy, aggregated_energies, output_file_name=output_file))
                 except Exception as e:
                     logging.error(f"Error processing aggregated energies for file {analysis_file}: {e}")
@@ -206,6 +214,9 @@ class AtomicToMolecularElectrostatics:
         return final_matrices
 
     def process_target_directory(self) -> list:
+        # output dir stores two folders: aggregated_energies and interaction_matrices
+        # aggregated_energies stores residue_level_({start_frame}-{end_frame}).csv
+        # interaction_matrices stores interactions_matrix_residue_level_({start_frame}-{end_frame}).npy
         """
         Process all CSV files in the target directory.
 
