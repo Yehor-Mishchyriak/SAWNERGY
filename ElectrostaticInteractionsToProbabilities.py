@@ -1,4 +1,5 @@
 import os
+from shutil import copy
 from datetime import datetime
 import numpy as np
 from interfaces.InteractionsToProbabilitiesABC import InteractionsToProbabilitiesABC
@@ -69,7 +70,12 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
         """
         return util.transition_probs_from_interactions(interactions_matrix)
 
-    def __sequential_processor(self) -> list:
+    def match_and_save(self, dir: str) -> str:
+        path = os.path.join(self.output_directory, dir)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def __sequential_processor(self, zip=False) -> list:
         """
         Process the target directory sequentially to convert interaction matrices to probability matrices.
 
@@ -85,14 +91,23 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
                     probability_matrix = self.convert_to_probabilities(interaction_matrix)
                     probability_matrices.append(probability_matrix)
                     output_file_name = f"probabilities_from_{npy_file.replace('.npy', '')}.npy"
-                    np.save(os.path.join(self.output_directory, output_file_name), probability_matrix)
+                    if zip:
+                        output_directory_name = f"probabilities_from_{npy_file.replace('.npy', '')}"
+                        save_to = self.match_and_save(output_directory_name)
+                        # save probabilities matrix
+                        np.save(os.path.join(save_to, output_file_name), probability_matrix)
+                        # copy interactions matrix
+                        copy(npy_file, save_to)
+                    else:
+                        # save probabilities matrix
+                        np.save(os.path.join(self.output_directory, output_file_name), probability_matrix)
             logging.info(f"Sequential processing complete. Processed {len(probability_matrices)} files.")
             return probability_matrices
         except Exception as e:
             logging.error(f"Error in sequential processing: {e}")
             raise
 
-    def __parallel_processor(self) -> list:
+    def __parallel_processor(self, zip=False) -> list:
         """
         Process the target directory in parallel to convert interaction matrices to probability matrices.
 
@@ -115,7 +130,18 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
                 probability_matrix = future.result()
                 probability_matrices.append(probability_matrix)
                 output_file_name = f"probabilities_from_{npy_file.replace('.npy', '')}.npy"
-                np.save(os.path.join(self.output_directory, output_file_name), probability_matrix)
+
+                if zip:
+                    output_directory_name = f"probabilities_from_{npy_file.replace('.npy', '')}"
+                    save_to = self.match_and_save(output_directory_name)
+                    # save probabilities matrix
+                    np.save(os.path.join(save_to, output_file_name), probability_matrix)
+                    # copy interactions matrix
+                    copy(npy_file, save_to)
+                else:
+                    # save probabilities matrix
+                    np.save(os.path.join(self.output_directory, output_file_name), probability_matrix)
+
             except Exception as e:
                 logging.error(f"Error processing file {npy_file}: {e}")
                 raise

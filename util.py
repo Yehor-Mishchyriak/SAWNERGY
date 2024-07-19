@@ -111,6 +111,13 @@ class OneIndexedNpArray:
         """
         return repr(self.array)
 
+def extract_frames_range(file_name):
+    from_ = file_name.index("(") + 1
+    to_ = file_name.index(")")
+    frames = file_name[from_:to_]
+    start_frame, end_frame = frames.split("-")
+    return int(start_frame), int(end_frame)
+
 
 def main():
     pass

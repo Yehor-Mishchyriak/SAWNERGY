@@ -95,7 +95,7 @@ class FramesElectrostaticsAnalyser(FramesAnalyserABC):
                 command = (
                     f"echo \"parm {topology_file} trajin {trajectory_file} "
                     f"{start_frame} {end_frame} {cpptraj_analysis_command} "
-                    f"{cpptraj_output_type} {output_directory}/{start_frame}_{end_frame}.dat run\" | cpptraj"
+                    f"{cpptraj_output_type} {output_directory}/({start_frame}-{end_frame}).dat run\" | cpptraj"
                 )
                 run(command, check=True, shell=True)
             except CalledProcessError as e:
