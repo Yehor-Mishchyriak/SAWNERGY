@@ -148,7 +148,7 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
         logging.info(f"Parallel processing complete. Processed {len(probability_matrices)} files.")
         return probability_matrices
 
-    def process_target_directory(self) -> list:
+    def process_target_directory(self, zip_interactions_and_probs=False) -> list:
         """
         Process the target directory of interactions matrices.
 
@@ -156,9 +156,9 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
             list: List of converted probability matrices.
         """
         if __name__ == "__main__":
-            result = self.__parallel_processor()
+            result = self.__parallel_processor(zip_interactions_and_probs)
         else:
-            result = self.__sequential_processor()
+            result = self.__sequential_processor(zip_interactions_and_probs)
         return result
 
 

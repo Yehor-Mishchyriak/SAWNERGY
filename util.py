@@ -118,7 +118,11 @@ def extract_frames_range(file_name):
     start_frame, end_frame = frames.split("-")
     return int(start_frame), int(end_frame)
 
-
+def default_match(file_name1: str, file_name2: str) -> bool:
+    frames_range1 = extract_frames_range(file_name1)
+    frames_range2 = extract_frames_range(file_name2)
+    return frames_range1 == frames_range2
+    
 def main():
     pass
 
