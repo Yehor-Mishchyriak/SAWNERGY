@@ -6,13 +6,12 @@ from typing import Union, Callable, Dict
 from datetime import datetime
 from subprocess import run, CalledProcessError
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from Modeling_Allosteric_Signals.interfaces.FramesAnalyzerABC import FramesAnalyzerABC
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-class FramesAnalyzer(FramesAnalyzerABC):
+class FramesAnalyzer:
     """
     A class to process frames from topology and trajectory files using cpptraj.
 
