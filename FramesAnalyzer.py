@@ -112,17 +112,27 @@ class FramesAnalyzer:
         Returns:
             Path: The directory where the output files are saved.
         """
+        logging.info("Starting sequential processing")
         current_start_frame = self.start_frame
         current_end_frame = self.start_frame + self.batch_size - 1
 
         for _ in range(self.number_batches):
-            self._run_cpptraj(current_start_frame, current_end_frame)
+            try:
+                self._run_cpptraj(current_start_frame, current_end_frame)
+                logging.info(f"Processed frames {current_start_frame} to {current_end_frame} sequentially")
+            except Exception as e:
+                logging.error(f"Error processing frames {current_start_frame} to {current_end_frame} sequentially: {e}")
             current_start_frame += self.batch_size
             current_end_frame += self.batch_size
 
         if self.residual_frames > 0:
-            self._run_cpptraj(current_start_frame, current_start_frame + self.residual_frames - 1)
+            try:
+                self._run_cpptraj(current_start_frame, current_start_frame + self.residual_frames - 1)
+                logging.info(f"Processed residual frames {current_start_frame} to {current_start_frame + self.residual_frames - 1} sequentially")
+            except Exception as e:
+                logging.error(f"Error processing residual frames {current_start_frame} to {current_start_frame + self.residual_frames - 1} sequentially: {e}")
 
+        logging.info("Sequential processing complete")
         return self.output_directory
 
     def _parallel_processor(self) -> Path:
@@ -132,6 +142,7 @@ class FramesAnalyzer:
         Returns:
             Path: The directory where the output files are saved.
         """
+        logging.info("Starting parallel processing")
         current_start_frame = self.start_frame
         current_end_frame = self.start_frame + self.batch_size - 1
 
@@ -148,10 +159,11 @@ class FramesAnalyzer:
             for future in as_completed(tasks):
                 try:
                     future.result()
-                    logging.info("Batch processed successfully.")
+                    logging.info("Batch processed successfully in parallel")
                 except Exception as e:
-                    logging.error(f"Error processing batch: {e}")
+                    logging.error(f"Error processing batch in parallel: {e}")
 
+        logging.info("Parallel processing complete")
         return self.output_directory
 
     def analyse_frames(self) -> Path:
@@ -162,11 +174,11 @@ class FramesAnalyzer:
             Path: The directory where the output files are saved.
         """
         if __name__ == "__main__":
-            output_directory = self._parallel_processor()
+            logging.info("Using parallel processing")
+            return self._parallel_processor()
         else:
-            output_directory = self._sequential_processor()
-
-        return output_directory
+            logging.info("Using sequential processing")
+            return self._sequential_processor()
 
     @staticmethod
     def extract_residues_from_pdb(pdb_file: str, save_output: bool = False, output_directory: Union[str, Path] = None) -> Dict[int, str]:
