@@ -98,7 +98,7 @@ class FramesAnalyzer:
             output_file_path = self.output_directory / f"{start_frame}-{end_frame}.dat"
             command = f"""echo \"parm {self.topology_file}
                         trajin {self.trajectory_file} {start_frame} {end_frame}
-                        {self.cpptraj_analysis_command} {self.cpptraj_output_type} {output_file_path} run\" | cpptraj"""
+                        {self.cpptraj_analysis_command} {self.cpptraj_output_type} {output_file_path} run\" | cpptraj > /dev/null 2>&1"""
             run(command, check=True, shell=True)
             logging.info(f"Successfully processed frames {start_frame} to {end_frame}")
         except CalledProcessError as e:
