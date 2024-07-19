@@ -3,8 +3,7 @@
 import os
 import logging
 import shutil
-from pathlib import Path
-from typing import Union, Dict
+from typing import Dict
 from datetime import datetime
 from subprocess import run, CalledProcessError
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -17,8 +16,11 @@ class FramesAnalyzer:
     """
     A class to process frames from topology and trajectory files using cpptraj.
 
+    * The output data is of the following format:
+    * "Processed_Frames_<time when created>" dir that contains "i-j.dat" files, where i is the start frame and j is the end frame indices
+
     Attributes:
-        output_directory (Path): The directory where output files will be saved.
+        output_directory (str): The directory where output files will be saved.
         number_frames (int): Total number of frames to be processed.
         start_frame (int): The starting frame for processing.
         batch_size (int): The number of frames to process in each batch.
@@ -28,22 +30,22 @@ class FramesAnalyzer:
         cpptraj_output_type (str): The type of output expected from cpptraj.
     """
 
-    def __init__(self, topology_file: Union[str, Path], trajectory_file: Union[str, Path], number_frames: int,
+    def __init__(self, topology_file: str, trajectory_file: str, number_frames: int,
                  cpptraj_analysis_command: str, cpptraj_output_type: str, start_frame: int = 1,
-                 batch_size: int = 1, in_one_batch: bool = False, output_directory: Union[str, Path] = None) -> None:
+                 batch_size: int = 1, in_one_batch: bool = False, output_directory: str = None) -> None:
         """
         Initialize the FramesAnalyzer with the given parameters and set up the output directory.
 
         Args:
-            topology_file (Union[str, Path]): Path to the topology file.
-            trajectory_file (Union[str, Path]): Path to the trajectory file.
+            topology_file (str): Path to the topology file.
+            trajectory_file (str): Path to the trajectory file.
             number_frames (int): Total number of frames to process.
             cpptraj_analysis_command (str): The cpptraj command to be executed for analysis.
             cpptraj_output_type (str): The type of output expected from cpptraj.
             start_frame (int, optional): The starting frame for processing. Defaults to 1.
             batch_size (int, optional): The number of frames to process in each batch. Defaults to 1.
             in_one_batch (bool, optional): Process all frames in one batch. Defaults to False.
-            output_directory (Union[str, Path], optional): The directory where output files will be saved. Defaults to the current working directory.
+            output_directory (str, optional): The directory where output files will be saved. Defaults to the current working directory.
         """
         try:
             self.topology_file = topology_file
@@ -60,15 +62,15 @@ class FramesAnalyzer:
             raise
 
     @staticmethod
-    def _create_output_dir(output_directory: Union[str, Path] = None) -> Path:
+    def _create_output_dir(output_directory: str = None) -> str:
         """
         Create a unique output directory based on the current time.
 
         Args:
-            output_directory (Union[str, Path], optional): The base directory to create the output directory in.
+            output_directory (str, optional): The base directory to create the output directory in.
 
         Returns:
-            Path: The path to the created output directory.
+            str: The path to the created output directory.
 
         Raises:
             OSError: If there is an error creating the directory.
@@ -78,7 +80,8 @@ class FramesAnalyzer:
             root_directory = output_directory if output_directory else os.getcwd()
             output_directory = os.path.join(root_directory, f"Processed_Frames_{current_time}")
             os.makedirs(output_directory, exist_ok=True)
-            return Path(output_directory)
+            logging.info(f"Created output directory: {output_directory}")
+            return output_directory
         except OSError as e:
             logging.error(f"Error creating output directory: {e}")
             raise
@@ -95,7 +98,7 @@ class FramesAnalyzer:
             CalledProcessError: If cpptraj command fails.
         """
         try:
-            output_file_path = self.output_directory / f"{start_frame}-{end_frame}.dat"
+            output_file_path = os.path.join(self.output_directory, f"{start_frame}-{end_frame}.dat")
             command = f"""echo \"parm {self.topology_file}
                         trajin {self.trajectory_file} {start_frame} {end_frame}
                         {self.cpptraj_analysis_command} {self.cpptraj_output_type} {output_file_path} run\" | cpptraj > /dev/null 2>&1"""
@@ -105,12 +108,12 @@ class FramesAnalyzer:
             logging.error(f"Error running cpptraj for frames {start_frame} to {end_frame}: {e}")
             raise
 
-    def _sequential_processor(self) -> Path:
+    def _sequential_processor(self) -> str:
         """
         Process the frames sequentially in batches.
 
         Returns:
-            Path: The directory where the output files are saved.
+            str: The directory where the output files are saved.
         """
         logging.info("Starting sequential processing")
         current_start_frame = self.start_frame
@@ -135,12 +138,12 @@ class FramesAnalyzer:
         logging.info("Sequential processing complete")
         return self.output_directory
 
-    def _parallel_processor(self) -> Path:
+    def _parallel_processor(self) -> str:
         """
         Process the frames in parallel using a process pool.
 
         Returns:
-            Path: The directory where the output files are saved.
+            str: The directory where the output files are saved.
         """
         logging.info("Starting parallel processing")
         current_start_frame = self.start_frame
@@ -166,12 +169,12 @@ class FramesAnalyzer:
         logging.info("Parallel processing complete")
         return self.output_directory
 
-    def analyse_frames(self) -> Path:
+    def analyse_frames(self) -> str:
         """
         Analyse the frames by processing them in batches.
 
         Returns:
-            Path: The directory where the output files are saved.
+            str: The directory where the output files are saved.
         """
         if __name__ == "__main__":
             logging.info("Using parallel processing")
@@ -181,14 +184,14 @@ class FramesAnalyzer:
             return self._sequential_processor()
 
     @staticmethod
-    def extract_residues_from_pdb(pdb_file: str, save_output: bool = False, output_directory: Union[str, Path] = None) -> Dict[int, str]:
+    def extract_residues_from_pdb(pdb_file: str, save_output: bool = False, output_directory: str = None) -> Dict[int, str]:
         """
         Extract residues from a PDB file.
 
         Args:
             pdb_file (str): Path to the PDB file.
             save_output (bool, optional): Whether to save the output to a file. Defaults to False.
-            output_directory (Union[str, Path], optional): Directory to save the output file. Defaults to None.
+            output_directory (str, optional): Directory to save the output file. Defaults to None.
 
         Returns:
             Dict[int, str]: A dictionary of residue indices and residue names.
@@ -221,7 +224,7 @@ class FramesAnalyzer:
         if save_output:
             if output_directory is None:
                 output_directory = os.getcwd()
-            output_file_path = os.path.join(output_directory, f"{Path(pdb_file).stem}_residues.py")
+            output_file_path = os.path.join(output_directory, f"{os.path.splitext(os.path.basename(pdb_file))[0]}_residues.py")
             try:
                 with open(output_file_path, 'w') as output_file:
                     output_file.write(f"residues = {residues}")
