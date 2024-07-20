@@ -210,7 +210,8 @@ class FramesAnalyzer:
                     try:
                         _, _, _, residue, index, _, _, _, _, _ = line.split()
                         residue = residue.strip()
-                        index = int(index.strip())
+                        # note need to subtract 1 to keep it zero-indexed to match np.array matrices
+                        index = int(index.strip()) - 1
                         residues[index] = residue
                     except ValueError:  # in case the line being parsed is of a different format
                         continue
