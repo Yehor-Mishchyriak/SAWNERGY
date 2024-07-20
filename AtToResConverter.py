@@ -273,7 +273,6 @@ def main():
     try:
         at_to_res_converter = AtToResConverter(
             target_directory=args.target_directory,
-            save_output=True,
             output_directory=args.output_directory
         )
         at_to_res_converter.process_target_directory()

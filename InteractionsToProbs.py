@@ -1,8 +1,9 @@
+#!/usr/bin/env python3
+
 import os
 from shutil import copy
 from datetime import datetime
 import numpy as np
-from interfaces.InteractionsToProbabilitiesABC import InteractionsToProbabilitiesABC
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import logging
 import util
@@ -10,24 +11,30 @@ import util
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
+class InteractionsToProbs:
     """
     A class to process interaction matrices, convert them to probability matrices, and save them to an output directory.
 
     Attributes:
-        target_directory (str): The directory containing the interaction matrix files.
-        output_directory (str): The directory to save the output probability matrix files.
+        target_directory (str): The directory containing the interaction matrices.
+        output_directory (str): The directory to save the output pairs of interaction and probability matrices.
     """
 
-    def __init__(self, target_directory: str = None, output_directory: str = None) -> None:
+    def __init__(self, target_directory: str = None, save_output: bool = True, output_directory: str = None) -> None:
         """
-        Initialize the ElectrostaticInteractionsToProbabilities with the target and output directories.
+        Initialize the InteractionsToProbs with the target and output directories.
+
+        The output data is of the following format:
+        - "Paired_Probs_Energies_<time_when_created>" dir that contains "<i>-<j>" dirs;
+        - each "<i>-<j>" dir contains two files: probabilities_matrix_residue_level_(<i>-<j>).npy and interactions_matrix_residue_level_(<i>-<j>).npy,
+        - where i is the start frame and j is the end frame indices;
 
         Args:
             target_directory (str, optional): The directory containing the interaction matrix files.
             output_directory (str, optional): The directory to save the output probability matrix files.
         """
         self.target_directory = target_directory if target_directory else os.getcwd()
+        self.save_output = save_output
         self.output_directory = self._create_output_dir(output_directory)
 
     @staticmethod
@@ -47,7 +54,7 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
         try:
             current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
             root_directory = output_directory if output_directory else os.getcwd()
-            output_directory = os.path.join(root_directory, f"Probabilities_{current_time}")
+            output_directory = os.path.join(root_directory, f"Paired_Probs_Energies{current_time}")
             os.makedirs(output_directory, exist_ok=True)
             logging.info(f"Created output directory: {output_directory}")
             return output_directory
@@ -68,12 +75,12 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
         """
         return util.transition_probs_from_interactions(interactions_matrix)
 
-    def match_and_save(self, dir: str) -> str:
-        path = os.path.join(self.output_directory, dir)
-        os.makedirs(path, exist_ok=True)
-        return path
+    def _create_container_dir(self, container_dir_name: str) -> str:
+        container_dir = os.path.join(self.output_directory, container_dir_name)
+        os.makedirs(container_dir, exist_ok=True)
+        return container_dir
 
-    def __sequential_processor(self, zip=False) -> list:
+    def __sequential_processor(self) -> list:
         """
         Process the target directory sequentially to convert interaction matrices to probability matrices.
 
@@ -84,28 +91,30 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
             probability_matrices = []
             for npy_file in os.listdir(self.target_directory):
                 if npy_file.endswith(".npy"):
-                    path = os.path.join(self.target_directory, npy_file)
-                    interaction_matrix = np.load(path)
+                    path_to_npy_file = os.path.join(self.target_directory, npy_file)
+                    interaction_matrix = np.load(path_to_npy_file)
                     probability_matrix = self.convert_to_probabilities(interaction_matrix)
                     probability_matrices.append(probability_matrix)
-                    output_file_name = npy_file.replace("interactions", "probabilities")
-                    if zip:
-                        output_directory_name = f"probabilities_from_{npy_file.replace('.npy', '')}"
-                        save_to = self.match_and_save(output_directory_name)
+
+                    if self.save_output:
+                        original_frames_range = util.extract_frames_range(npy_file)
+                        start_frame, end_frame = original_frames_range
+                        output_directory_name = f"{start_frame}-{end_frame}"
+                        output_file_name = npy_file.replace("interactions", "probabilities")
+                        save_to = self._create_container_dir(output_directory_name)
                         # save probabilities matrix
                         np.save(os.path.join(save_to, output_file_name), probability_matrix)
                         # copy interactions matrix
                         copy(npy_file, save_to)
-                    else:
-                        # save probabilities matrix
-                        np.save(os.path.join(self.output_directory, output_file_name), probability_matrix)
+        
             logging.info(f"Sequential processing complete. Processed {len(probability_matrices)} files.")
             return probability_matrices
+        
         except Exception as e:
             logging.error(f"Error in sequential processing: {e}")
             raise
 
-    def __parallel_processor(self, zip=False) -> list:
+    def __parallel_processor(self) -> list:
         """
         Process the target directory in parallel to convert interaction matrices to probability matrices.
 
@@ -116,8 +125,8 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
         with ProcessPoolExecutor() as executor:
             for npy_file in os.listdir(self.target_directory):
                 if npy_file.endswith(".npy"):
-                    path = os.path.join(self.target_directory, npy_file)
-                    interaction_matrix = np.load(path)
+                    path_to_npy_file = os.path.join(self.target_directory, npy_file)
+                    interaction_matrix = np.load(path_to_npy_file)
                     future = executor.submit(self.convert_to_probabilities, interaction_matrix)
                     probability_matrices_futures.append((future, npy_file))
             logging.info("Parallel processing initiated.")
@@ -127,30 +136,26 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
             try:
                 probability_matrix = future.result()
                 probability_matrices.append(probability_matrix)
-                output_file_name = npy_file.replace("interactions", "probabilities")
 
-                if zip:
-                    output_directory_name = f"probabilities_from_{npy_file.replace('.npy', '')}"
-                    save_to = self.match_and_save(output_directory_name)
+                if self.save_output:
+                    original_frames_range = util.extract_frames_range(npy_file)
+                    start_frame, end_frame = original_frames_range
+                    output_directory_name = f"{start_frame}-{end_frame}"
+                    output_file_name = npy_file.replace("interactions", "probabilities")
+                    save_to = self._create_container_dir(output_directory_name)
                     # save probabilities matrix
                     np.save(os.path.join(save_to, output_file_name), probability_matrix)
                     # copy interactions matrix
                     copy(npy_file, save_to)
-                else:
-                    # save probabilities matrix
-                    np.save(os.path.join(self.output_directory, output_file_name), probability_matrix)
 
+                logging.info(f"Parallel processing complete. Processed {len(probability_matrices)} files.")
+                return probability_matrices
+            
             except Exception as e:
                 logging.error(f"Error processing file {npy_file}: {e}")
                 raise
-        logging.info(f"Parallel processing complete. Processed {len(probability_matrices)} files.")
-        return probability_matrices
 
-    def process_target_directory(self, zip_interactions_and_probs=False) -> list:
-        # output dir stores: probabilities_matrix_residue_level_({start_frame}-{end_frame}).npy
-        # and potentially probabilities_from_interactions_matrix_residue_level_({start_frame}-{end_frame}) folders
-        # each folder having probabilities_matrix_residue_level_({start_frame}-{end_frame}).npy 
-        # and interactions_matrix_residue_level_({start_frame}-{end_frame}).npy files
+    def process_target_directory(self) -> list:
         """
         Process the target directory of interactions matrices.
 
@@ -158,9 +163,9 @@ class ElectrostaticInteractionsToProbabilities(InteractionsToProbabilitiesABC):
             list: List of converted probability matrices.
         """
         if __name__ == "__main__":
-            result = self.__parallel_processor(zip_interactions_and_probs)
+            result = self.__parallel_processor()
         else:
-            result = self.__sequential_processor(zip_interactions_and_probs)
+            result = self.__sequential_processor()
         return result
 
 
