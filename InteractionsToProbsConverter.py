@@ -11,7 +11,7 @@ import util
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class InteractionsToProbs:
+class InteractionsToProbsConverter:
     """
     A class to process interaction matrices, convert them to probability matrices, and save them to an output directory.
 
@@ -22,7 +22,7 @@ class InteractionsToProbs:
 
     def __init__(self, target_directory: str = None, save_output: bool = True, output_directory: str = None) -> None:
         """
-        Initialize the InteractionsToProbs with the target and output directories.
+        Initialize the InteractionsToProbsConverter with the target and output directories.
 
         The output data is of the following format:
         - "Paired_Probs_Energies_<time_when_created>" dir that contains "<i>-<j>" dirs;
@@ -54,7 +54,7 @@ class InteractionsToProbs:
         try:
             current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
             root_directory = output_directory if output_directory else os.getcwd()
-            output_directory = os.path.join(root_directory, f"Paired_Probs_Energies{current_time}")
+            output_directory = os.path.join(root_directory, f"Paired_Probs_Energies_{current_time}")
             os.makedirs(output_directory, exist_ok=True)
             logging.info(f"Created output directory: {output_directory}")
             return output_directory
@@ -73,14 +73,32 @@ class InteractionsToProbs:
         Returns:
             np.array: The converted probability matrix.
         """
-        return util.transition_probs_from_interactions(interactions_matrix)
+        try:
+            return util.transition_probs_from_interactions(interactions_matrix)
+        except Exception as e:
+            logging.error(f"Error converting interactions matrix to probabilities: {e}")
+            raise
 
     def _create_container_dir(self, container_dir_name: str) -> str:
-        container_dir = os.path.join(self.output_directory, container_dir_name)
-        os.makedirs(container_dir, exist_ok=True)
-        return container_dir
+        """
+        Create a directory for storing output files.
 
-    def __sequential_processor(self) -> list:
+        Args:
+            container_dir_name (str): The name of the container directory.
+
+        Returns:
+            str: The path to the created container directory.
+        """
+        try:
+            container_dir = os.path.join(self.output_directory, container_dir_name)
+            os.makedirs(container_dir, exist_ok=True)
+            logging.info(f"Created container directory: {container_dir}")
+            return container_dir
+        except OSError as e:
+            logging.error(f"Error creating container directory {container_dir_name}: {e}")
+            raise
+
+    def _sequential_processor(self) -> list:
         """
         Process the target directory sequentially to convert interaction matrices to probability matrices.
 
@@ -102,19 +120,20 @@ class InteractionsToProbs:
                         output_directory_name = f"{start_frame}-{end_frame}"
                         output_file_name = npy_file.replace("interactions", "probabilities")
                         save_to = self._create_container_dir(output_directory_name)
-                        # save probabilities matrix
+                        # Save probabilities matrix
                         np.save(os.path.join(save_to, output_file_name), probability_matrix)
-                        # copy interactions matrix
-                        copy(npy_file, save_to)
-        
+                        # Copy interactions matrix
+                        copy(path_to_npy_file, os.path.join(save_to, npy_file))
+                        logging.info(f"Processed and saved file: {npy_file}")
+
             logging.info(f"Sequential processing complete. Processed {len(probability_matrices)} files.")
             return probability_matrices
-        
+
         except Exception as e:
             logging.error(f"Error in sequential processing: {e}")
             raise
 
-    def __parallel_processor(self) -> list:
+    def _parallel_processor(self) -> list:
         """
         Process the target directory in parallel to convert interaction matrices to probability matrices.
 
@@ -122,38 +141,43 @@ class InteractionsToProbs:
             list: List of converted probability matrices.
         """
         probability_matrices_futures = []
-        with ProcessPoolExecutor() as executor:
-            for npy_file in os.listdir(self.target_directory):
-                if npy_file.endswith(".npy"):
-                    path_to_npy_file = os.path.join(self.target_directory, npy_file)
-                    interaction_matrix = np.load(path_to_npy_file)
-                    future = executor.submit(self.convert_to_probabilities, interaction_matrix)
-                    probability_matrices_futures.append((future, npy_file))
-            logging.info("Parallel processing initiated.")
+        try:
+            with ProcessPoolExecutor() as executor:
+                for npy_file in os.listdir(self.target_directory):
+                    if npy_file.endswith(".npy"):
+                        path_to_npy_file = os.path.join(self.target_directory, npy_file)
+                        future = executor.submit(self.convert_to_probabilities, np.load(path_to_npy_file))
+                        probability_matrices_futures.append((future, npy_file))
+                logging.info("Parallel processing initiated.")
 
-        probability_matrices = []
-        for future, npy_file in as_completed(probability_matrices_futures):
-            try:
-                probability_matrix = future.result()
-                probability_matrices.append(probability_matrix)
+            probability_matrices = []
+            for future, npy_file in as_completed(probability_matrices_futures):
+                try:
+                    probability_matrix = future.result()
+                    probability_matrices.append(probability_matrix)
 
-                if self.save_output:
-                    original_frames_range = util.extract_frames_range(npy_file)
-                    start_frame, end_frame = original_frames_range
-                    output_directory_name = f"{start_frame}-{end_frame}"
-                    output_file_name = npy_file.replace("interactions", "probabilities")
-                    save_to = self._create_container_dir(output_directory_name)
-                    # save probabilities matrix
-                    np.save(os.path.join(save_to, output_file_name), probability_matrix)
-                    # copy interactions matrix
-                    copy(npy_file, save_to)
+                    if self.save_output:
+                        original_frames_range = util.extract_frames_range(npy_file)
+                        start_frame, end_frame = original_frames_range
+                        output_directory_name = f"{start_frame}-{end_frame}"
+                        output_file_name = npy_file.replace("interactions", "probabilities")
+                        save_to = self._create_container_dir(output_directory_name)
+                        # Save probabilities matrix
+                        np.save(os.path.join(save_to, output_file_name), probability_matrix)
+                        # Copy interactions matrix
+                        copy(path_to_npy_file, os.path.join(save_to, npy_file))
+                        logging.info(f"Processed and saved file: {npy_file}")
 
-                logging.info(f"Parallel processing complete. Processed {len(probability_matrices)} files.")
-                return probability_matrices
-            
-            except Exception as e:
-                logging.error(f"Error processing file {npy_file}: {e}")
-                raise
+                except Exception as e:
+                    logging.error(f"Error processing file {npy_file}: {e}")
+                    raise
+
+            logging.info(f"Parallel processing complete. Processed {len(probability_matrices)} files.")
+            return probability_matrices
+
+        except Exception as e:
+            logging.error(f"Error during parallel processing: {e}")
+            raise
 
     def process_target_directory(self) -> list:
         """
@@ -162,19 +186,38 @@ class InteractionsToProbs:
         Returns:
             list: List of converted probability matrices.
         """
-        if __name__ == "__main__":
-            result = self.__parallel_processor()
-        else:
-            result = self.__sequential_processor()
-        return result
+        try:
+            if __name__ == "__main__":
+                return self._parallel_processor()
+            else:
+                return self._sequential_processor()
+        except Exception as e:
+            logging.error(f"Error processing target directory: {e}")
+            raise
 
 
 def main():
     """
     Main function to execute the processor.
     """
-    pass
 
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Process interaction matrices to probability matrices.")
+    parser.add_argument('target_directory', type=str, help='The directory containing the interaction matrix files.')
+    parser.add_argument('--output_directory', type=str, default=None, help='The directory to save the output probability matrix files.')
+
+    args = parser.parse_args()
+
+    try:
+        interactions_to_probs_converter = InteractionsToProbsConverter(
+            target_directory=args.target_directory,
+            output_directory=args.output_directory
+        )
+        interactions_to_probs_converter.process_target_directory()
+        print(interactions_to_probs_converter.output_directory)
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
 
 if __name__ == "__main__":
     main()
