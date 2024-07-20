@@ -14,7 +14,7 @@ class AnalysesProcessor:
     A class to process analysis files, convert them to CSV format, and save them to an output directory.
 
     * The output data is of the following format:
-    * "Raw_Electrostatics_<time when created>" dir that contains "i-j.csv" files, where i is the start frame and j is the end frame indices
+    * "Raw_Electrostatics_<time_when_created>" dir that contains "i-j.csv" files, where i is the start frame and j is the end frame indices
 
     Attributes:
         target_directory (str): The directory containing the analysis files.

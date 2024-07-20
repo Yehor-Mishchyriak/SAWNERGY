@@ -1,3 +1,5 @@
+#!/usr/bin/env python3.9
+
 import os
 from datetime import datetime
 import pandas as pd
@@ -11,7 +13,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class AtomicToMolecularElectrostatics:
     """
     A class to convert the output of pairwise command of cpptraj to numpy interaction matrices.
-    
+
+    * The output data is of the following format:
+    * "Residue_Level_<time_when_created>" dir that contains "aggregated_energies" and "interaction_matrices" dirs, which contain
+    * "residue_level_<i>-<j>.csv" and "interactions_matrix_residue_level_<i>-<j>.npy" files,
+    * where i is the start frame and j is the end frame indices.
+
     Attributes:
         target_directory (str): The directory where input files are stored.
         save_output (bool): Flag to save the output files.
@@ -137,9 +144,6 @@ class AtomicToMolecularElectrostatics:
             matrix = matrix[1:, 1:]
 
             if self.save_output:
-                number_existing_matrices = len(os.listdir(self.interaction_matrices_directory))
-                if output_file_name is None:
-                    output_file_name = f"interaction_matrix_{number_existing_matrices + 1}.npy"
                 np.save(os.path.join(self.interaction_matrices_directory, output_file_name), matrix)
                 logging.info(f"Interaction matrix saved to {output_file_name}")
 
@@ -157,16 +161,13 @@ class AtomicToMolecularElectrostatics:
             list: List of interaction matrices as numpy arrays.
         """
         try:
-            interaction_matrices = list()
+            interaction_matrices = []
             for analysis_file in os.listdir(self.target_directory):
                 if analysis_file.endswith(".csv"):
                     full_path = os.path.join(self.target_directory, analysis_file)
                     aggregated_energies = self.aggregate_energies(full_path)
-                    if self.save_output:
-                        output_file = f"interactions_matrix_{analysis_file.replace(".csv", "")}"
-                    else:
-                        output_file = None
-                    interaction_matrices.append(self.convert_to_numpy(aggregated_energies, output_file_name=output_file))
+                    output_file_name = f"interactions_matrix_{analysis_file.replace(".csv", ".npy")}"
+                    interaction_matrices.append(self.convert_to_numpy(aggregated_energies, output_file_name=output_file_name))
             logging.info(f"Processed all .csv files sequentially in directory: {self.target_directory}")
             return interaction_matrices
         except Exception as e:
@@ -180,8 +181,8 @@ class AtomicToMolecularElectrostatics:
         Returns:
             list: List of interaction matrices as numpy arrays.
         """
-        aggregated_energies_futures = list()
-        interaction_matrices = list()
+        aggregated_energies_futures = []
+        interaction_matrices = []
 
         with ProcessPoolExecutor() as executor:
             for analysis_file in os.listdir(self.target_directory):
@@ -194,16 +195,13 @@ class AtomicToMolecularElectrostatics:
             for future, analysis_file in aggregated_energies_futures:
                 try:
                     aggregated_energies = future.result()
-                    if self.save_output:
-                        output_file = f"interactions_matrix_{analysis_file.replace(".csv", "")}"
-                    else:
-                        output_file = None
-                    interaction_matrices.append(executor.submit(self.convert_to_numpy, aggregated_energies, output_file_name=output_file))
+                    output_file_name = f"interactions_matrix_{analysis_file.replace(".csv", ".npy")}"
+                    interaction_matrices.append(executor.submit(self.convert_to_numpy, aggregated_energies, output_file_name=output_file_name))
                 except Exception as e:
                     logging.error(f"Error processing aggregated energies for file {analysis_file}: {e}")
                     raise
 
-        final_matrices = list()
+        final_matrices = []
         for future in as_completed(interaction_matrices):
             try:
                 final_matrices.append(future.result())
@@ -214,9 +212,6 @@ class AtomicToMolecularElectrostatics:
         return final_matrices
 
     def process_target_directory(self) -> list:
-        # output dir stores two folders: aggregated_energies and interaction_matrices
-        # aggregated_energies stores residue_level_({start_frame}-{end_frame}).csv
-        # interaction_matrices stores interactions_matrix_residue_level_({start_frame}-{end_frame}).npy
         """
         Process all CSV files in the target directory.
 
@@ -238,12 +233,7 @@ def main():
     """
     Main function to execute the processor.
     """
-    ame = AtomicToMolecularElectrostatics(
-        target_directory="/Users/yehormishchyriak/Desktop/research_project/output_files/OUTPUT_07-17-2024-22-05-31",
-        save_output=True, 
-        output_directory="/Users/yehormishchyriak/Desktop/research_project/output_files"
-    )
-    ame.process_target_directory()
+    pass
 
 
 if __name__ == "__main__":

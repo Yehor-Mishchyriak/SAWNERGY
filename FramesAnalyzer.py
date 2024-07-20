@@ -17,7 +17,7 @@ class FramesAnalyzer:
     A class to process frames from topology and trajectory files using cpptraj.
 
     * The output data is of the following format:
-    * "Processed_Frames_<time when created>" dir that contains "i-j.dat" files, where i is the start frame and j is the end frame indices
+    * "Processed_Frames_<time_when_created>" dir that contains "i-j.dat" files, where i is the start frame and j is the end frame indices
 
     Attributes:
         output_directory (str): The directory where output files will be saved.
