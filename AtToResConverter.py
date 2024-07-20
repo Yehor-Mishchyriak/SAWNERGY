@@ -276,7 +276,7 @@ def main():
             output_directory=args.output_directory
         )
         at_to_res_converter.process_target_directory()
-        print(at_to_res_converter.output_directory)
+        print(at_to_res_converter.interaction_matrices_directory)
     except Exception as e:
         logging.error(f"An error occurred: {e}")
 

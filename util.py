@@ -11,6 +11,9 @@ def softmax(matrix: np.array, axis=1):
     Returns:
     np.array: The softmax of the input matrix.
     """
+    # There is a problem here:
+    # This function also calculates the probability of going to itself that is from residue i to residue i
+    # This is really important to fix it because the pathway building is done stochastically!
     magntitudes_matrix = np.abs(matrix)
     shift_magntitudes_matrix = magntitudes_matrix - np.max(magntitudes_matrix, axis=axis, keepdims=True)
     exponents = np.exp(shift_magntitudes_matrix)
