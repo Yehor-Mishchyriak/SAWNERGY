@@ -62,66 +62,12 @@ def normalize_row_vectors(vectors: np.array):
     """
     return np.apply_along_axis(func1d=normalize_vector, axis=1, arr=vectors)
 
-class OneIndexedNpArray:
-    """
-    A wrapper for numpy arrays to use 1-based indexing.
-
-    Attributes:
-    array (np.array): The underlying 0-indexed numpy array.
-    """
-
-    def __init__(self, array):
-        """
-        Initialize the OneIndexedNpArray with a given array.
-
-        Parameters:
-        array (array-like): Input array.
-        """
-        self.array = np.asarray(array)
-    
-    def __getitem__(self, index):
-        """
-        Get item using 1-based index.
-
-        Parameters:
-        index (int or tuple of int): 1-based index or indices.
-
-        Returns:
-        The element of the array at the given 1-based index.
-        """
-        if isinstance(index, tuple):
-            return self.array[tuple(i-1 for i in index)]
-        return self.array[index-1]
-    
-    def __setitem__(self, index, value):
-        """
-        Set item using 1-based index.
-
-        Parameters:
-        index (int or tuple of int): 1-based index or indices.
-        value: Value to set at the given index.
-        """
-        if isinstance(index, tuple):
-            self.array[tuple(i-1 for i in index)] = value
-        else:
-            self.array[index-1] = value
-    
-    def __repr__(self):
-        """
-        Return the string representation of the array.
-
-        Returns:
-        str: String representation of the array.
-        """
-        return repr(self.array)
-
 def extract_frames_range(file_name):
     from_ = file_name.index("(") + 1
     to_ = file_name.index(")")
     frames = file_name[from_:to_]
     start_frame, end_frame = frames.split("-")
     return int(start_frame), int(end_frame)
-
 
 def main():
     pass
