@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.9
+#!/usr/bin/env python3
 
 import os
 import logging
@@ -13,8 +13,8 @@ class AnalysesProcessor:
     """
     A class to process analysis files, convert them to CSV format, and save them to an output directory.
 
-    * The output data is of the following format:
-    * "Raw_Electrostatics_<time_when_created>" dir that contains "i-j.csv" files, where i is the start frame and j is the end frame indices
+    The output data is of the following format:
+    - "Raw_Electrostatics_<time_when_created>" dir that contains "i-j.csv" files, where i is the start frame and j is the end frame indices.
 
     Attributes:
         target_directory (str): The directory containing the analysis files.

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.9
+#!/usr/bin/env python3
 
 import os
 from datetime import datetime
@@ -10,14 +10,15 @@ import logging
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class AtomicToMolecularElectrostatics:
+
+class AtToResConverter:
     """
     A class to convert the output of pairwise command of cpptraj to numpy interaction matrices.
 
-    * The output data is of the following format:
-    * "Residue_Level_<time_when_created>" dir that contains "aggregated_energies" and "interaction_matrices" dirs, which contain
-    * "residue_level_<i>-<j>.csv" and "interactions_matrix_residue_level_<i>-<j>.npy" files,
-    * where i is the start frame and j is the end frame indices.
+    The output data is of the following format:
+    - "Residue_Level_<time_when_created>" dir that contains "aggregated_energies" and "interaction_matrices" dirs, which contain
+    - "residue_level_<i>-<j>.csv" and "interactions_matrix_residue_level_<i>-<j>.npy" files,
+    - where i is the start frame and j is the end frame indices.
 
     Attributes:
         target_directory (str): The directory where input files are stored.
@@ -27,9 +28,9 @@ class AtomicToMolecularElectrostatics:
         interaction_matrices_directory (str): Directory to save interaction matrices.
     """
 
-    def __init__(self, target_directory: str = None, save_output: bool = False, output_directory=None) -> None:
+    def __init__(self, target_directory: str = None, save_output: bool = True, output_directory=None) -> None:
         """
-        Initialize the AtomicToMolecularElectrostatics class.
+        Initialize the AtToResConverter class.
 
         Args:
             target_directory (str): The target directory for input files.
@@ -92,9 +93,14 @@ class AtomicToMolecularElectrostatics:
             pd.DataFrame: Aggregated interaction energies.
 
         Raises:
+            FileNotFoundError: If the input file does not exist.
+            pd.errors.EmptyDataError: If the input file is empty.
             Exception: If there is an error reading or processing the file.
         """
         try:
+            if not os.path.exists(input_file):
+                raise FileNotFoundError(f"Input file {input_file} does not exist.")
+
             df = pd.read_csv(input_file)
             
             df["pair"] = df.apply(lambda row: str((row["residue_i_index"], row["residue_j_index"])), axis=1)
@@ -103,10 +109,17 @@ class AtomicToMolecularElectrostatics:
 
             if self.save_output:
                 output_file = f"residue_level_{os.path.basename(input_file)}"
-                aggregated.to_csv(os.path.join(self.aggregated_energies_directory, output_file), index=False)
-                logging.info(f"Aggregated energies saved to {output_file}")
+                output_path = os.path.join(self.aggregated_energies_directory, output_file)
+                aggregated.to_csv(output_path, index=False)
+                logging.info(f"Aggregated energies saved to {output_path}")
 
             return aggregated
+        except FileNotFoundError as fnf_error:
+            logging.error(fnf_error)
+            raise
+        except pd.errors.EmptyDataError as ede_error:
+            logging.error(f"Input file {input_file} is empty: {ede_error}")
+            raise
         except Exception as e:
             logging.error(f"Error aggregating energies from file {input_file}: {e}")
             raise
@@ -121,44 +134,51 @@ class AtomicToMolecularElectrostatics:
 
         Args:
             aggregate_energies (pd.DataFrame): Aggregated interaction energies.
-            output_file_name (str): Optional file name to save the numpy array.
+            output_file_name (str, optional): Optional file name to save the numpy array.
 
         Returns:
             np.ndarray: Interaction matrix as a numpy array.
 
         Raises:
-            Exception: If there is an error during conversion.
+            ValueError: If there is an error during conversion.
+            Exception: If there is a general error during conversion.
         """
         try:
-            # Ensure pairs are tuples of integers
             pairs = aggregate_energies['pair'].apply(eval).tolist()
             energies = aggregate_energies['energy'].values
             max_index = max(max(pair) for pair in pairs) + 1
             matrix = np.zeros((max_index, max_index))
 
-            # Populate the matrix
             for (i, j), energy in zip(pairs, energies):
                 matrix[i, j] = energy
+                matrix[j, i] = energy
 
-            # Need to start from the second column and row, because indexing in the csv file starts with 1
             matrix = matrix[1:, 1:]
 
             if self.save_output:
+                if not output_file_name:
+                    raise ValueError("Output file name must be provided when saving output.")
                 np.save(os.path.join(self.interaction_matrices_directory, output_file_name), matrix)
                 logging.info(f"Interaction matrix saved to {output_file_name}")
 
             return matrix
 
+        except ValueError as ve:
+            logging.error(ve)
+            raise
         except Exception as e:
             logging.error(f"Error converting DataFrame to numpy array: {e}")
             raise
 
-    def __sequential_processor(self) -> list:
+    def _sequential_processor(self) -> list:
         """
         Process all CSV files in the target directory sequentially.
 
         Returns:
             list: List of interaction matrices as numpy arrays.
+
+        Raises:
+            Exception: If there is an error processing the files sequentially.
         """
         try:
             interaction_matrices = []
@@ -166,7 +186,7 @@ class AtomicToMolecularElectrostatics:
                 if analysis_file.endswith(".csv"):
                     full_path = os.path.join(self.target_directory, analysis_file)
                     aggregated_energies = self.aggregate_energies(full_path)
-                    output_file_name = f"interactions_matrix_{analysis_file.replace(".csv", ".npy")}"
+                    output_file_name = f"interactions_matrix_{analysis_file.replace('.csv', '.npy')}"
                     interaction_matrices.append(self.convert_to_numpy(aggregated_energies, output_file_name=output_file_name))
             logging.info(f"Processed all .csv files sequentially in directory: {self.target_directory}")
             return interaction_matrices
@@ -174,42 +194,49 @@ class AtomicToMolecularElectrostatics:
             logging.error(f"Error processing files sequentially: {e}")
             raise
 
-    def __parallel_processor(self) -> list:
+    def _parallel_processor(self) -> list:
         """
         Process all CSV files in the target directory in parallel.
 
         Returns:
             list: List of interaction matrices as numpy arrays.
+
+        Raises:
+            Exception: If there is an error processing the files in parallel.
         """
-        aggregated_energies_futures = []
-        interaction_matrices = []
+        try:
+            aggregated_energies_futures = []
+            interaction_matrices = []
 
-        with ProcessPoolExecutor() as executor:
-            for analysis_file in os.listdir(self.target_directory):
-                if analysis_file.endswith(".csv"):
-                    full_path = os.path.join(self.target_directory, analysis_file)
-                    aggregated_energies_futures.append((executor.submit(self.aggregate_energies, full_path), analysis_file))
+            with ProcessPoolExecutor() as executor:
+                for analysis_file in os.listdir(self.target_directory):
+                    if analysis_file.endswith(".csv"):
+                        full_path = os.path.join(self.target_directory, analysis_file)
+                        aggregated_energies_futures.append((executor.submit(self.aggregate_energies, full_path), analysis_file))
 
-            logging.info(f"Submitted tasks for aggregating energies in directory: {self.target_directory}")
+                logging.info(f"Submitted tasks for aggregating energies in directory: {self.target_directory}")
 
-            for future, analysis_file in aggregated_energies_futures:
+                for future, analysis_file in aggregated_energies_futures:
+                    try:
+                        aggregated_energies = future.result()
+                        output_file_name = f"interactions_matrix_{analysis_file.replace('.csv', '.npy')}"
+                        interaction_matrices.append(executor.submit(self.convert_to_numpy, aggregated_energies, output_file_name=output_file_name))
+                    except Exception as e:
+                        logging.error(f"Error processing aggregated energies for file {analysis_file}: {e}")
+                        raise
+
+            final_matrices = []
+            for future in as_completed(interaction_matrices):
                 try:
-                    aggregated_energies = future.result()
-                    output_file_name = f"interactions_matrix_{analysis_file.replace(".csv", ".npy")}"
-                    interaction_matrices.append(executor.submit(self.convert_to_numpy, aggregated_energies, output_file_name=output_file_name))
+                    final_matrices.append(future.result())
                 except Exception as e:
-                    logging.error(f"Error processing aggregated energies for file {analysis_file}: {e}")
+                    logging.error(f"Error converting to numpy: {e}")
                     raise
 
-        final_matrices = []
-        for future in as_completed(interaction_matrices):
-            try:
-                final_matrices.append(future.result())
-            except Exception as e:
-                logging.error(f"Error converting to numpy: {e}")
-                raise
-
-        return final_matrices
+            return final_matrices
+        except Exception as e:
+            logging.error(f"Error processing files in parallel: {e}")
+            raise
 
     def process_target_directory(self) -> list:
         """
@@ -221,19 +248,38 @@ class AtomicToMolecularElectrostatics:
         Raises:
             Exception: If there is an error processing files in the directory.
         """
-        if __name__ == "__main__":
-            result = self.__parallel_processor()
-        else:
-            result = self.__sequential_processor()
-
-        return result
+        try:
+            if __name__ == "__main__":
+                return self._parallel_processor()
+            else:
+                return self._sequential_processor()
+        except Exception as e:
+            logging.error(f"Error processing target directory: {e}")
+            raise
 
 
 def main():
     """
     Main function to execute the processor.
     """
-    pass
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Convert cpptraj pairwise command output to numpy interaction matrices.")
+    parser.add_argument('target_directory', type=str, help='The directory containing the CSV analysis files.')
+    parser.add_argument('--output_directory', type=str, default=None, help='The directory to save the output files to.')
+
+    args = parser.parse_args()
+
+    try:
+        at_to_res_converter = AtToResConverter(
+            target_directory=args.target_directory,
+            save_output=True,
+            output_directory=args.output_directory
+        )
+        at_to_res_converter.process_target_directory()
+        print(at_to_res_converter.output_directory)
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
 
 
 if __name__ == "__main__":
