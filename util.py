@@ -11,13 +11,14 @@ def softmax(matrix: np.array, axis=1):
     Returns:
     np.array: The softmax of the input matrix.
     """
-    # There is a problem here:
-    # This function also calculates the probability of going to itself that is from residue i to residue i
-    # This is really important to fix it because the pathway building is done stochastically!
     magntitudes_matrix = np.abs(matrix)
     shift_magntitudes_matrix = magntitudes_matrix - np.max(magntitudes_matrix, axis=axis, keepdims=True)
     exponents = np.exp(shift_magntitudes_matrix)
-    return exponents / np.sum(exponents, axis=axis, keepdims=True)
+    probabilities_matrix = exponents / np.sum(exponents, axis=axis, keepdims=True)
+    # the following is done to ensure that the probability of going from residue i to itself is 0.0
+    null_diag_probabilities_matrix = np.fill_diagonal(probabilities_matrix, 0.0)
+    renormalized_matrix = normalize_row_vectors(null_diag_probabilities_matrix)
+    return renormalized_matrix
 
 def transition_probs_from_interactions(matrix: np.array):
     """
