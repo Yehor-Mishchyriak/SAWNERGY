@@ -1,0 +1,17 @@
+# Ignore all files
+*
+
+# Except:
+!interfaces/
+!interfaces/AnalysesProcessorABC.py
+!interfaces/FramesAnalyzerABC.py
+!interfaces/InteractionsToProbabilitiesABC.py
+!FramesAnalyzer.py
+!AnalysesProcessor.py
+!AtToResConverter.py
+!InteractionsToProbsConverter.py
+!model.py
+!util.py
+!requirements.txt
+!README.md
+!.gitignore
