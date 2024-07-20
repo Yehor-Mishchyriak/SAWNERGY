@@ -140,18 +140,19 @@ class InteractionsToProbsConverter:
         Returns:
             list: List of converted probability matrices.
         """
-        probability_matrices_futures = []
+        probability_matrices_futures = {}
         try:
             with ProcessPoolExecutor() as executor:
                 for npy_file in os.listdir(self.target_directory):
                     if npy_file.endswith(".npy"):
                         path_to_npy_file = os.path.join(self.target_directory, npy_file)
                         future = executor.submit(self.convert_to_probabilities, np.load(path_to_npy_file))
-                        probability_matrices_futures.append((future, npy_file))
+                        probability_matrices_futures[future] = npy_file
                 logging.info("Parallel processing initiated.")
 
             probability_matrices = []
-            for future, npy_file in as_completed(probability_matrices_futures):
+            for future in as_completed(probability_matrices_futures):
+                npy_file = probability_matrices_futures[future]
                 try:
                     probability_matrix = future.result()
                     probability_matrices.append(probability_matrix)
@@ -165,7 +166,7 @@ class InteractionsToProbsConverter:
                         # Save probabilities matrix
                         np.save(os.path.join(save_to, output_file_name), probability_matrix)
                         # Copy interactions matrix
-                        copy(path_to_npy_file, os.path.join(save_to, npy_file))
+                        copy(os.path.join(self.target_directory, npy_file), os.path.join(save_to, npy_file))
                         logging.info(f"Processed and saved file: {npy_file}")
 
                 except Exception as e:
