@@ -16,7 +16,7 @@
 !core/util.py
 !core/pdbToDict.py
 !model.py
-!create_configuration_file.py
+!create_configuration_files.py
 !.gitignore
 !requirements.txt
 !README.md
