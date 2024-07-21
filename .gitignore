@@ -13,6 +13,7 @@
 !Protein.py
 !util.py
 !model.py
+!configure_network.sh
 !requirements.txt
 !README.md
 !.gitignore
