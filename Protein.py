@@ -61,6 +61,10 @@ class Protein:
         np.random.seed(seed)
         logging.info(f"Random seed set to: {seed}")
 
+    def _load_residues_list():
+        # take this function from the FramesAnalyzer.py
+        pass
+
     def _load_matrices(self, directory_path: str) -> Tuple[Dict[int, np.array], Dict[int, np.array]]:
         """
         Load interaction and probability matrices from the given directory.
@@ -322,7 +326,8 @@ class Protein:
 
 
 def main():
-    pass
+    # testing
+    p53 = Protein()
 
 
 if __name__ == "__main__":

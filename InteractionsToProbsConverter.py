@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# Tested: works well
+
 import os
 from shutil import copy
 from datetime import datetime
@@ -74,6 +76,8 @@ class InteractionsToProbsConverter:
             np.array: The converted probability matrix.
         """
         try:
+            if interactions_matrix.ndim != 2:
+                raise ValueError(f"Expected 2-dimensional array, got {interactions_matrix.ndim}-dimensional array.")
             return util.transition_probs_from_interactions(interactions_matrix)
         except Exception as e:
             logging.error(f"Error converting interactions matrix to probabilities: {e}")
@@ -111,6 +115,10 @@ class InteractionsToProbsConverter:
                 if npy_file.endswith(".npy"):
                     path_to_npy_file = os.path.join(self.target_directory, npy_file)
                     interaction_matrix = np.load(path_to_npy_file)
+                    logging.info(f"Loaded matrix {npy_file} with shape {interaction_matrix.shape}")
+                    if interaction_matrix.ndim != 2:
+                        logging.warning(f"Skipping file {npy_file} due to unexpected dimensions: {interaction_matrix.ndim}")
+                        continue
                     probability_matrix = self.convert_to_probabilities(interaction_matrix)
                     probability_matrices.append(probability_matrix)
 
@@ -146,7 +154,12 @@ class InteractionsToProbsConverter:
                 for npy_file in os.listdir(self.target_directory):
                     if npy_file.endswith(".npy"):
                         path_to_npy_file = os.path.join(self.target_directory, npy_file)
-                        future = executor.submit(self.convert_to_probabilities, np.load(path_to_npy_file))
+                        interaction_matrix = np.load(path_to_npy_file)
+                        logging.info(f"Loaded matrix {npy_file} with shape {interaction_matrix.shape}")
+                        if interaction_matrix.ndim != 2:
+                            logging.warning(f"Skipping file {npy_file} due to unexpected dimensions: {interaction_matrix.ndim}")
+                            continue
+                        future = executor.submit(self.convert_to_probabilities, interaction_matrix)
                         probability_matrices_futures[future] = npy_file
                 logging.info("Parallel processing initiated.")
 
