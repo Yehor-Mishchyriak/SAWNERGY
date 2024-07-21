@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-
-# Tested: works well
+#!AllostericPathwayAnalyzer/venv/bin/python3
 
 import os
 from shutil import copy
@@ -8,7 +6,7 @@ from datetime import datetime
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import logging
-import util
+import AllostericPathwayAnalyzer.core.util as util
 
 # Set up logging
 logging.basicConfig(filename='interactions_to_probs_converter.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

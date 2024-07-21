@@ -1,4 +1,4 @@
 from abc import ABC, abstractmethod
 
-class FramesAnalyzerABC(ABC):
+class InteractionsToProbsConverterABC(ABC):
     pass

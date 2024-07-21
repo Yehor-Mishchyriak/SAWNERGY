@@ -2,18 +2,21 @@
 *
 
 # Except:
+!core/
 !interfaces/
 !interfaces/AnalysesProcessorABC.py
+!interfaces/AtToResConverterABC.py
 !interfaces/FramesAnalyzerABC.py
-!interfaces/InteractionsToProbabilitiesABC.py
-!FramesAnalyzer.py
-!AnalysesProcessor.py
-!AtToResConverter.py
-!InteractionsToProbsConverter.py
-!Protein.py
-!util.py
+!interfaces/InteractionsToProbsConverterABC.py
+!core/FramesAnalyzer.py
+!core/AnalysesProcessor.py
+!core/AtToResConverter.py
+!core/InteractionsToProbsConverter.py
+!core/Protein.py
+!core/util.py
+!core/pdbToDict.py
 !model.py
-!configure_network.sh
+!create_configuration_file.py
+!.gitignore
 !requirements.txt
 !README.md
-!.gitignore

@@ -1,3 +1,5 @@
+#!AllostericPathwayAnalyzer/venv/bin/python3
+
 import os
 import logging
 import numpy as np
@@ -5,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Union, Set, Tuple
 from math import log, exp
 from collections import Counter
-import util
+import AllostericPathwayAnalyzer.core.util as util
 
 # Set up logging
 logging.basicConfig(

@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-
-# Tested: works well
+#!AllostericPathwayAnalyzer/venv/bin/python3
 
 import os
 import logging
