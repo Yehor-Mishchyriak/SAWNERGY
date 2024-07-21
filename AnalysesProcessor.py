@@ -201,10 +201,15 @@ class AnalysesProcessor:
         Returns:
             str: The parsed line in CSV format.
         """
-        res_atm_A, _, _, res_atm_B, _, _, _, energy = line.split()
+        try:
+            res_atm_A, _, _, res_atm_B, _, _, _, energy = line.split()
+        except ValueError: # needed to add this line because cpptraj sometimes adds information on van der Waals (I think this is a bug)
+            res_atm_A, _, _, res_atm_B, _, _, _, _, _, energy = line.split()
+
         res_A, res_A_index = AnalysesProcessor._split_residue(res_atm_A)
         res_B, res_B_index = AnalysesProcessor._split_residue(res_atm_B)
         return f"{res_A},{res_A_index},{res_B},{res_B_index},{energy}\n"
+
 
     @staticmethod
     def _split_residue(res_atm: str) -> tuple:
