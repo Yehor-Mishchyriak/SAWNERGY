@@ -1,0 +1,1 @@
+python3.9 create_configuration_files.py /zfshomes/ymishchyriak/p53_WT_nowat.prmtop /zfshomes/ymishchyriak/p53_WT_md1000_str.nc /zfshomes/ymishchyriak/p53_WT_nowat.pdb 1000 "pairwise :* :* cuteelec 1.0" "avgout" --batch_size 250 --output_directory /zfshomes/ymishchyriak
