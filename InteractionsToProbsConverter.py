@@ -9,7 +9,7 @@ import logging
 import util
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename='interactions_to_probs_converter.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class InteractionsToProbsConverter:
     """

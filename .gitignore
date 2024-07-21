@@ -10,8 +10,9 @@
 !AnalysesProcessor.py
 !AtToResConverter.py
 !InteractionsToProbsConverter.py
-!model.py
+!Protein.py
 !util.py
+!model.py
 !requirements.txt
 !README.md
 !.gitignore

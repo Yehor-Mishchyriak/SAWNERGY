@@ -9,7 +9,7 @@ from subprocess import run, CalledProcessError
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename='frames_analyzer.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 class FramesAnalyzer:

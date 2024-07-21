@@ -8,7 +8,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import logging
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename='at_to_res_converter.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 class AtToResConverter:
