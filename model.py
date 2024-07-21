@@ -1,7 +1,7 @@
 import os
 import util
 import numpy as np
-from typing import Dict, Union, Set
+from typing import Dict, Union, Set, Tuple
 from math import log, exp
 from collections import Counter
 
@@ -41,18 +41,17 @@ class Protein:
             raise ValueError(f"Start residue index {residue_index} is not valid.")
         return transition_probabilities_matrix[residue_index, :]
 
-    def _get_next_probability_matrix(self, preceding_residue: Union[None, int], current_residue: int, next_residue: int, current_matrix_index: int) -> np.array:
+    def _get_next_probability_matrix_and_selection_probability(self, preceding_residue: Union[None, int], current_residue: int, next_residue: int, current_matrix_index: int) -> Tuple[np.array, float]:
 
         indexed_rounded_energies_btw_current_next = dict()
         rounded_energy_counts_btw_current_next = Counter()
 
-        while preceding_residue == None or preceding_residue == current_residue or preceding_residue == next_residue:
+        while preceding_residue is None or preceding_residue == current_residue or preceding_residue == next_residue:
             preceding_residue = np.random.randint(0, self.number_residues)
-        
+
         latest_energy_btw_preceding_current = self.interactions_matrices[current_matrix_index][preceding_residue, current_residue]
 
-        for which_matrix, matrix in self.interactions_matrices.keys():
-
+        for which_matrix, matrix in self.interactions_matrices.items():
             rounded_matrix = np.round(matrix, decimals=self.interactions_precision_limit)
             rounded_energy_btw_current_next = rounded_matrix[current_residue, next_residue]
             indexed_rounded_energies_btw_current_next[which_matrix] = rounded_energy_btw_current_next
@@ -64,17 +63,24 @@ class Protein:
 
         drawn_energy = np.random.choice(rounded_energies, p=probabilities)
 
-        filtered_matching_matrices = filter(lambda _, energy: energy == drawn_energy, indexed_rounded_energies_btw_current_next.items())
+        filtered_matching_matrices = [
+            which_matrix for which_matrix, energy in indexed_rounded_energies_btw_current_next.items() if energy == drawn_energy
+        ]
 
         current_minimal_difference = float("inf")
-        corresponding_probability_matrix: np.array = None
-        for which_matrix, _ in filtered_matching_matrices:
+        selected_matrix_index = None
+
+        for which_matrix in filtered_matching_matrices:
             observed_energy = self.interactions_matrices[which_matrix][preceding_residue, current_residue]
             if abs(observed_energy - latest_energy_btw_preceding_current) < current_minimal_difference:
-                current_minimal_difference = observed_energy
-                corresponding_probability_matrix = self.probabilities_matrices[which_matrix]
-        
-        return corresponding_probability_matrix
+                current_minimal_difference = abs(observed_energy - latest_energy_btw_preceding_current)
+
+                selected_matrix_index = which_matrix
+
+        matrix_selection_probability = 1 / len(filtered_matching_matrices)
+        selected_probability_matrix = self.probabilities_matrices[selected_matrix_index]
+
+        return selected_probability_matrix, matrix_selection_probability
         
     def allosteric_signal_path_builder(self, start: int, number_iterations: Union[None, int] = None, target_residues: Union[None, Set[int]] = None):
 
@@ -100,11 +106,12 @@ class Protein:
             probability_vector_given_current_pathway = util.normalize_vector(residues_probability_vector)
             
             next_residue = np.random.choice(range(0, self.number_residues), p=probability_vector_given_current_pathway)
-            next_matrix = self._get_next_probability_matrix(preceding_residue, current_residue, next_residue, current_matrix_index)
+            residue_selection_probability = probability_vector_given_current_pathway[next_residue]
+            next_matrix, matrix_selection_probability = self._get_next_probability_matrix_and_selection_probability(preceding_residue, current_residue, next_residue, current_matrix_index)
 
             pathway.append(next_residue) # extend the path
 
-            aggregated_probability += "I don't know how to compute it taking into account both the probabilities for the next residues and probabilities for the next matrices"
+            aggregated_probability += log(matrix_selection_probability) + log(residue_selection_probability)
 
             if next_residue in target_residues:
                 break
