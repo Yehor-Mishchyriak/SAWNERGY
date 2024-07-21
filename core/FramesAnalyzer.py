@@ -265,7 +265,8 @@ def main():
         frame_analyzer = FramesAnalyzer(args.topology_file, args.trajectory_file, args.number_frames,
                                         args.cpptraj_analysis_command, args.cpptraj_output_type, args.start_frame,
                                         args.batch_size, args.in_one_batch, args.output_directory)
-        print(frame_analyzer.analyse_frames())  # output to the terminal
+        # return the path to the output directory to stdout
+        print(frame_analyzer.analyse_frames())
     except Exception as e:
         logging.error(f"Error in main function: {e}")
         raise

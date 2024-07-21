@@ -227,6 +227,7 @@ def main():
             output_directory=args.output_directory
         )
         interactions_to_probs_converter.process_target_directory()
+        # return the path to the output directory to stdout
         print(interactions_to_probs_converter.output_directory)
     except Exception as e:
         logging.error(f"An error occurred: {e}")

@@ -276,6 +276,7 @@ def main():
             output_directory=args.output_directory
         )
         at_to_res_converter.process_target_directory()
+        # return the path to the output directory to stdout
         print(at_to_res_converter.interaction_matrices_directory)
     except Exception as e:
         logging.error(f"An error occurred: {e}")

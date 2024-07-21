@@ -13,6 +13,7 @@ def main():
     
     args = parser.parse_args()
     
+    # save the indices to residues map of the protein to the "output_directory" passed as an argument
     FramesAnalyzer.extract_residues_from_pdb(args.pdb_file, save_output=True, output_directory=args.output_directory)
 
 

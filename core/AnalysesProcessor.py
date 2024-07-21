@@ -241,6 +241,7 @@ def main():
 
     try:
         analyses_processor = AnalysesProcessor(args.target_directory, args.output_directory)
+        # return the path to the output directory to stdout
         print(analyses_processor.process_target_directory())
     except Exception as e:
         logging.error(f"Error in main function: {e}")
