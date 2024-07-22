@@ -30,7 +30,7 @@ fi
 
 python3 core/pdbToDict.py $pdb $final
 
-rm -rf $target1 $target2 $target3
+rm -rf $target1 $target2 $(dirname "$target3")
 
 echo "Configuration files were generated successfully! The following is the path to the config directory:"
 echo "*NOTE: DO NOT MODIFY THIS DIRECTORY*"
