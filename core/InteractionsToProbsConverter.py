@@ -6,7 +6,7 @@ from datetime import datetime
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import logging
-import AllostericPathwayAnalyzer.core.util as util
+import util
 
 # Set up logging
 logging.basicConfig(filename='interactions_to_probs_converter.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -26,7 +26,7 @@ class InteractionsToProbsConverter:
 
         The output data is of the following format:
         - "Paired_Probs_Energies_<time_when_created>" dir that contains "<i>-<j>" dirs;
-        - each "<i>-<j>" dir contains two files: probabilities_matrix_residue_level_(<i>-<j>).npy and interactions_matrix_residue_level_(<i>-<j>).npy,
+        - each "<i>-<j>" dir contains two files: probabilities_matrix_residue_level_<i>-<j>.npy and interactions_matrix_residue_level_<i>-<j>.npy,
         - where i is the start frame and j is the end frame indices;
 
         Args:

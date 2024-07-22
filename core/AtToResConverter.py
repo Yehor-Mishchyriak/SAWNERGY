@@ -17,7 +17,7 @@ class AtToResConverter:
 
     The output data is of the following format:
     - "Residue_Level_<time_when_created>" dir that contains "aggregated_energies" and "interaction_matrices" dirs, which contain
-    - "residue_level_(<i>-<j>).csv" and "interactions_matrix_(<i>-<j>).npy" files,
+    - "residue_level_<i>-<j>.csv" and "interactions_matrix_<i>-<j>.npy" files,
     - where i is the start frame and j is the end frame indices.
 
     Attributes:

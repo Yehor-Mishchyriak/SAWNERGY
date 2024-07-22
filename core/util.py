@@ -2,6 +2,7 @@
 
 import numpy as np
 import logging
+from re import search
 
 def softmax(matrix: np.array, axis=1):
     """
@@ -73,10 +74,10 @@ def normalize_row_vectors(vectors: np.array):
     return np.apply_along_axis(func1d=normalize_vector, axis=1, arr=vectors)
 
 def extract_frames_range(file_name):
-    from_ = file_name.index("(") + 1
-    to_ = file_name.index(")")
-    frames = file_name[from_:to_]
-    start_frame, end_frame = frames.split("-")
+    pattern = r"(\d+)-(\d+)"
+    matched = search(pattern, file_name)
+    start_frame = matched.group(1)
+    end_frame = matched.group(2)
     return int(start_frame), int(end_frame)
 
 def main():

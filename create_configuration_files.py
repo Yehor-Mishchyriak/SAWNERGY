@@ -1,43 +1,59 @@
-#!AllostericPathwayAnalyzer/venv/bin/python3
+#!/AllostericPathwayAnalyzer/venv/bin/python3
 
 from subprocess import run, CalledProcessError
 from shutil import rmtree
 import argparse
 
-def analyze_frames(topology_file, trajectory_file, number_frames, cpptraj_analysis_command, cpptraj_output_type, start_frame, batch_size, in_one_batch, output_directory):
-    command = f"python3 AllostericPathwayAnalyzer/core/FramesAnalyzer.py {topology_file} {trajectory_file} {number_frames} {cpptraj_analysis_command} {cpptraj_output_type} {start_frame} {batch_size} {in_one_batch} {output_directory}"
-    result = run(command, capture_output=True, text=True)
+def run_command(command):
+    result = run(command, capture_output=True, text=True, shell=True)
     if result.returncode != 0:
+        print(f"Command: {' '.join(command)}")
+        print(f"Exit code: {result.returncode}")
+        print(f"Standard output: {result.stdout}")
+        print(f"Standard error: {result.stderr}")
         raise CalledProcessError(result.returncode, command, result.stdout, result.stderr)
     return result.stdout.strip()
+
+def analyze_frames(topology_file, trajectory_file, number_frames, cpptraj_analysis_command, cpptraj_output_type, start_frame, batch_size, in_one_batch, output_directory):
+    command = [
+        "python3", "core/FramesAnalyzer.py",
+        topology_file, trajectory_file, str(number_frames),
+        cpptraj_analysis_command, cpptraj_output_type,
+        "--start_frame", str(start_frame),
+        "--batch_size", str(batch_size),
+        "--output_directory", output_directory
+    ]
+    if in_one_batch:
+        command.append("--in_one_batch")
+    return run_command(command)
 
 def process_analyses(target, output_directory):
-    command = f"python3 AllostericPathwayAnalyzer/core/AnalysesProcessor.py {target} {output_directory}"
-    result = run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise CalledProcessError(result.returncode, command, result.stdout, result.stderr)
-    return result.stdout.strip()
+    command = [
+        "python3", "core/AnalysesProcessor.py",
+        target, "--output_directory", output_directory
+    ]
+    return run_command(command)
 
 def convert_atoms_to_residues(target, output_directory):
-    command = f"python3 AllostericPathwayAnalyzer/core/AtToResConverter.py {target} {output_directory}"
-    result = run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise CalledProcessError(result.returncode, command, result.stdout, result.stderr)
-    return result.stdout.strip()
+    command = [
+        "python3", "core/AtToResConverter.py",
+        target, "--output_directory", output_directory
+    ]
+    return run_command(command)
 
 def convert_interactions_to_probs(target, output_directory):
-    command = f"python3 AllostericPathwayAnalyzer/core/InteractionsToProbsConverter.py {target} {output_directory}"
-    result = run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise CalledProcessError(result.returncode, command, result.stdout, result.stderr)
-    return result.stdout.strip()
+    command = [
+        "python3", "core/InteractionsToProbsConverter.py",
+        target, "--output_directory", output_directory
+    ]
+    return run_command(command)
 
 def convert_pdb_to_dict(pdb_file, output_directory):
-    command = f"python3 AllostericPathwayAnalyzer/core/pdbToDict.py {pdb_file} {output_directory}"
-    result = run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise CalledProcessError(result.returncode, command, result.stdout, result.stderr)
-    return result.stdout.strip()
+    command = [
+        "python3", "core/pdbToDict.py",
+        pdb_file, output_directory
+    ]
+    return run_command(command)
 
 def clean_up(dirs):
     for dir in dirs:
@@ -58,14 +74,23 @@ def main():
 
     args = parser.parse_args()
 
-    target1 = analyze_frames(args.topology_file, args.trajectory_file, args.number_frames, args.cpptraj_analysis_command, args.cpptraj_output_type, args.start_frame, args.batch_size, args.in_one_batch, args.output_directory)
-    target2 = process_analyses(target1, args.output_directory)
-    target3 = convert_atoms_to_residues(target2, args.output_directory)
-    final = convert_interactions_to_probs(target2, args.output_directory)
-    convert_pdb_to_dict(args.pdb_file, final)
-    clean_up([target1, target2, target3])
+    try:
+        target1 = analyze_frames(args.topology_file, args.trajectory_file, args.number_frames, args.cpptraj_analysis_command, args.cpptraj_output_type, args.start_frame, args.batch_size, args.in_one_batch, args.output_directory)
+        target2 = process_analyses(target1, args.output_directory)
+        target3 = convert_atoms_to_residues(target2, args.output_directory)
+        final = convert_interactions_to_probs(target3, args.output_directory)
+        convert_pdb_to_dict(args.pdb_file, final)
+        clean_up([target1, target2, target3])
 
-    print(final)
+        print("Configuration files were generated successfully! The following is the path to the config directory:")
+        print("*NOTE: DO NOT MODIFY THIS DIRECTORY*")
+        print(final)
+
+    except CalledProcessError as e:
+        print(f"Error occurred while executing: {e.cmd}")
+        print(f"Exit code: {e.returncode}")
+        print(f"Standard output: {e.stdout}")
+        print(f"Standard error: {e.stderr}")
 
 if __name__ == "__main__":
     main()

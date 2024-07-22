@@ -17,7 +17,7 @@ class FramesAnalyzer:
     A class to process frames from topology and trajectory files using cpptraj.
 
     The output data is of the following format:
-    - "Processed_Frames_<time_when_created>" dir that contains "(<i>-<j>).dat" files, where i is the start frame and j is the end frame indices.
+    - "Processed_Frames_<time_when_created>" dir that contains "<i>-<j>.dat" files, where i is the start frame and j is the end frame indices.
 
     Attributes:
         output_directory (str): The directory where output files will be saved.
@@ -98,7 +98,8 @@ class FramesAnalyzer:
             CalledProcessError: If cpptraj command fails.
         """
         try:
-            output_file_path = os.path.join(self.output_directory, f"({start_frame}-{end_frame}).dat")
+            # NOTE: output_file.dat can't contain almost any kind of special characters
+            output_file_path = os.path.join(self.output_directory, f"{start_frame}-{end_frame}.dat")
             command = f"""echo \"parm {self.topology_file}
                         trajin {self.trajectory_file} {start_frame} {end_frame}
                         {self.cpptraj_analysis_command} {self.cpptraj_output_type} {output_file_path} run\" | cpptraj > /dev/null 2>&1"""

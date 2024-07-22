@@ -3,8 +3,8 @@
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Electrostatic network representation of the protein based on the input configuration file")
-    parser.add_argument('topology_file', type=str, help='Path to the topology file')
+    parser = argparse.ArgumentParser(description="Electrostatic network representation of a protein based on the input configuration file")
+    parser.add_argument('config_dir', type=str, help='Path to the configuration files directory')
 
 
 if __name__ == "__main__":

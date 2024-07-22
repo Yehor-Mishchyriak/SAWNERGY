@@ -1,6 +1,6 @@
 #!AllostericPathwayAnalyzer/venv/bin/python3
 
-from AllostericPathwayAnalyzer.core.FramesAnalyzer import FramesAnalyzer
+from FramesAnalyzer import FramesAnalyzer
 
 
 def main():

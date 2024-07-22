@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Union, Set, Tuple
 from math import log, exp
 from collections import Counter
-import AllostericPathwayAnalyzer.core.util as util
+import util
 
 # Set up logging
 logging.basicConfig(
