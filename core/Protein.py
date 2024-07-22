@@ -16,7 +16,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-
 class Protein:
     """
     A class to represent a protein and analyze its allosteric pathways.
@@ -111,7 +110,7 @@ class Protein:
                                 interactions_matrices[interaction_index] = matrix
                                 interaction_index += 1
                             if "probabilities" in npy_file:
-                                # add normalisation just in case
+                                # Add normalization just in case
                                 normalized_matrix = util.normalize_row_vectors(matrix)
                                 probabilities_matrices[probability_index] = normalized_matrix
                                 probability_index += 1
@@ -215,7 +214,7 @@ class Protein:
 
         try:
             if number_iterations is None:
-                number_iterations = self.number_residues
+                number_iterations = self.number_residues - 2
 
             if target_residues is None:
                 target_residues = set()
@@ -233,7 +232,14 @@ class Protein:
                 residues_probability_vector = self._get_transitions_prob_dist(current_residue, current_matrix)
                 residues_probability_vector[pathway] = 0.0  # Avoid loops by setting already visited residues to 0
 
-                probability_vector_given_current_pathway = util.normalize_vector(residues_probability_vector)
+                total_probability = np.sum(residues_probability_vector)
+                if total_probability == 0:
+                    raise ValueError("Total probability is zero. The pathway cannot proceed further.")
+
+                probability_vector_given_current_pathway = residues_probability_vector / total_probability
+
+                if not np.isclose(np.sum(probability_vector_given_current_pathway), 1.0):
+                    probability_vector_given_current_pathway /= np.sum(probability_vector_given_current_pathway)
 
                 next_residue = np.random.choice(range(0, self.number_residues), p=probability_vector_given_current_pathway)
                 residue_selection_probability = probability_vector_given_current_pathway[next_residue]
@@ -361,9 +367,7 @@ class Protein:
 def main():
     # TESTING
     p53 = Protein("/home/yehor/research_project/AllostericPathwayAnalyzer/p53")
-    for i in p53.probabilities_matrices.values():
-        print(i)
-    p53.create_pathways(1, output_directory="/home/yehor/research_project/AllostericPathwayAnalyzer")
+    p53.create_pathways(1, output_directory="/home/yehor/research_project/AllostericPathwayAnalyzer", filter_out_improbable=True)
 
 
 if __name__ == "__main__":

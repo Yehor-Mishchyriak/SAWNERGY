@@ -1,6 +1,11 @@
 #!/AllostericPathwayAnalyzer/venv/bin/python3
 
 import argparse
+import sys
+import os
+
+# Add the directory containing core to the Python path
+sys.path.append(os.path.join(os.path.dirname(__file__), 'core'))
 from core.Protein import Protein
 
 def interactive_create_pathways(protein):
@@ -38,10 +43,13 @@ def interactive_create_pathways(protein):
                 break
             filter_out_improbable = filter_out_improbable.strip().lower() == 'yes'
             
-            percentage_kept = input("Enter the percentage of pathways to keep (as a decimal): ")
-            if percentage_kept.lower() == 'exit':
-                break
-            percentage_kept = float(percentage_kept)
+            if filter_out_improbable:
+                percentage_kept = input("Enter the percentage of pathways to keep (as a decimal): ")
+                if percentage_kept.lower() == 'exit':
+                    break
+                percentage_kept = float(percentage_kept)
+            else:
+                percentage_kept = 0.1
             
             output_directory = input("Enter the output directory (leave blank for current directory): ")
             if output_directory.lower() == 'exit':
