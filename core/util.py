@@ -83,8 +83,10 @@ def extract_frames_range(file_name):
     end_frame = matched.group(2)
     return int(start_frame), int(end_frame)
 
+
 def main():
     pass
+
 
 if __name__ == "__main__":
     main()

@@ -75,6 +75,7 @@ def interactive_create_pathways(protein):
             print("\nExiting interactive pathway creation.")
             break
 
+
 def main():
     parser = argparse.ArgumentParser(description="Create an electrostatic network representation of a protein")
     parser.add_argument('config_dir', type=str, help='Path to the configuration files directory')
@@ -91,6 +92,7 @@ def main():
         interactive_create_pathways(protein)
     except Exception as e:
         print(f"Failed to initialize Protein: {e}")
+
 
 if __name__ == "__main__":
     main()

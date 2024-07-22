@@ -365,9 +365,7 @@ class Protein:
 
 
 def main():
-    # TESTING
-    p53 = Protein("/home/yehor/research_project/AllostericPathwayAnalyzer/p53")
-    p53.create_pathways(1, output_directory="/home/yehor/research_project/AllostericPathwayAnalyzer", filter_out_improbable=True)
+    pass
 
 
 if __name__ == "__main__":
