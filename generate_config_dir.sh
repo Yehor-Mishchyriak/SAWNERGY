@@ -5,10 +5,10 @@ topology_file="../p53_WT_nowat.prmtop"
 trajectory_file="../p53_WT_md1000_str.nc"
 pdb="../p53_WT_nowat.pdb"
 number_frames=1000
-cpptraj_analysis_command="pairwise :1-100 :1-100 cuteelec 1.0"
+cpptraj_analysis_command="pairwise :* :* cuteelec 1.0"
 cpptraj_output_type="avgout"
 start_frame=1
-batch_size=250
+batch_size=10
 # in_one_batch is False when set to 0, otherwise True
 in_one_batch=0
 output_directory="$HOME"

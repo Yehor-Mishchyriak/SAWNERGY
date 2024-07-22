@@ -41,12 +41,12 @@ class Protein:
         """
         try:
             self.residues, self.interactions_matrices, self.probabilities_matrices = self._load_matrices_and_residues(config_directory_path)
-            # subtract 1 to reflect 0-based indexing
             self.number_residues = len(self.residues)
             self.residues_range = self.number_residues - 1
             self.number_matrices = len(self.probabilities_matrices)
             self.interactions_precision_limit = interactions_precision_limit
             self.random_seed = Protein.set_random_seed(random_seed)
+            logging.info("Protein instance initialized successfully.")
         except Exception as e:
             logging.error(f"Error initializing Protein: {e}")
             raise
@@ -85,11 +85,11 @@ class Protein:
             interaction_index = 0
             probability_index = 0
 
+            logging.info(f"Loading matrices and residues from directory: {directory_path}")
             # Loop through files in the directory
             for filename in os.listdir(directory_path):
                 filepath = os.path.join(directory_path, filename)
                 
-                # Skip __pycache__ and any non-relevant directories
                 if filename == "__pycache__" or not os.path.isdir(filepath) and not filename.endswith(".py") and not filename.endswith(".npy"):
                     continue
 
@@ -101,7 +101,8 @@ class Protein:
                     
                     if hasattr(module, 'residues'):
                         residues = module.residues
-                
+                        logging.info(f"Loaded residues from {filename}")
+
                 elif os.path.isdir(filepath):
                     # Loop through .npy files in subdirectories
                     for npy_file in os.listdir(filepath):
@@ -111,12 +112,14 @@ class Protein:
                             if "interactions" in npy_file:
                                 interactions_matrices[interaction_index] = matrix
                                 interaction_index += 1
+                                logging.info(f"Loaded interaction matrix from {npy_file}")
                             if "probabilities" in npy_file:
-                                # Add normalization just in case
                                 normalized_matrix = util.normalize_row_vectors(matrix)
                                 probabilities_matrices[probability_index] = normalized_matrix
                                 probability_index += 1
+                                logging.info(f"Loaded probability matrix from {npy_file}")
             
+            logging.info("Matrices and residues loaded successfully.")
             return residues, interactions_matrices, probabilities_matrices
         except OSError as e:
             logging.error(f"Error loading matrices from {directory_path}: {e}")
@@ -165,6 +168,7 @@ class Protein:
             preceding_residue = np.random.randint(0, self.residues_range)
 
         latest_energy_btw_preceding_current = self.interactions_matrices[current_matrix_index][preceding_residue, current_residue]
+        logging.debug(f"Preceding residue: {preceding_residue}, Current residue: {current_residue}, Next residue: {next_residue}, Latest energy: {latest_energy_btw_preceding_current}")
 
         for which_matrix, matrix in self.interactions_matrices.items():
             rounded_matrix = np.round(matrix, decimals=self.interactions_precision_limit)
@@ -177,6 +181,7 @@ class Protein:
         probabilities = np.array(list(rounded_energies_probability_dist.values()))
 
         drawn_energy = np.random.choice(rounded_energies, p=probabilities)
+        logging.debug(f"Drawn energy: {drawn_energy}, Probabilities: {probabilities}")
 
         filtered_matching_matrices = [
             which_matrix for which_matrix, energy in indexed_rounded_energies_btw_current_next.items() if energy == drawn_energy
@@ -193,6 +198,7 @@ class Protein:
 
         matrix_selection_probability = 1 / len(filtered_matching_matrices)
         selected_probability_matrix = self.probabilities_matrices[selected_matrix_index]
+        logging.debug(f"Selected matrix index: {selected_matrix_index}, Matrix selection probability: {matrix_selection_probability}")
 
         return selected_probability_matrix, matrix_selection_probability
 
@@ -210,8 +216,6 @@ class Protein:
         Returns:
             Tuple[str, float]: The pathway as a formatted string and the aggregated probability.
         """
-
-        # convert start to 0-based-indexing
         start -= 1
 
         try:
@@ -232,12 +236,15 @@ class Protein:
             current_residue = start
             next_residue = None
 
-            for _ in range(number_iterations):
+            logging.info(f"Starting pathway generation from residue: {start + 1}")
+
+            for i in range(number_iterations):
                 residues_probability_vector = self._get_transitions_prob_dist(current_residue, current_matrix)
                 residues_probability_vector[pathway] = 0.0  # Avoid loops by setting already visited residues to 0
 
                 total_probability = np.sum(residues_probability_vector)
                 if total_probability == 0:
+                    logging.warning("Total probability is zero, stopping pathway generation.")
                     break
 
                 probability_vector_given_current_pathway = residues_probability_vector / total_probability
@@ -253,8 +260,10 @@ class Protein:
                 pathway.append(next_residue)
 
                 log_aggregated_probability += log(matrix_selection_probability) + log(residue_selection_probability)
+                logging.debug(f"Iteration {i + 1}, Current pathway: {pathway}, Log aggregated probability: {log_aggregated_probability}")
 
                 if next_residue in target_residues:
+                    logging.info("Target residue reached, stopping pathway generation.")
                     break
 
                 current_matrix = next_matrix
@@ -265,6 +274,7 @@ class Protein:
             final_pathway = self._format_pathway(pathway)
             aggregated_probability = exp(log_aggregated_probability)
 
+            logging.info(f"Generated pathway: {final_pathway} with probability: {aggregated_probability}")
             return final_pathway, aggregated_probability
         except Exception as e:
             logging.error(f"Error generating allosteric signal pathway: {e}")
@@ -281,7 +291,6 @@ class Protein:
         Returns:
             str: The formatted pathway as a string.
         """
-
         vmd = lambda id: f" {id + 1}"
         default = lambda id: f" ({id + 1}-{self.residues[id]})"
         if VMD_interpretable:
@@ -318,7 +327,6 @@ class Protein:
             ValueError: If any of the provided parameters are invalid.
         """
         try:
-            # Ensure percentage_kept is within valid range
             if not (0 < percentage_kept <= 1):
                 raise ValueError("percentage_kept must be between 0 and 1 (exclusive).")
 
@@ -332,12 +340,10 @@ class Protein:
             for i in range(number_pathways):
                 pathway = self.generate_allosteric_signal_pathway(perturbed_residue, number_iterations, target_residues)
                 generated_pathways.append(pathway)
-                logging.debug(f"Generated pathway {i+1}/{number_pathways}: {pathway}")
+                logging.debug(f"Generated pathway {i + 1}/{number_pathways}: {pathway}")
 
-            # Sort pathways by probability in descending order
             generated_pathways.sort(key=lambda x: x[1], reverse=True)
 
-            # Filter out improbable pathways if required
             if filter_out_improbable:
                 number_kept = int(number_pathways * percentage_kept)
                 most_probable_pathways = generated_pathways[:number_kept]
@@ -351,7 +357,6 @@ class Protein:
                 output_directory = os.getcwd()
             save_output_to = os.path.join(output_directory, output_file_name)
 
-            # Write pathways to output file
             with open(save_output_to, "w") as output:
                 header = f"""Generated allosteric pathways sorted from more probable to less probable (top to bottom)
                 The following parameters were used:
