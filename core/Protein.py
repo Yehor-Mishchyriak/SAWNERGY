@@ -214,7 +214,7 @@ class Protein:
 
         try:
             if number_iterations is None:
-                number_iterations = self.number_residues - 2
+                number_iterations = self.number_residues - 1
 
             if target_residues is None:
                 target_residues = set()
@@ -234,7 +234,7 @@ class Protein:
 
                 total_probability = np.sum(residues_probability_vector)
                 if total_probability == 0:
-                    raise ValueError("Total probability is zero. The pathway cannot proceed further.")
+                    break
 
                 probability_vector_given_current_pathway = residues_probability_vector / total_probability
 
