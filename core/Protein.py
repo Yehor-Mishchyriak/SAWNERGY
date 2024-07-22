@@ -1,6 +1,5 @@
-#!AllostericPathwayAnalyzer/venv/bin/python3
-
 import os
+import importlib.util
 import logging
 import numpy as np
 from datetime import datetime
@@ -28,21 +27,21 @@ class Protein:
         probabilities_matrices (Dict[int, np.array]): Probability matrices loaded from files.
         number_matrices (int): The number of matrices loaded.
         interactions_precision_limit (int): Precision limit for rounding interaction energies.
+        random_seed (Union[int, None]): Seed for random number generation.
     """
 
-    def __init__(self, residues: Dict[int, str], matrices_directory_path: str, interactions_precision_limit: int = 1, random_seed: Union[int, None] = None) -> None:
+    def __init__(self, matrices_directory_path: str, interactions_precision_limit: int = 1, random_seed: Union[int, None] = None) -> None:
         """
         Initialize the Protein instance with residues and matrices.
 
         Args:
-            residues (Dict[int, str]): A dictionary of residue indices and their names.
             matrices_directory_path (str): Path to the directory containing matrices.
             interactions_precision_limit (int, optional): Precision limit for interactions. Defaults to 1.
+            random_seed (Union[int, None], optional): Seed for random number generation. Defaults to None.
         """
         try:
-            self.residues = residues
+            self.residues, self.interactions_matrices, self.probabilities_matrices = self._load_matrices_and_residues(matrices_directory_path)
             self.number_residues = len(self.residues)
-            self.interactions_matrices, self.probabilities_matrices = self._load_matrices(matrices_directory_path)
             self.number_matrices = len(self.probabilities_matrices)
             self.interactions_precision_limit = interactions_precision_limit
             self.random_seed = Protein.set_random_seed(random_seed)
@@ -56,43 +55,55 @@ class Protein:
         Set the random seed for reproducibility.
 
         Args:
-            seed (int): The seed value to set.
+            seed (Union[int, None], optional): The seed value to set. If None, a random seed will be generated.
         """
         if seed is None:
             seed = np.random.randint(0, 2**32 - 1)
         np.random.seed(seed)
         logging.info(f"Random seed set to: {seed}")
 
-    def _load_residues_list():
-        # take this function from the FramesAnalyzer.py
-        pass
-
-    def _load_matrices(self, directory_path: str) -> Tuple[Dict[int, np.array], Dict[int, np.array]]:
+    def _load_matrices_and_residues(self, directory_path: str) -> Tuple[Dict[int, str], Dict[int, np.array], Dict[int, np.array]]:
         """
-        Load interaction and probability matrices from the given directory.
+        Load interaction and probability matrices from the given directory and import residues from .py files.
 
         Args:
-            directory_path (str): Path to the directory containing matrices.
+            directory_path (str): Path to the directory containing matrices and residue files.
 
         Returns:
-            Tuple[Dict[int, np.array], Dict[int, np.array]]: A tuple containing dictionaries of interaction and probability matrices.
+            Tuple[Dict[int, str], Dict[int, np.array], Dict[int, np.array]]: A tuple containing dictionaries of residues, interaction, and probability matrices.
 
         Raises:
             OSError: If there's an error accessing the directory or files.
         """
         try:
+            residues = {}
             interactions_matrices = {}
             probabilities_matrices = {}
-            for i, dir in enumerate(os.listdir(directory_path)):
-                dir_path = os.path.join(directory_path, dir)
-                for npy_file in os.listdir(dir_path):
-                    path_to_npy_file = os.path.join(dir_path, npy_file)
-                    matrix = np.load(path_to_npy_file)
-                    if "interactions" in npy_file:
-                        interactions_matrices[i] = matrix
-                    if "probabilities" in npy_file:
-                        probabilities_matrices[i] = matrix
-            return interactions_matrices, probabilities_matrices
+            
+            # Loop through files in the directory
+            for i, filename in enumerate(os.listdir(directory_path)):
+                filepath = os.path.join(directory_path, filename)
+                
+                if filename.endswith(".py"):
+                    # Load the residues variable from the Python file
+                    spec = importlib.util.spec_from_file_location(filename[:-3], filepath)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    
+                    if hasattr(module, 'residues'):
+                        residues = module.residues
+                
+                elif os.path.isdir(filepath):
+                    # Loop through .npy files in subdirectories
+                    for npy_file in os.listdir(filepath):
+                        path_to_npy_file = os.path.join(filepath, npy_file)
+                        matrix = np.load(path_to_npy_file)
+                        if "interactions" in npy_file:
+                            interactions_matrices[i] = matrix
+                        if "probabilities" in npy_file:
+                            probabilities_matrices[i] = matrix
+            
+            return residues, interactions_matrices, probabilities_matrices
         except OSError as e:
             logging.error(f"Error loading matrices from {directory_path}: {e}")
             raise
@@ -328,8 +339,7 @@ class Protein:
 
 
 def main():
-    # testing
-    p53 = Protein()
+    pass
 
 
 if __name__ == "__main__":

@@ -20,25 +20,26 @@ class InteractionsToProbsConverter:
         output_directory (str): The directory to save the output pairs of interaction and probability matrices.
     """
 
-    def __init__(self, target_directory: str = None, save_output: bool = True, output_directory: str = None) -> None:
+    def __init__(self, target_directory: str = None, save_output: bool = True, output_directory: str = None, output_name: str = None) -> None:
         """
         Initialize the InteractionsToProbsConverter with the target and output directories.
 
         The output data is of the following format:
-        - "Paired_Probs_Energies_<time_when_created>" dir that contains "<i>-<j>" dirs;
+        - "Paired_Probs_Energies_<time_when_created>" dir (or "<output_name>" if provided) that contains "<i>-<j>" dirs;
         - each "<i>-<j>" dir contains two files: probabilities_matrix_residue_level_<i>-<j>.npy and interactions_matrix_residue_level_<i>-<j>.npy,
         - where i is the start frame and j is the end frame indices;
 
         Args:
             target_directory (str, optional): The directory containing the interaction matrix files.
             output_directory (str, optional): The directory to save the output probability matrix files.
+            output_name (str, optional): Name of the created directory.
         """
         self.target_directory = target_directory if target_directory else os.getcwd()
         self.save_output = save_output
-        self.output_directory = self._create_output_dir(output_directory)
+        self.output_directory = self._create_output_dir(output_directory, output_name)
 
     @staticmethod
-    def _create_output_dir(output_directory: str = None) -> str:
+    def _create_output_dir(output_directory: str = None, output_name: str = None) -> str:
         """
         Create a unique output directory based on the current time.
 
@@ -54,7 +55,8 @@ class InteractionsToProbsConverter:
         try:
             current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
             root_directory = output_directory if output_directory else os.getcwd()
-            output_directory = os.path.join(root_directory, f"Paired_Probs_Energies_{current_time}")
+            output_name = output_name if output_name else f"Paired_Probs_Energies_{current_time}"
+            output_directory = os.path.join(root_directory, output_name)
             os.makedirs(output_directory, exist_ok=True)
             logging.info(f"Created output directory: {output_directory}")
             return output_directory
@@ -218,13 +220,15 @@ def main():
     parser = argparse.ArgumentParser(description="Process interaction matrices to probability matrices.")
     parser.add_argument('target_directory', type=str, help='The directory containing the interaction matrix files.')
     parser.add_argument('--output_directory', type=str, default=None, help='The directory to save the output probability matrix files.')
+    parser.add_argument('--output_name', type=str, default=None, help='Name of the created directory.')
 
     args = parser.parse_args()
 
     try:
         interactions_to_probs_converter = InteractionsToProbsConverter(
             target_directory=args.target_directory,
-            output_directory=args.output_directory
+            output_directory=args.output_directory,
+            output_name=args.output_name
         )
         interactions_to_probs_converter.process_target_directory()
         # return the path to the output directory to stdout

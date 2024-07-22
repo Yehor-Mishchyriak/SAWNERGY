@@ -1,0 +1,37 @@
+#!/bin/bash
+# optional parameter
+config_name={$1:-0}
+# adjust these variables however you need
+topology_file="../p53_WT_nowat.prmtop"
+trajectory_file="../p53_WT_md1000_str.nc"
+pdb="../p53_WT_nowat.pdb"
+number_frames=1000
+cpptraj_analysis_command="pairwise :1-100 :1-100 cuteelec 1.0"
+cpptraj_output_type="avgout"
+start_frame=1
+batch_size=250
+# in_one_batch is False when set to 0, otherwise True
+in_one_batch=0
+output_directory="$HOME"
+
+# leave the following as is
+if [ "$in_one_batch" -eq 0 ]; then
+    target1=$(python3 core/FramesAnalyzer.py $topology_file $trajectory_file $number_frames "$cpptraj_analysis_command" "$cpptraj_output_type" --start_frame $start_frame --batch_size $batch_size --output_directory $output_directory)
+else
+    target1=$(python3 core/FramesAnalyzer.py $topology_file $trajectory_file $number_frames "$cpptraj_analysis_command" "$cpptraj_output_type" --start_frame $start_frame --batch_size $batch_size --in_one_batch --output_directory $output_directory)
+fi
+
+target2=$(python3 core/AnalysesProcessor.py $target1 --output_directory $output_directory)
+target3=$(python3 core/AtToResConverter.py $target2 --output_directory $output_directory)
+if [ "$config_name" -eq 0 ]; then
+    final=$(python3 core/InteractionsToProbsConverter.py $target3 --output_directory $output_directory)
+else 
+    final=$(python3 core/InteractionsToProbsConverter.py $target3 --output_directory $output_directory --output_name "$config_name")
+
+python3 core/pdbToDict.py $pdb $final
+
+rm -rf $target1 $target2 $target3
+
+echo "Configuration files were generated successfully! The following is the path to the config directory:"
+echo "*NOTE: DO NOT MODIFY THIS DIRECTORY*"
+echo $final
