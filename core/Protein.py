@@ -84,6 +84,10 @@ class Protein:
             for i, filename in enumerate(os.listdir(directory_path)):
                 filepath = os.path.join(directory_path, filename)
                 
+                # Skip __pycache__ and any non-relevant directories
+                if filename == "__pycache__" or not os.path.isdir(filepath) and not filename.endswith(".py") and not filename.endswith(".npy"):
+                    continue
+
                 if filename.endswith(".py"):
                     # Load the residues variable from the Python file
                     spec = importlib.util.spec_from_file_location(filename[:-3], filepath)
@@ -97,7 +101,7 @@ class Protein:
                     # Loop through .npy files in subdirectories
                     for npy_file in os.listdir(filepath):
                         path_to_npy_file = os.path.join(filepath, npy_file)
-                        matrix = np.load(path_to_npy_file)
+                        matrix = np.load(path_to_npy_file, allow_pickle=True)
                         if "interactions" in npy_file:
                             interactions_matrices[i] = matrix
                         if "probabilities" in npy_file:
@@ -343,7 +347,9 @@ class Protein:
 
 
 def main():
-    pass
+    # TESTING
+    p53 = Protein("/home/yehor/research_project/AllostericPathwayAnalyzer/p53")
+    p53.create_pathways(1, output_directory="/home/yehor/research_project/AllostericPathwayAnalyzer")
 
 
 if __name__ == "__main__":
