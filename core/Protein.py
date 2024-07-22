@@ -41,7 +41,8 @@ class Protein:
         """
         try:
             self.residues, self.interactions_matrices, self.probabilities_matrices = self._load_matrices_and_residues(config_directory_path)
-            self.number_residues = len(self.residues)
+            # subtract 1 to reflect 0-based indexing
+            self.number_residues = len(self.residues) - 1
             self.number_matrices = len(self.probabilities_matrices)
             self.interactions_precision_limit = interactions_precision_limit
             self.random_seed = Protein.set_random_seed(random_seed)
