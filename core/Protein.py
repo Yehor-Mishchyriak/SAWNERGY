@@ -42,7 +42,8 @@ class Protein:
         try:
             self.residues, self.interactions_matrices, self.probabilities_matrices = self._load_matrices_and_residues(config_directory_path)
             # subtract 1 to reflect 0-based indexing
-            self.number_residues = len(self.residues) - 1
+            self.number_residues = len(self.residues)
+            self.residues_range = self.number_residues - 1
             self.number_matrices = len(self.probabilities_matrices)
             self.interactions_precision_limit = interactions_precision_limit
             self.random_seed = Protein.set_random_seed(random_seed)
@@ -161,7 +162,7 @@ class Protein:
         rounded_energy_counts_btw_current_next = Counter()
 
         while preceding_residue is None or preceding_residue == current_residue or preceding_residue == next_residue:
-            preceding_residue = np.random.randint(0, self.number_residues)
+            preceding_residue = np.random.randint(0, self.residues_range)
 
         latest_energy_btw_preceding_current = self.interactions_matrices[current_matrix_index][preceding_residue, current_residue]
 
@@ -215,7 +216,7 @@ class Protein:
 
         try:
             if number_iterations is None:
-                number_iterations = self.number_residues - 1
+                number_iterations = self.residues_range - 1
 
             if target_residues is None:
                 target_residues = set()
@@ -244,7 +245,7 @@ class Protein:
                 if not np.isclose(np.sum(probability_vector_given_current_pathway), 1.0):
                     probability_vector_given_current_pathway /= np.sum(probability_vector_given_current_pathway)
 
-                next_residue = np.random.choice(range(0, self.number_residues), p=probability_vector_given_current_pathway)
+                next_residue = np.random.choice(range(0, self.residues_range), p=probability_vector_given_current_pathway)
                 residue_selection_probability = probability_vector_given_current_pathway[next_residue]
 
                 next_matrix, matrix_selection_probability = self._get_next_probability_matrix_and_selection_probability(preceding_residue, current_residue, next_residue, current_matrix_index)
@@ -275,6 +276,7 @@ class Protein:
 
         Args:
             pathway (list): List of residue indices in the pathway.
+            VMD_interpretable (bool): Whether to format for VMD interpretation.
 
         Returns:
             str: The formatted pathway as a string.
