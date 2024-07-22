@@ -218,6 +218,8 @@ class Protein:
 
             if target_residues is None:
                 target_residues = set()
+            else:
+                target_residues = set(map(lambda index: index - 1, target_residues))
 
             pathway = [start]
             log_aggregated_probability = 0
@@ -353,7 +355,7 @@ class Protein:
                 output.write(header + "\n")
                 for index, result in enumerate(most_probable_pathways):
                     path, probability = result
-                    output.write(f"{index + 1}) {path}\n")
+                    output.write(f"{index + 1}. {path}\n")
                     logging.debug(f"Pathway {index + 1}: {path} - Probability: {probability}")
 
             logging.info(f"Pathways saved to {save_output_to}")
