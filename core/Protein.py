@@ -1,4 +1,5 @@
 import os
+import pickle
 import importlib.util
 import logging
 import numpy as np
@@ -80,8 +81,11 @@ class Protein:
             interactions_matrices = {}
             probabilities_matrices = {}
             
+            interaction_index = 0
+            probability_index = 0
+
             # Loop through files in the directory
-            for i, filename in enumerate(os.listdir(directory_path)):
+            for filename in os.listdir(directory_path):
                 filepath = os.path.join(directory_path, filename)
                 
                 # Skip __pycache__ and any non-relevant directories
@@ -101,15 +105,23 @@ class Protein:
                     # Loop through .npy files in subdirectories
                     for npy_file in os.listdir(filepath):
                         path_to_npy_file = os.path.join(filepath, npy_file)
-                        matrix = np.load(path_to_npy_file, allow_pickle=True)
-                        if "interactions" in npy_file:
-                            interactions_matrices[i] = matrix
-                        if "probabilities" in npy_file:
-                            probabilities_matrices[i] = matrix
+                        if npy_file.endswith(".npy"):
+                            matrix = np.load(path_to_npy_file, allow_pickle=True)
+                            if "interactions" in npy_file:
+                                interactions_matrices[interaction_index] = matrix
+                                interaction_index += 1
+                            if "probabilities" in npy_file:
+                                # add normalisation just in case
+                                normalized_matrix = util.normalize_row_vectors(matrix)
+                                probabilities_matrices[probability_index] = normalized_matrix
+                                probability_index += 1
             
             return residues, interactions_matrices, probabilities_matrices
         except OSError as e:
             logging.error(f"Error loading matrices from {directory_path}: {e}")
+            raise
+        except pickle.UnpicklingError as e:
+            logging.error(f"Error unpickling file: {e}")
             raise
 
     def _get_transitions_prob_dist(self, residue_index: int, transition_probabilities_matrix: np.array) -> np.array:
@@ -349,6 +361,8 @@ class Protein:
 def main():
     # TESTING
     p53 = Protein("/home/yehor/research_project/AllostericPathwayAnalyzer/p53")
+    for i in p53.probabilities_matrices.values():
+        print(i)
     p53.create_pathways(1, output_directory="/home/yehor/research_project/AllostericPathwayAnalyzer")
 
 

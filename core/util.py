@@ -57,8 +57,11 @@ def normalize_vector(vector: np.array):
         raise ValueError("Expected one-dimensional np.array")
     total = np.sum(vector)
     if total == 0:
-        return vector  # return the vector as-is if the sum is zero to avoid division by zero
+        return np.zeros_like(vector)  # return a zero vector if the sum is zero to avoid division by zero
     normalized_vector = vector / total
+    # Ensure the sum of the normalized vector is exactly 1
+    if not np.isclose(np.sum(normalized_vector), 1.0):
+        normalized_vector /= np.sum(normalized_vector)
     return normalized_vector
 
 def normalize_row_vectors(vectors: np.array):
