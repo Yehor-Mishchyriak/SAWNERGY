@@ -30,17 +30,17 @@ class Protein:
         random_seed (Union[int, None]): Seed for random number generation.
     """
 
-    def __init__(self, matrices_directory_path: str, interactions_precision_limit: int = 1, random_seed: Union[int, None] = None) -> None:
+    def __init__(self, config_directory_path: str, interactions_precision_limit: int = 1, random_seed: Union[int, None] = None) -> None:
         """
         Initialize the Protein instance with residues and matrices.
 
         Args:
-            matrices_directory_path (str): Path to the directory containing matrices.
+            config_directory_path (str): Path to the directory containing matrices and residues dict.
             interactions_precision_limit (int, optional): Precision limit for interactions. Defaults to 1.
             random_seed (Union[int, None], optional): Seed for random number generation. Defaults to None.
         """
         try:
-            self.residues, self.interactions_matrices, self.probabilities_matrices = self._load_matrices_and_residues(matrices_directory_path)
+            self.residues, self.interactions_matrices, self.probabilities_matrices = self._load_matrices_and_residues(config_directory_path)
             self.number_residues = len(self.residues)
             self.number_matrices = len(self.probabilities_matrices)
             self.interactions_precision_limit = interactions_precision_limit
