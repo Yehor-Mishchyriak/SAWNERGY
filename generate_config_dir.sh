@@ -27,6 +27,7 @@ if [ "$config_name" -eq 0 ]; then
     final=$(python3 core/InteractionsToProbsConverter.py $target3 --output_directory $output_directory)
 else 
     final=$(python3 core/InteractionsToProbsConverter.py $target3 --output_directory $output_directory --output_name "$config_name")
+fi
 
 python3 core/pdbToDict.py $pdb $final
 

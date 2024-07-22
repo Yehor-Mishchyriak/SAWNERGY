@@ -21,7 +21,7 @@ class Protein:
     A class to represent a protein and analyze its allosteric pathways.
 
     Attributes:
-        residues (Dict[int, str]): A dictionary mapping residue indices to their respective names.
+        residues (Dict[int, str]): A dictionary mapping residue indices to their respective names. NOTE: IT IS INDEXED FROM 0!
         number_residues (int): The total number of residues in the protein.
         interactions_matrices (Dict[int, np.array]): Interaction matrices loaded from files.
         probabilities_matrices (Dict[int, np.array]): Probability matrices loaded from files.
@@ -186,13 +186,17 @@ class Protein:
         Generate the allosteric signal pathway starting from a residue.
 
         Args:
-            start (int): The starting residue index.
+            start (int): The starting residue index. Assuming it is 1-based-indexed
             number_iterations (Union[None, int], optional): Number of iterations. Defaults to the number of residues.
             target_residues (Union[None, Set[int]], optional): Set of target residues. Defaults to an empty set.
 
         Returns:
             Tuple[str, float]: The pathway as a formatted string and the aggregated probability.
         """
+
+        # convert start to 0-based-indexing
+        start -= 1
+
         try:
             if number_iterations is None:
                 number_iterations = self.number_residues
@@ -306,7 +310,7 @@ class Protein:
                 most_probable_pathways = generated_pathways
 
             current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
-            output_file_name = f"from_({perturbed_residue}-{self.residues[perturbed_residue]})_{number_pathways}_pathways_{current_time}.txt"
+            output_file_name = f"from_({perturbed_residue}-{self.residues[perturbed_residue-1]})_{number_pathways}_pathways_{current_time}.txt"
             if output_directory is None:
                 output_directory = os.getcwd()
             save_output_to = os.path.join(output_directory, output_file_name)
