@@ -269,7 +269,7 @@ class Protein:
             logging.error(f"Error generating allosteric signal pathway: {e}")
             raise
 
-    def _format_pathway(self, pathway: list) -> str:
+    def _format_pathway(self, pathway: list, VMD_interpretable: bool = True) -> str:
         """
         Format the pathway for display.
 
@@ -279,9 +279,18 @@ class Protein:
         Returns:
             str: The formatted pathway as a string.
         """
-        path = ""
+
+        vmd = lambda id: f" {id + 1}"
+        default = lambda id: f" ({id + 1}-{self.residues[id]})"
+        if VMD_interpretable:
+            path = "resid"
+            format_ = vmd
+        else:
+            path = ""
+            format_ = default
+
         for residue_index in pathway:
-            path += f"({residue_index + 1}-{self.residues[residue_index]})"
+            path += format_(residue_index)
         return path
 
     def create_pathways(self, perturbed_residue: int, number_iterations: Union[None, int] = None, 
