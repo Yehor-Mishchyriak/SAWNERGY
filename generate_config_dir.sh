@@ -1,6 +1,7 @@
 #!/bin/bash
 # optional parameter
-config_name=${1:-default}  # Set a default value as 'default' if no parameter is passed# adjust these variables however you need
+config_name=${1:-default}  # Set a default value as 'default' if no parameter is passed
+# adjust these variables however you need
 topology_file="../p53_WT_nowat.prmtop"
 trajectory_file="../p53_WT_md1000_str.nc"
 pdb="../p53_WT_nowat.pdb"

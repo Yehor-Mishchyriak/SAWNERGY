@@ -2,8 +2,9 @@
 *
 
 # Except:
-!core/
 !interfaces/
+!core/
+!configs/
 !interfaces/AnalysesProcessorABC.py
 !interfaces/AtToResConverterABC.py
 !interfaces/FramesAnalyzerABC.py
@@ -15,9 +16,12 @@
 !core/Protein.py
 !core/util.py
 !core/pdbToDict.py
+!configs/logging_config.py
+!configs/logging_config.json
+!configs/root_config.json
 !model.py
 !generate_config_dir.sh
 !.gitignore
 !requirements.txt
 !README.md
-!poster.png
+
