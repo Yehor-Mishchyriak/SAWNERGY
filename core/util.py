@@ -4,6 +4,12 @@ import numpy as np
 import logging
 from re import search
 from time import time
+from functools import wraps
+from concurrent.futures import as_completed
+
+#############################
+# MATRIX RELATED OPERATIONS #
+#############################
 
 def softmax(matrix: np.array, axis=1):
     """
@@ -41,6 +47,7 @@ def transition_probs_from_interactions(matrix: np.array):
     """
     return softmax(matrix)
 
+# TODO: DELETE THIS FUNCTION, KEEP ONLY SOFTMAX FOR NORMALISATION
 def normalize_vector(vector: np.array):
     """
     Normalize a 1D numpy array.
@@ -77,6 +84,35 @@ def normalize_row_vectors(vectors: np.array):
     """
     return np.apply_along_axis(func1d=normalize_vector, axis=1, arr=vectors)
 
+
+####################
+# HELPER FUNCTIONS #
+####################
+# TODO: DOC STRING, ERROR HANGLING, LOGGING
+def process_elementwise(in_parallel=False, Executor=None):
+
+    if Executor is None:
+        raise ValueError("An 'Executor' argument must be provided.")
+
+    def inner(iterable, function, *extra_args, **extra_kwargs):
+
+        nonlocal in_parallel
+        nonlocal Executor
+
+        results = []
+        if in_parallel:
+            with Executor() as executor:
+                tasks = [executor.submit(function, element, *extra_args, **extra_kwargs) for element in iterable]
+
+                for future in as_completed(tasks):
+                    result = future.result()
+                    results.append(result)
+        else:
+            results = [function(element, *extra_args, **extra_kwargs) for element in iterable]
+        return results
+    
+    return inner
+
 def extract_frames_range(file_name):
     pattern = r"(\d+)-(\d+)"
     matched = search(pattern, file_name)
@@ -84,19 +120,9 @@ def extract_frames_range(file_name):
     end_frame = matched.group(2)
     return int(start_frame), int(end_frame)
 
-# decorator
-def record_execution_time(function):
-    def wrapper(*args, **kwargs):
-        start_time = time()
-        output = function(*args, **kwargs)
-        end_time = time()
-        # TODO: log the time
-        return output
-    return wrapper
 
 def main():
     pass
-
 
 if __name__ == "__main__":
     main()
