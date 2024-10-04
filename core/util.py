@@ -3,6 +3,7 @@
 import numpy as np
 import logging
 from re import search
+from time import time
 
 def softmax(matrix: np.array, axis=1):
     """
@@ -83,6 +84,15 @@ def extract_frames_range(file_name):
     end_frame = matched.group(2)
     return int(start_frame), int(end_frame)
 
+# decorator
+def record_execution_time(function):
+    def wrapper(*args, **kwargs):
+        start_time = time()
+        output = function(*args, **kwargs)
+        end_time = time()
+        # TODO: log the time
+        return output
+    return wrapper
 
 def main():
     pass
