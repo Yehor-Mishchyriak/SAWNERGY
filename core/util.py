@@ -1,92 +1,45 @@
 #!AllostericPathwayAnalyzer/venv/bin/python3
 
+import os
+import datetime
 import numpy as np
-import logging
+from json import load
 from re import search
 from concurrent.futures import as_completed
+
 
 #############################
 # MATRIX RELATED OPERATIONS #
 #############################
 
-def softmax(matrix: np.array, axis=1):
-    """
-    Compute the softmax of each row of the input matrix.
-
-    Parameters:
-    matrix (np.array): Input matrix.
-    axis (int): Axis along which to compute the softmax. Default is 1.
-
-    Returns:
-    np.array: The softmax of the input matrix.
-    """
-    try:
-        magnitudes_matrix = np.abs(matrix)
-        shift_magnitudes_matrix = magnitudes_matrix - np.max(magnitudes_matrix, axis=axis, keepdims=True)
-        exponents = np.exp(shift_magnitudes_matrix)
-        probabilities_matrix = exponents / np.sum(exponents, axis=axis, keepdims=True)
-        # Ensure the probability of going from residue i to itself is 0.0
-        np.fill_diagonal(probabilities_matrix, 0.0)
-        renormalized_matrix = normalize_row_vectors(probabilities_matrix)
-        return renormalized_matrix
-    except Exception as e:
-        logging.error(f"Error in softmax function: {e}")
-        raise
+def _softmax(matrix: np.array, axis=1):
+    pass
 
 def transition_probs_from_interactions(matrix: np.array):
-    """
-    Compute transition probabilities from interaction matrix using softmax.
-
-    Parameters:
-    matrix (np.array): Interaction matrix.
-
-    Returns:
-    np.array: Transition probabilities.
-    """
-    return softmax(matrix)
-
-# TODO: DELETE THIS FUNCTION, KEEP ONLY SOFTMAX FOR NORMALISATION
-def normalize_vector(vector: np.array):
-    """
-    Normalize a 1D numpy array.
-
-    Parameters:
-    vector (np.array): Input vector.
-
-    Returns:
-    np.array: Normalized vector.
-
-    Raises:
-    ValueError: If the input array is not one-dimensional.
-    """
-    if len(vector.shape) > 1:
-        raise ValueError("Expected one-dimensional np.array")
-    total = np.sum(vector)
-    if total == 0:
-        return np.zeros_like(vector)  # return a zero vector if the sum is zero to avoid division by zero
-    normalized_vector = vector / total
-    # Ensure the sum of the normalized vector is exactly 1
-    if not np.isclose(np.sum(normalized_vector), 1.0):
-        normalized_vector /= np.sum(normalized_vector)
-    return normalized_vector
-
-def normalize_row_vectors(vectors: np.array):
-    """
-    Normalize each row vector of a 2D numpy array.
-
-    Parameters:
-    vectors (np.array): Input 2D array with row vectors.
-
-    Returns:
-    np.array: Array with normalized row vectors.
-    """
-    return np.apply_along_axis(func1d=normalize_vector, axis=1, arr=vectors)
+    return _softmax(matrix)
 
 
 ####################
 # HELPER FUNCTIONS #
 ####################
-# TODO: DOC STRING, ERROR HANGLING, LOGGING
+
+def load_json_config(config_location: str) -> dict:
+    with open(config_location, "r") as config_file:
+        config = load(config_file)
+    return config
+
+def create_output_dir(output_directory_location: str, output_directory_name: str) -> str:
+    # get the current time to ensure that the name of the output is unique
+    current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
+
+    # create the complete path to the output directory
+    output_directory_path = os.path.join(output_directory_location, f"{output_directory_name}_{current_time}")
+
+    # create the output directory
+    os.makedirs(output_directory_path, exist_ok=True)
+
+    return output_directory_path
+
 def process_elementwise(in_parallel=False, Executor=None):
 
     if Executor is None:
@@ -111,6 +64,19 @@ def process_elementwise(in_parallel=False, Executor=None):
     
     return inner
 
+##################################
+# FILE-SPECIFIC HELPER FUNCTIONS #
+##################################
+
+def construct_batch_sequence(number_frames, batch_size):
+    number_batches, residual_frames = divmod(number_frames, batch_size)
+    batches = [(batch_size*k-(batch_size-1), batch_size*k) for k in range(1, number_batches+1)]
+    # add residual frames if any
+    if residual_frames > 0:
+        last_frame = batches[-1][1]
+        residual_batch = (last_frame, last_frame + residual_frames)
+        batches.append(residual_batch)
+
 def extract_frames_range(file_name):
     pattern = r"(\d+)-(\d+)"
     matched = search(pattern, file_name)
@@ -118,6 +84,28 @@ def extract_frames_range(file_name):
     end_frame = matched.group(2)
     return int(start_frame), int(end_frame)
 
+def extract_residues_from_pdb(pdb_file: str, save_output: bool = False, output_directory: str = None):
+    residues = {}
+    with open(pdb_file, "r") as file:
+        lines = file.readlines()
+        for line in lines:
+            try:
+                _, _, _, residue, index, _, _, _, _, _ = line.split()
+                residue = residue.strip()
+                # note need to subtract 1 to keep it zero-indexed to match np.array matrices
+                index = int(index.strip()) - 1
+                residues[index] = residue
+            except ValueError:  # in case the line being parsed is of a different format
+                continue
+
+    if save_output:
+        if output_directory is None:
+            output_directory = os.getcwd()
+        output_file_path = os.path.join(output_directory, f"{os.path.splitext(os.path.basename(pdb_file))[0]}_residues.py")
+        with open(output_file_path, 'w') as output_file:
+            output_file.write(f"residues = {residues}")
+
+    return residues
 
 def main():
     pass
