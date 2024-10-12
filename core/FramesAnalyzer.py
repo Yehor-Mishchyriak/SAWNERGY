@@ -6,6 +6,7 @@ from subprocess import run
 from concurrent.futures import ThreadPoolExecutor
 
 root_config = util.load_json_config("AllostericPathwayAnalyzer/configs/root.json")
+logger = util.set_up_logging("AllostericPathwayAnalyzer/configs/logging.json", "network_construction_module")
 class FramesAnalyzer:
 
     def __init__(self, topology_file: str, trajectory_file: str,

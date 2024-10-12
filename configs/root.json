@@ -1,0 +1,26 @@
+{
+    "GLOBAL":{
+        "output_directory_path": "/home/yehor/research_project/AllostericPathwayAnalyzer/OUTPUT"
+    },
+    "FramesAnalyzer":{
+        "output_directory_name": "Processed_Frames"
+    },
+    "AnalysesProcessor":{
+
+    },
+    "AtToResConverter":{
+
+    },
+    "InteractionsToProbsConverter":{
+
+    },
+    "pdbToDict":{
+
+    },
+    "Protein":{
+
+    },
+    "util":{
+
+    }
+}

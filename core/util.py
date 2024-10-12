@@ -1,7 +1,10 @@
 #!AllostericPathwayAnalyzer/venv/bin/python3
 
+import atexit
+import logging.config
 import os
 import datetime
+import logging
 import numpy as np
 from json import load
 from re import search
@@ -19,14 +22,24 @@ def transition_probs_from_interactions(matrix: np.array):
     return _softmax(matrix)
 
 
-####################
-# HELPER FUNCTIONS #
-####################
+############################
+# GENERAL HELPER FUNCTIONS #
+############################
 
 def load_json_config(config_location: str) -> dict:
     with open(config_location, "r") as config_file:
         config = load(config_file)
     return config
+
+def set_up_logging(config_location, logger_name):
+    config = load_json_config(config_location)
+    logging.config.dictConfig(config)
+    which_queue_handler = "queue_handler_construction_module" if logger_name == "network_construction_module" else "queue_handler_model"
+    queue_handler = logging.getHandlerByName(which_queue_handler)
+    if queue_handler is not None:
+        queue_handler.listener.start()
+        atexit.register(queue_handler.listener.stop)
+        return logging.getLogger(logger_name)
 
 def create_output_dir(output_directory_location: str, output_directory_name: str) -> str:
     # get the current time to ensure that the name of the output is unique
