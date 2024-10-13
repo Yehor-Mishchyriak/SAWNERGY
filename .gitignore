@@ -14,7 +14,7 @@
 !configs/logging.json
 !configs/root.json
 !model.py
-!generate_config_dir.sh
+!generate_network.sh
 !.gitignore
 !requirements.txt
 !README.md

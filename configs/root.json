@@ -3,7 +3,8 @@
         "output_directory_path": "/home/yehor/research_project/AllostericPathwayAnalyzer/OUTPUT"
     },
     "FramesAnalyzer":{
-        "output_directory_name": "Processed_Frames"
+        "output_directory_name": "Processed_Frames",
+        "start_end_frames_dependent_analysis_file_name": "{}-{}.dat"
     },
     "AnalysesProcessor":{
 
