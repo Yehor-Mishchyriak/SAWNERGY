@@ -18,18 +18,21 @@ def interactive_create_pathways(protein):
             perturbed_residue = input("Enter the perturbed residue index: ")
             if perturbed_residue.lower() == 'exit':
                 break
-            perturbed_residue = int(perturbed_residue)
+            # account for zero-indexing
+            perturbed_residue = int(perturbed_residue) - 1
             
             number_iterations = input("Enter the number of iterations (leave blank for default): ")
             if number_iterations.lower() == 'exit':
                 break
-            number_iterations = int(number_iterations) if number_iterations else None
+            # account for zero-indexing
+            number_iterations = int(number_iterations)-1 if number_iterations else None
             
             target_residues_input = input("Enter the target residues as comma-separated values (leave blank for none): ")
             if target_residues_input.lower() == 'exit':
                 break
             if target_residues_input:
-                target_residues = set(map(int, target_residues_input.split(',')))
+                # account for zero-indexing
+                target_residues = set(map(lambda x: int(x)-1, target_residues_input.split(',')))
             else:
                 target_residues = None
             
