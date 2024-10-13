@@ -13,7 +13,6 @@ class FramesAnalyzer:
                  number_frames: int,
                  cpptraj_analysis_command: str, cpptraj_output_type: str,
                  batch_size: int = 1, in_one_batch: bool = False) -> None:
-
         # MD Simulation data import
         self.topology_file = topology_file
         self.trajectory_file = trajectory_file
@@ -30,7 +29,7 @@ class FramesAnalyzer:
 
     def _run_cpptraj(self, start_end: tuple) -> None:
         start_frame, end_frame = start_end
-        output_file_path = os.path.join(self.output_directory, f"{start_frame}-{end_frame}.dat")
+        output_file_path = os.path.join(self.output_directory, root_config["FramesAnalyzer"]["start_end_frames_dependent_analysis_file_name"].format(start_frame, end_frame))
 
         command = f"""echo \"parm {self.topology_file}
                     trajin {self.trajectory_file} {start_frame} {end_frame}
