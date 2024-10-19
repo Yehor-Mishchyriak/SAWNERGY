@@ -4,6 +4,7 @@
 # Except:
 !core/
 !configs/
+!core/newProtein.py
 !core/FramesAnalyzer.py
 !core/AnalysesProcessor.py
 !core/AtToResConverter.py

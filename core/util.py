@@ -109,7 +109,7 @@ class FrozenDict(Mapping):
 # FILE-SPECIFIC HELPER FUNCTIONS #
 ##################################
 
-def import_network_directory_components(directory_path: str):
+def import_network_components(directory_path: str):
         
         residues = None
         interaction_matrices = []
