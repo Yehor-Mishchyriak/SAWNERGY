@@ -110,28 +110,21 @@ class FrozenDict(Mapping):
 ##################################
 
 def import_network_directory_components(directory_path: str):
-        residues = {}
-        interaction_matrices = {}
-        probability_matrices = {}
         
-        interaction_matrix_index = 0
-        probability_matrix_index = 0
+        residues = None
+        interaction_matrices = []
+        probability_matrices = []
 
         # Loop through files in the directory
         for filename in os.listdir(directory_path):
             filepath = os.path.join(directory_path, filename)
             
-            if filename == "__pycache__" or not os.path.isdir(filepath) and not filename.endswith(".py") and not filename.endswith(".npy"):
+            if filename == "__pycache__" or not os.path.isdir(filepath) and not filename.endswith(".dat") and not filename.endswith(".npy"):
                 continue
 
             # Load the residues variable from the Python file
-            if filename.endswith(".py"):
-                spec = importlib.util.spec_from_file_location(filename[:-3], filepath)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                
-                if hasattr(module, 'residues'):
-                    residues = module.residues
+            if filename.endswith(".dat"):
+                residues = read_residues_file(filename)
 
             # Loop through .npy files in subdirectories; load interaction and probability matrices
             elif os.path.isdir(filepath):
@@ -141,13 +134,11 @@ def import_network_directory_components(directory_path: str):
                     if npy_file.endswith(".npy"):
                         matrix = np.load(path_to_npy_file, allow_pickle=True)
                         if "interactions" in npy_file:
-                            interaction_matrices[interaction_matrix_index] = matrix
-                            interaction_matrix_index += 1
+                            interaction_matrices.append(matrix)
                         if "probabilities" in npy_file:
-                            probability_matrices[probability_matrix_index]
-                            probability_matrix_index += 1
+                            probability_matrices.append(matrix)
         
-        return FrozenDict(residues), FrozenDict(interaction_matrices), FrozenDict(probability_matrices)
+        return residues, tuple(interaction_matrices), tuple(probability_matrices)
 
 def construct_batch_sequence(number_frames, batch_size):
     number_batches, residual_frames = divmod(number_frames, batch_size)
@@ -165,7 +156,8 @@ def extract_frames_range(file_name):
     end_frame = matched.group(2)
     return int(start_frame), int(end_frame)
 
-def extract_residues_from_pdb(pdb_file: str, save_output: bool = False, output_directory: str = None):
+# OPTIMIZE
+def extract_residues_from_pdb(pdb_file: str, file_path: str = None):
     residues = {}
     with open(pdb_file, "r") as file:
         lines = file.readlines()
@@ -177,16 +169,17 @@ def extract_residues_from_pdb(pdb_file: str, save_output: bool = False, output_d
                 index = int(index.strip()) - 1
                 residues[index] = residue
             except ValueError:  # in case the line being parsed is of a different format
-                continue
-
-    if save_output:
-        if output_directory is None:
-            output_directory = os.getcwd()
-        output_file_path = os.path.join(output_directory, f"{os.path.splitext(os.path.basename(pdb_file))[0]}_residues.py")
-        with open(output_file_path, 'w') as output_file:
+                # add proper handling
+                raise
+    residues = tuple(sorted(list(residues.items()), key=lambda index_residue: index_residue[0]))
+    with open(file_path, 'w') as output_file:
             output_file.write(f"residues = {residues}")
 
-    return residues
+def read_residues_file(f):
+    with open(f, "r") as file:
+        l = file.readline()
+    return exec(l)
+
 
 def main():
     pass
