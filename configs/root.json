@@ -19,7 +19,8 @@
 
     },
     "Protein":{
-
+    "output_directory_name": "Generated_pathways",
+    "pathways_file_name": "pathways.txt"
     },
     "util":{
 

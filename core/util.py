@@ -32,11 +32,23 @@ def probabilities_from_interactions(matrix: np.array):
 # GENERAL HELPER FUNCTIONS #
 ############################
 
+class CopyingTuple:
+    def __init__(self, *args):
+        self._data = tuple(args)
+
+    def __getitem__(self, index):
+        item = self._data[index]
+        return deepcopy(item)
+    
+    def __repr__(self) -> str:
+        return f"CopyingTuple{self._data}"
+
 def load_json_config(config_location: str) -> dict:
     with open(config_location, "r") as config_file:
         config = load(config_file)
     return config
 
+# TODO: make more universal so that non-queue handlers can also be set up
 def set_up_logging(config_location, logger_name):
     config = load_json_config(config_location)
     dictConfig(config)
@@ -83,28 +95,6 @@ def process_elementwise(in_parallel=False, Executor=None):
     
     return inner
 
-class FrozenDict(Mapping):
-    def __init__(self, data):
-        # Store a deep copy of the input dictionary to ensure immutability
-        self._data = deepcopy(data)
-        
-    def __getitem__(self, key):
-        # Return a deep copy of the value to prevent mutation
-        return deepcopy(self._data[key])
-    
-    def __iter__(self):
-        return iter(self._data)
-    
-    def __len__(self):
-        return len(self._data)
-    
-    def __hash__(self):
-        # FrozenDict is hashable based on the items in it, converted to a frozenset
-        return hash(frozenset(self._data.items()))
-    
-    def __repr__(self):
-        return f"FrozenDict({self._data})"
-
 ##################################
 # FILE-SPECIFIC HELPER FUNCTIONS #
 ##################################
@@ -138,7 +128,7 @@ def import_network_components(directory_path: str):
                         if "probabilities" in npy_file:
                             probability_matrices.append(matrix)
         
-        return residues, tuple(interaction_matrices), tuple(probability_matrices)
+        return CopyingTuple(*residues), CopyingTuple(*interaction_matrices), CopyingTuple(*probability_matrices)
 
 def construct_batch_sequence(number_frames, batch_size):
     number_batches, residual_frames = divmod(number_frames, batch_size)

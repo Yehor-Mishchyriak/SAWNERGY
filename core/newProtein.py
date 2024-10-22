@@ -1,11 +1,10 @@
 import os
 import numpy as np
-from datetime import datetime
-from typing import Dict, Union, Set, Tuple
+from typing import Union, Tuple, List
 from math import log, exp
-from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 import util
+from numba import jit
 
 root_config = util.load_json_config("AllostericPathwayAnalyzer/configs/root.json")
 logger = util.set_up_logging("AllostericPathwayAnalyzer/configs/logging.json", "network_construction_module")
@@ -14,48 +13,46 @@ class Protein:
 
     def __init__(self, network_directory_path: str, interactions_precision_limit_decimals: int = 1, seed: Union[int, None] = None) -> None:
 
-        network_components = util.import_network_components(network_directory_path)
-
-        self.residues: tuple = network_components[0]
-        self.interactions_matrices: tuple = network_components[0]
-        self.probabilities_matrices: tuple = network_components[0]
+        network_components: Tuple[tuple, tuple, tuple] = util.import_network_components(network_directory_path)
+        self.residues = network_components[0]
+        self.interactions_matrices = network_components[0]
+        self.probabilities_matrices = network_components[0]
 
         self.number_residues: int = len(self.residues)
-        self.residues_range: int = self.number_residues - 1
+        self.residues_range: int = self.number_residues
 
         self.number_matrices: int = len(self.probabilities_matrices)
-        self.interactions_precision_limit_decimals: float = interactions_precision_limit_decimals
+        self.interactions_precision_limit_decimals: int = interactions_precision_limit_decimals
 
-        self.seed: int = seed
-        Protein._set_seed(seed)
+        self.seed: int = self._set_seed(seed)
+        self.output_file: str = os.path.join(util.create_output_dir(root_config["GLOBAL"]["output_directory_path"],
+                                                                    root_config["Protein"]["output_directory_name"]),
+                                                                    root_config["Protein"]["pathways_file_name"])
 
-    @staticmethod
-    def _set_seed(seed: Union[int, None] = None) -> None:
-        if seed is None:
-            seed = np.random.randint(0, 2**32 - 1)
+    def _set_seed(self, seed: Union[int, None] = None) -> int:
+        seed = np.random.randint(0, 2**32 - 1) if seed is None else seed
+        self.seed = seed
         np.random.seed(seed)
+        return seed
 
-    def _format_pathway(self, pathway: list, VMD_interpretable: bool = True) -> str:
-        vmd = lambda id: f" {id + 1}"
-        default = lambda id: f" ({id + 1}-{self.residues[id]})"
-        if VMD_interpretable:
+    def _format_pathway(self, visited_residues_indices: list, VMD_compatible: bool = True) -> str:
+        if VMD_compatible:
             path = "resid"
-            format_ = vmd
+            format_ = lambda id: f" {id + 1}"
         else:
             path = ""
-            format_ = default
+            format_ = lambda id: f" ({id + 1}-{self.residues[id]})"
 
-        for residue_index in pathway:
+        for residue_index in visited_residues_indices:
             path += format_(residue_index)
         return path
 
-    def _get_transitions_prob_dist(self, residue_index: int, transition_probabilities_matrix: np.array) -> np.array:
+    def _get_transitions_prob_vector(self, residue_index: int, transition_probabilities_matrix: np.array) -> np.array:
         if residue_index not in self.residues:
-            raise ValueError(f"Start residue index {residue_index} is not valid.")
+            raise ValueError(f"Residue index {residue_index} is not valid.")
         return transition_probabilities_matrix[residue_index, :]
 
-    def _get_next_probability_matrix_and_selection_probability(
-            self, preceding_residue: Union[None, int], current_residue: int, next_residue: int, current_matrix_index: int):
+    def _get_next_probability_matrix_and_selection_probability(self, preceding_residue: Union[None, int], current_residue: int, next_residue: int, current_matrix_index: int) -> Tuple[int, float]:
 
         # Ensure preceding_residue is valid
         if preceding_residue is None or preceding_residue in (current_residue, next_residue):
@@ -63,51 +60,48 @@ class Protein:
             preceding_residue = np.random.choice(valid_residues)
 
         # Get the last observed energy between preceding and current residue
-        last_observed_energy_btw_preceding_current = self.interactions_matrices[current_matrix_index][preceding_residue, current_residue]
+        last_observed_energy_btw_preceding_current: float = self.interactions_matrices[current_matrix_index][preceding_residue, current_residue]
 
         # Calculate rounded energies and their probabilities
-        rounded_energy_counts_btw_current_next = np.round([matrix[current_residue, next_residue] 
+        rounded_energy_counts_btw_current_next: np.ndarray = np.round([matrix[current_residue, next_residue] 
                                                         for matrix in self.interactions_matrices],
-                                                        decimals=self.interactions_precision_limit_decimals)
+                                                        decimals=self.interactions_precision_limit_decimals) # 1-D array
         
-        # Get unique rounded energies and their counts
-        unique, counts = np.unique(rounded_energy_counts_btw_current_next, return_counts=True)
+        # Get unique rounded interaction energies and their frequencies
+        values_counts: Tuple[np.ndarray, np.ndarray] = np.unique(rounded_energy_counts_btw_current_next, return_counts=True) # 1-D arrays
+        # unique interaction energies between the current and the next reisues, and their frequencies across the matrices
+        unique_rounded_energies_btw_current_next, frequencies = values_counts # len(unique) == len(counts) -> True
 
-        # Calculate probabilities as count / number of matrices
-        probabilities = counts / self.number_matrices
-
-        # Use `unique` as the list of rounded energies directly
-        rounded_energies = unique
+        # Calculate probabilities
+        probabilities: np.ndarray = frequencies / self.number_matrices
 
         # Draw an energy value based on the probability distribution
-        drawn_energy = np.random.choice(rounded_energies, p=probabilities)
+        drawn_energy: float = np.random.choice(unique_rounded_energies_btw_current_next, p=probabilities)
 
         # Select the matrix index where the energy matches
-        selected_matrix_index, _ = min(
+        selected_matrix_index: int = min(
             [(which_matrix, abs(matrix[preceding_residue, current_residue] - last_observed_energy_btw_preceding_current))
             for which_matrix, matrix in enumerate(self.interactions_matrices)
             if np.round(matrix[current_residue, next_residue], decimals=self.interactions_precision_limit_decimals) == drawn_energy],
-            key=lambda matrix_difference_pair: matrix_difference_pair[1])
+            key=lambda matrix_difference_pair: matrix_difference_pair[1])[0]
 
         # Calculate matrix selection probability
-        matrix_selection_probability = 1 / counts[np.where(rounded_energies == drawn_energy)][0]
+        matrix_selection_probability: float = 1 / frequencies[np.where(unique_rounded_energies_btw_current_next == drawn_energy)][0]
 
         return selected_matrix_index, matrix_selection_probability
+    
+    def _generate_allosteric_signal_pathway(self, start: int, number_steps: Union[None, int] = None, target_residues: Union[None, Tuple[int]] = None) -> Tuple[list, float]:
 
-    def _generate_allosteric_signal_pathway(
-            self, start: int, number_iterations: Union[None, int] = None, target_residues: Union[None, Set[int]] = None
-    ) -> Tuple[str, float]:
+        pathway: List[int] = [start]
+        log_aggregated_probability: float = 0.0
 
-        pathway = [start]
-        log_aggregated_probability = 0
+        current_matrix_index: int = np.random.randint(0, self.number_matrices)
+        preceding_residue: int = None
+        current_residue: int = start
+        next_residue: Union[int, None] = None
 
-        current_matrix_index = np.random.randint(0, self.number_matrices)
-        preceding_residue = None
-        current_residue = start
-        next_residue = None
-
-        for _ in range(number_iterations):
-            probability_vector = self._get_transitions_prob_dist(current_residue, self.probabilities_matrices[current_matrix_index])
+        for _ in range(number_steps):
+            probability_vector: np.ndarray = self._get_transitions_prob_vector(current_residue, self.probabilities_matrices[current_matrix_index]) # 1-D array
             probability_vector[pathway] = 0.0  # Avoid loops by setting already visited residues to 0
             probability_vector = util.normalize_vector(probability_vector)
 
@@ -130,50 +124,49 @@ class Protein:
         aggregated_probability = exp(log_aggregated_probability)
 
         return pathway, aggregated_probability
+    
+    # NOT FINISHED YET
+    def create_pathways(self, start_residue: int, number_steps: Union[None, int] = None, target_residues: Union[None, Tuple[int]] = None,
+                        number_pathways: int = 100, filter_out_improbable: bool = True, percentage_kept: float = 0.1):
+        
+        if number_steps is None:
+            number_steps = self.residues_range
+        
+        if not (0.0 <= start_residue <= self.number_residues):
+            raise ValueError(f"start_residue {start_residue} value is invalid; expected an integer value in [0.0, {self.number_residues}]")
+        if not (0.0 <= number_steps <= self.number_residues):
+            raise ValueError(f"number_steps {number_steps} value is invalid; expected an integer value in [0.0, {self.number_residues}]")
+        if not (0.0 < percentage_kept <= 1.0):
+            raise ValueError(f"percentage_kept {percentage_kept} value is invalid; expected a floating point value in (0.0, 1.0]")
+        
+        try:
+            generated_pathways = util.process_elementwise(in_parallel=True, Executor=ProcessPoolExecutor)(range(number_pathways), self._generate_allosteric_signal_pathway, start_residue, number_steps, target_residues)
+            generated_pathways.sort(key=lambda x: x[1], reverse=True)
 
-    # TODO: ensure all the user-input values are valid
-    def create_pathways(self, perturbed_residue: int, number_iterations: Union[None, int] = None, 
-                        target_residues: Union[None, Set[int]] = None, number_pathways: int = 100, 
-                        filter_out_improbable: bool = True, percentage_kept: float = 0.1, 
-                        output_directory: Union[None, str] = None) -> str:
-        # account for zero-indexing
-        if number_iterations is None:
-            number_iterations = self.residues_range - 1
-
-        generated_pathways = util.process_elementwise(in_parallel=True, Executor=ProcessPoolExecutor)(range(number_pathways), self._generate_allosteric_signal_pathway, perturbed_residue, number_iterations, target_residues)
-        generated_pathways.sort(key=lambda x: x[1], reverse=True)
-
-        if filter_out_improbable:
-            number_kept = int(number_pathways * percentage_kept)
-            most_probable_pathways = generated_pathways[:number_kept]
-        else:
-            most_probable_pathways = generated_pathways
-
-        current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
-        output_file_name = f"from_({perturbed_residue}-{self.residues[perturbed_residue-1]})_{number_pathways}_pathways_{current_time}.txt"
-        if output_directory is None:
-            output_directory = os.getcwd()
-        save_output_to = os.path.join(output_directory, output_file_name)
-
-        with open(save_output_to, "w") as output:
-            header = f"""Generated allosteric pathways sorted from more probable to less probable (top to bottom)
-            The following parameters were used:
-            perturbed_residue: {perturbed_residue}
-            number_iterations: {number_iterations}
-            target_residues: {target_residues}
-            number_pathways: {number_pathways}
-            filter_out_improbable: {filter_out_improbable}
-            percentage_kept: {percentage_kept}
-            output_directory: {output_directory}
-            random_seed: {self.random_seed}
-            """
+            if filter_out_improbable:
+                number_kept = int(number_pathways * percentage_kept)
+                most_probable_pathways = generated_pathways[:number_kept]
+            else:
+                most_probable_pathways = generated_pathways
+            
+            with open(self.output_file, "w") as output:
+                header = f"""Generated allosteric pathways sorted from more probable to less probable (top to bottom)
+                The following parameters were used:
+                start_residue: {start_residue}
+                number_steps: {number_steps}
+                target_residues: {target_residues}
+                number_pathways: {number_pathways}
+                filter_out_improbable: {filter_out_improbable}
+                percentage_kept: {percentage_kept}
+                random_seed: {self.seed}
+                """
             output.write(header + "\n")
-            for index, result in enumerate(most_probable_pathways):
-                path, probability = result
-                output.write(f"{index + 1}. {path}\n")
+            for index, pathway_and_probability in enumerate(most_probable_pathways, start=1):
+                pathway, _ = pathway_and_probability
+                output.write(f"{index}) {self._format_pathway(pathway)}\n")
 
-        return output_directory
-
+        except Exception:
+            raise
 
 def main():
     pass
