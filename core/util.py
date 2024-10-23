@@ -3,26 +3,45 @@
 import atexit
 import logging
 from logging.config import dictConfig
-import importlib.util
 import os
-import datetime
+from datetime import datetime
 import numpy as np
 from json import load
 from re import search
 from concurrent.futures import as_completed
-from collections import Mapping
 from copy import deepcopy
-
+from numba import jit
 
 #############################
 # MATRIX RELATED OPERATIONS #
 #############################
 
+# TEMPORARY (will redo later)
 def _softmax(matrix: np.array, axis=1):
-    pass
+    magnitudes_matrix = np.abs(matrix)
+    shift_magnitudes_matrix = magnitudes_matrix - np.max(magnitudes_matrix, axis=axis, keepdims=True)
+    exponents = np.exp(shift_magnitudes_matrix)
+    probabilities_matrix = exponents / np.sum(exponents, axis=axis, keepdims=True)
+    # Ensure the probability of going from residue i to itself is 0.0
+    np.fill_diagonal(probabilities_matrix, 0.0)
+    renormalized_matrix = normalize_vector(probabilities_matrix)
+    return renormalized_matrix
 
+# TODO: DELETE THIS FUNCTION, KEEP ONLY SOFTMAX FOR NORMALISATION
 def normalize_vector(vector: np.array):
-    return _softmax(vector)
+    if len(vector.shape) > 1:
+        raise ValueError("Expected one-dimensional np.array")
+    total = np.sum(vector)
+    if total == 0:
+        return np.zeros_like(vector)  # return a zero vector if the sum is zero to avoid division by zero
+    normalized_vector = vector / total
+    # Ensure the sum of the normalized vector is exactly 1
+    if not np.isclose(np.sum(normalized_vector), 1.0):
+        normalized_vector /= np.sum(normalized_vector)
+    return normalized_vector
+
+# def normalize_vector(vector: np.array):
+#     return _softmax(vector)
 
 def probabilities_from_interactions(matrix: np.array):
     return _softmax(matrix)
@@ -40,6 +59,12 @@ class CopyingTuple:
         item = self._data[index]
         return deepcopy(item)
     
+    def __contains__(self, element):
+        return element in self._data
+    
+    def __len__(self) -> int:
+        return len(self._data)
+
     def __repr__(self) -> str:
         return f"CopyingTuple{self._data}"
 
@@ -71,7 +96,7 @@ def create_output_dir(output_directory_location: str, output_directory_name: str
 
     return output_directory_path
 
-def process_elementwise(in_parallel=False, Executor=None):
+def process_elementwise(in_parallel=False, Executor=None, max_workers = None):
 
     if Executor is None:
         raise ValueError("An 'Executor' argument must be provided.")
@@ -83,7 +108,7 @@ def process_elementwise(in_parallel=False, Executor=None):
 
         results = []
         if in_parallel:
-            with Executor() as executor:
+            with Executor(max_workers=max_workers) as executor:
                 tasks = [executor.submit(function, element, *extra_args, **extra_kwargs) for element in iterable]
 
                 for future in as_completed(tasks):
@@ -100,7 +125,7 @@ def process_elementwise(in_parallel=False, Executor=None):
 ##################################
 
 def import_network_components(directory_path: str):
-        
+
         residues = None
         interaction_matrices = []
         probability_matrices = []
@@ -114,7 +139,7 @@ def import_network_components(directory_path: str):
 
             # Load the residues variable from the Python file
             if filename.endswith(".dat"):
-                residues = read_residues_file(filename)
+                residues = read_residues_file(filepath)
 
             # Loop through .npy files in subdirectories; load interaction and probability matrices
             elif os.path.isdir(filepath):
@@ -167,8 +192,8 @@ def extract_residues_from_pdb(pdb_file: str, file_path: str = None):
 
 def read_residues_file(f):
     with open(f, "r") as file:
-        l = file.readline()
-    return exec(l)
+        residues = tuple(map(str.strip,file.readline().split(",")))
+    return residues
 
 
 def main():
