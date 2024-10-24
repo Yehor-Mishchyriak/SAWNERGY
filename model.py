@@ -8,6 +8,7 @@ from time import time
 # Add the directory containing core to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'core'))
 import core.newProtein
+
 def main():
     parser = argparse.ArgumentParser(description="Create an electrostatic network representation of a protein")
     parser.add_argument('config_dir', type=str, help='Path to the configuration files directory')
@@ -18,16 +19,20 @@ def main():
 
     protein = core.newProtein.Protein(args.config_dir, args.interactions_precision_limit, args.random_seed)
     print(f"Protein initialized with {protein.number_residues} residues and {protein.number_matrices} matrices.")
-    t1 = time()
-    output_file = protein.create_pathways(
-        start_residue=1,
-        number_steps=300,
-        target_residues=(67,),
-        number_pathways=160,
-        filter_out_improbable=False,
-        percentage_kept=0.1)
-    print(f"time taken {time() - t1}")
-    print(f"Pathways have been saved to: {output_file}")
+
+    try:
+        t1 = time()
+        output_file = protein.create_pathways(
+            start_residue=168,
+            number_steps=300,
+            target_residues=(67,),
+            number_pathways=1,
+            filter_out_improbable=False,
+            percentage_kept=0.1)
+        print(f"Pathways generation took {time() - t1:.3f} second(s)")
+        print(f"They have been saved to: {output_file}")
+    finally:
+        protein.memory_cleanup()
 
 
 if __name__ == "__main__":

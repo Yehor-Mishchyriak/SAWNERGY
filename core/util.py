@@ -9,8 +9,6 @@ import numpy as np
 from json import load
 from re import search
 from concurrent.futures import as_completed
-from copy import deepcopy
-from numba import jit
 
 #############################
 # MATRIX RELATED OPERATIONS #
@@ -51,22 +49,6 @@ def probabilities_from_interactions(matrix: np.array):
 # GENERAL HELPER FUNCTIONS #
 ############################
 
-class CopyingTuple:
-    def __init__(self, *args):
-        self._data = tuple(args)
-
-    def __getitem__(self, index):
-        item = self._data[index]
-        return deepcopy(item)
-    
-    def __contains__(self, element):
-        return element in self._data
-    
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def __repr__(self) -> str:
-        return f"CopyingTuple{self._data}"
 
 def load_json_config(config_location: str) -> dict:
     with open(config_location, "r") as config_file:
@@ -96,7 +78,7 @@ def create_output_dir(output_directory_location: str, output_directory_name: str
 
     return output_directory_path
 
-def process_elementwise(in_parallel=False, Executor=None, max_workers = None):
+def process_elementwise(in_parallel=False, Executor=None, max_workers=None):
 
     if Executor is None:
         raise ValueError("An 'Executor' argument must be provided.")
@@ -153,7 +135,7 @@ def import_network_components(directory_path: str):
                         if "probabilities" in npy_file:
                             probability_matrices.append(matrix)
         
-        return CopyingTuple(*residues), CopyingTuple(*interaction_matrices), CopyingTuple(*probability_matrices)
+        return tuple(residues), tuple(interaction_matrices), tuple(probability_matrices)
 
 def construct_batch_sequence(number_frames, batch_size):
     number_batches, residual_frames = divmod(number_frames, batch_size)
