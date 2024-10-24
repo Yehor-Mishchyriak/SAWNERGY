@@ -191,7 +191,7 @@ class Protein:
         pathway_batches = [pathway_batch_size + 1 if i < residual_pathways else pathway_batch_size for i in range(available_cores)]
 
         # Generate pathways in parallel with ProcessPoolExecutor
-        generated_pathways = util.process_elementwise(in_parallel=True, Executor=ProcessPoolExecutor, max_workers=available_cores)(
+        generated_pathways = util.process_elementwise(in_parallel=False, Executor=ProcessPoolExecutor, max_workers=available_cores)(
             pathway_batches, self._generate_multiple_pathways, start_residue, number_steps, target_residues)
 
         # Flatten the list of lists of pathways

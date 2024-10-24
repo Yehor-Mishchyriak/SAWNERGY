@@ -26,7 +26,7 @@ def main():
             start_residue=168,
             number_steps=300,
             target_residues=(67,),
-            number_pathways=1,
+            number_pathways=160,
             filter_out_improbable=False,
             percentage_kept=0.1)
         print(f"Pathways generation took {time() - t1:.3f} second(s)")
