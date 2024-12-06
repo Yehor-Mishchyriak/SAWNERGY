@@ -1,7 +1,7 @@
 #!AllostericPathwayAnalyzer/venv/bin/python3
 
 # external imports
-import os
+from os import path
 from subprocess import run, CalledProcessError
 from concurrent.futures import ThreadPoolExecutor
 
@@ -43,7 +43,7 @@ class FramesAnalyzer:
 
     def _run_cpptraj(self, start_end: tuple) -> None:
         start_frame, end_frame = start_end
-        output_file_path = os.path.join(self.output_directory, core.root_config["FramesAnalyzer"]["start_end_frames_dependent_analysis_file_name"].format(start_frame, end_frame))
+        output_file_path = path.join(self.output_directory, core.root_config["FramesAnalyzer"]["start_end_frames_dependent_analysis_file_name"].format(start_frame, end_frame))
 
         command = f"""echo \"parm {self.topology_file}
                     trajin {self.trajectory_file} {start_frame} {end_frame}
