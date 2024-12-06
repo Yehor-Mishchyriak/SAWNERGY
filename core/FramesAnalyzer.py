@@ -36,6 +36,7 @@ class FramesAnalyzer:
         except KeyError as e:
             core.network_construction_logger.error(f"Missing config key: {e}")
             raise
+
         except Exception as e:
             core.network_construction_logger.error(f"Unexpected error occurred during {self.__class__.__name__} initialisation: {e}")
             raise
@@ -48,29 +49,35 @@ class FramesAnalyzer:
                     trajin {self.trajectory_file} {start_frame} {end_frame}
                     {self.cpptraj_analysis_command} {self.cpptraj_output_type} {output_file_path} run\" | cpptraj > /dev/null 2>&1"""
         try:
-            core.network_construction_logger.info(f"Began processing {start_end} frames in _run_cpptraj function.")
+            core.network_construction_logger.info(f"Began processing {start_frame}-{end_frame} frame(s) in _run_cpptraj function.")
             run(command, check=True, shell=True)
-            core.network_construction_logger.info(f"Successfully processed the {start_end} frames.")
+            core.network_construction_logger.info(f"Successfully processed the frame(s).")
+
+        except CalledProcessError as e:
+            core.network_construction_logger.error(f"cpptraj invoked by _run_cpptraj failed for frame(s) {start_frame}-{end_frame}: {e}")
+            raise
         except Exception as e:
-            core.network_construction_logger.error(f"Unexpected error occurred in _run_cpptraj function during processing {start_end} frames: {e}")
+            core.network_construction_logger.error(f"Unexpected error occurred during _run_cpptraj execution for {start_frame}-{end_frame} frame(s): {e}")
             raise
 
     def analyse_frames(self) -> str:
         try:
             if __name__ == "__main__":
-                core.network_construction_logger.info(f"Began processing frames in parallel.")
+                core.network_construction_logger.info(f"Began processing frame(s) in parallel.")
                 process_elementwise(in_parallel=True, Executor=ThreadPoolExecutor)(self.batches, self._run_cpptraj)
             else:
-                core.network_construction_logger.info(f"Began processing frames sequentially.")
+                core.network_construction_logger.info(f"Began processing frame(s) sequentially.")
                 process_elementwise(in_parallel=False)(self.batches, self._run_cpptraj)
 
-            core.network_construction_logger.info(f"Successfully processed all the frames.")
+            core.network_construction_logger.info(f"Successfully processed all the frame(s).")
             return self.output_directory
+
         except Exception as e:
-            core.network_construction_logger.error(f" : {e}")
+            core.network_construction_logger.error(f"Unexpected error occurred during analyse_frames execution: {e}")
 
 
 def main():
+    """To be filled in"""
     pass
 
 
