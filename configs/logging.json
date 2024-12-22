@@ -21,10 +21,10 @@
             "maxBytes": "1000000", 
             "backupCount": 3},
 
-        "file_handler_model": {
+        "file_handler_protein_module": {
             "class": "logging.handlers.RotatingFileHandler", 
             "formatter": "detailed", 
-            "filename": "model.log", 
+            "filename": "protein_module.log", 
             "maxBytes": "1000000", 
             "backupCount": 3},
 
@@ -33,15 +33,15 @@
             "handlers": ["console", "file_handler_construction_module"], 
             "respect_handler_level": true},
 
-        "queue_handler_model": {
+        "queue_handler_protein_module": {
             "class": "logging.handlers.QueueHandler", 
-            "handlers": ["console", "file_handler_model"], 
+            "handlers": ["console", "file_handler_protein_module"], 
             "respect_handler_level": true}
     },
 
     "loggers": {
         "root": {"level": "DEBUG"},
         "network_construction_module": {"handlers": ["queue_handler_construction_module"], "propagate": true},
-        "model": {"handlers": ["queue_handler_model"], "propagate": true}
+        "protein_module": {"handlers": ["queue_handler_protein_module"], "propagate": true}
     }
 }
