@@ -8,22 +8,16 @@
     },
     "AnalysesProcessor":{
         "output_directory_name": "Raw_Electrostatics",
-        "start_end_frames_dependent_analysis_file_name": "{}-{}.dat"
+        "start_end_frames_dependent_analysis_file_name": "{}-{}.csv"
     },
-    "AtToResConverter":{
-
-    },
-    "InteractionsToProbsConverter":{
-
-    },
-    "pdbToDict":{
-
+    "ToMatricesConverter":{
+        "output_directory_name": "Int_Prob_Matrices",
+        "start_end_frames_dependent_matrices_directory_name": "{}-{}",
+        "interactions_matrix_name": "interactions",
+        "transition_probabilities_matrix_name": "transition_probabilities"
     },
     "Protein":{
     "output_directory_name": "Generated_pathways",
     "pathways_file_name": "pathways.txt"
-    },
-    "util":{
-
     }
 }

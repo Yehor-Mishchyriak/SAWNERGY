@@ -4,17 +4,9 @@
 # Except:
 !core/
 !configs/
-!core/newProtein.py
-!core/FramesAnalyzer.py
-!core/AnalysesProcessor.py
-!core/AtToResConverter.py
-!core/InteractionsToProbsConverter.py
-!core/Protein.py
-!core/util.py
-!core/pdbToDict.py
-!configs/logging.json
-!configs/root.json
-!model.py
+!core/*.py
+!configs/*.json
+!main.py
 !generate_network.sh
 !.gitignore
 !requirements.txt
