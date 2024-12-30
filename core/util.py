@@ -9,10 +9,11 @@ import numpy as np
 from json import load
 from concurrent.futures import as_completed
 from re import search
+from functools import wraps
 
-###################################################
-# General function distributed across the modules #
-###################################################
+####################################################
+# General functions distributed across the modules #
+####################################################
 def load_json_config(config_location: str) -> dict:
     with open(config_location, "r") as config_file:
         config = load(config_file)
@@ -81,6 +82,71 @@ def process_elementwise(in_parallel=False, Executor=None, max_workers=None):
         return results
     
     return inner
+
+# DECORATORS FOR GENERIC ERROR HANDLING AND LOGGING:
+
+def init_error_handler_n_logger(logger):
+    """
+    A decorator to log exceptions occurring during __init__.
+
+    Args:
+        logger: A logging.Logger instance used for logging exceptions.
+    Returns:
+        A wrapped function with error logging capabilities.
+    """
+    def decorator(init):
+        @wraps(init)
+        def wrapper(*args, **kwargs):
+            try:
+                # attempt to initialize the class
+                return init(*args, **kwargs)
+            except OSError as e:
+                class_name = args[0].__class__.__name__
+                logger.critical(
+                    f"Failed to create or access the output directory during {class_name} initialization. "
+                    f"Error: {e}"
+                )
+                raise OSError(
+                    f"An error occurred while creating or accessing the output directory for {class_name} class: {e}. "
+                    f"Check permissions and available disk space."
+                ) from e
+            except KeyError as e:
+                class_name = args[0].__class__.__name__
+                logger.critical(f"Corrupt/incompatible root configuration file in {class_name}: {e}")
+                raise KeyError(f"Missing configuration key: {e}") from e
+            except Exception as e:
+                class_name = args[0].__class__.__name__
+                logger.exception(f"Unexpected error occurred during {class_name} initialization: {e}")
+                raise
+        return wrapper
+    return decorator
+
+def generic_error_handler_n_logger(logger, exclude_logging_exceptions=()):
+    """
+    A decorator to log unexpected exceptions during the execution of a function.
+
+    Args:
+        logger: A logging.Logger instance used for logging exceptions.
+        exclude_exceptions (tuple): A tuple of exception types to exclude from logging.
+
+    Returns:
+        A wrapped function with error logging capabilities.
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except exclude_logging_exceptions as e:
+                # skip logging for excluded exceptions, just re-raise
+                raise
+            except Exception as e:
+                # log unexpected exceptions
+                func_name = func.__name__
+                logger.exception(f"Unexpected error occurred in function '{func_name}': {e}")
+                raise
+        return wrapper
+    return decorator
 
 #############################
 # Matrix related operations #

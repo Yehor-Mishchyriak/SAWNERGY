@@ -5,10 +5,11 @@ import os
 import inspect
 from subprocess import run, CalledProcessError
 from concurrent.futures import ThreadPoolExecutor
+from typing import Union, Tuple
 
 # local imports
 import core
-from .util import construct_batch_sequence, process_elementwise
+from .util import construct_batch_sequence, process_elementwise, init_error_handler_n_logger, generic_error_handler_n_logger
 
 
 class FramesAnalyzer:
@@ -23,10 +24,12 @@ class FramesAnalyzer:
         batches (list): Sequence of frame batches to be processed.
         output_directory (str): Path to the directory where cpptraj output is saved.
     """
+
+    @init_error_handler_n_logger(core.network_construction_logger)
     def __init__(self, topology_file: str, trajectory_file: str,
-                 number_frames: int,
-                 cpptraj_analysis_command: str, cpptraj_output_type: str,
-                 batch_size: int = 1, in_one_batch: bool = False, output_directory_path: str = None) -> None:
+                number_frames: int,
+                cpptraj_analysis_command: str, cpptraj_output_type: str,
+                batch_size: int = 1, in_one_batch: bool = False, output_directory_path: Union[str, None] = None) -> None:
         """
         Initializes the FramesAnalyzer class.
 
@@ -39,13 +42,7 @@ class FramesAnalyzer:
             batch_size (int, optional): Number of frames per batch. Defaults to 1.
             in_one_batch (bool, optional): Whether to process all frames in one batch. Defaults to False.
             output_directory_path (str, optional): Path to the directory for saving cpptraj output. If None, a directory will be created automatically.
-
-        Raises:
-            KeyError: If the configuration file (root.json) is corrupt or incompatible with the class.
-            FileNotFoundError: If a topology or a trajectory file does not exist.
-            OSError: If there is an error creating or accessing the output directory.
         """
-
         # MD simulation data import
         if not os.path.exists(topology_file):
             core.network_construction_logger.critical(f"Topology file does not exist: {topology_file}")
@@ -57,42 +54,21 @@ class FramesAnalyzer:
             raise FileNotFoundError(f"Trajectory file does not exist: {trajectory_file}")
         self.trajectory_file = trajectory_file
 
-        try:
-            # cpptraj parameters
-            self.cpptraj_analysis_command = cpptraj_analysis_command
-            self.cpptraj_output_type = cpptraj_output_type
+        # cpptraj parameters
+        self.cpptraj_analysis_command = cpptraj_analysis_command
+        self.cpptraj_output_type = cpptraj_output_type
 
-            # frame batches
-            batch_size = number_frames if in_one_batch else batch_size
-            self.batches = construct_batch_sequence(number_frames, batch_size)
+        # frame batches
+        batch_size = number_frames if in_one_batch else batch_size
+        self.batches = construct_batch_sequence(number_frames, batch_size)
 
-            # cpptraj output directory
-            self.output_directory = output_directory_path if output_directory_path else core.create_output_dir(
-                                                            core.root_config["GLOBAL"]["output_directory_path"],
-                                                            core.root_config["FramesAnalyzer"]["output_directory_name"])
+        # cpptraj output directory
+        self.output_directory = output_directory_path if output_directory_path else core.create_output_dir(
+                                                        core.root_config["GLOBAL"]["output_directory_path"],
+                                                        core.root_config["FramesAnalyzer"]["output_directory_name"])
 
-            core.network_construction_logger.info(f"Successfully created the output directory for {self.__class__.__name__} class.")
-            core.network_construction_logger.info(f"Successfully initialized {self.__class__.__name__} class.")
-
-        except OSError as e:
-            core.network_construction_logger.critical(
-                f"Failed to create or access the output directory during {self.__class__.__name__} initialization. "
-                f"Error: {e}"
-            )
-            raise OSError(
-                f"An error occurred while creating or accessing the output directory for {self.__class__.__name__} class: {e}. "
-                f"Check permissions and available disk space."
-            ) from e
-
-        except KeyError as e:
-            core.network_construction_logger.critical(f"Corrupt/incompatible root configuration file: {e}")
-            raise KeyError(f"Missing configuration key: {e}") from e
-
-        except Exception as e:
-            core.network_construction_logger.exception(f"Unexpected error occurred during {self.__class__.__name__} initialisation: {e}")
-            raise
-
-    def _run_cpptraj(self, start_end: tuple) -> None:
+    @generic_error_handler_n_logger(core.network_construction_logger, exclude_logging_exceptions=(CalledProcessError,))
+    def _run_cpptraj(self, start_end: Tuple[int,int]) -> None:
         """
         Runs the cpptraj command, specified at the class initialisation, on a batch of frames.
 
@@ -111,45 +87,29 @@ class FramesAnalyzer:
             core.network_construction_logger.info(f"Began processing {start_frame}-{end_frame} frame(s) in {inspect.currentframe().f_code.co_name} function.")
             run(command, check=True, shell=True)
             core.network_construction_logger.info(f"Successfully processed the frame(s).")
-
-        except KeyError as e:
-            core.network_construction_logger.critical(f"{inspect.currentframe().f_code.co_name}: Missing configuration key: {e}")
-            raise KeyError(f"Missing configuration key in root config: {e}") from e
-
         except CalledProcessError as e:
             core.network_construction_logger.error(f"cpptraj invoked by {inspect.currentframe().f_code.co_name} failed for frame(s) {start_frame}-{end_frame}: {e}")
             raise
-        
-        except Exception as e:
-            core.network_construction_logger.exception(f"Unexpected error occurred during {inspect.currentframe().f_code.co_name} execution for {start_frame}-{end_frame} frame(s): {e}")
-            raise
-
+    
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def analyse_frames(self) -> str:
         """
         Runs the cpptraj command on all the batches of frames of an MD trajectory. 
 
-        Is run in parallel if the script is executed as the main module, or sequentially if otherwise.
+        Is run in parallel if the script is executed as the main module, or sequentially otherwise.
 
         Returns:
             str: Path to the output directory containing the cpptraj results.
-
-        Raises:
-            Exception: If an unexpected error occurs during frame analysis.
         """
-        try:
-            if __name__ == "__main__":
-                core.network_construction_logger.info(f"Began processing frame batches in parallel.")
-                process_elementwise(in_parallel=True, Executor=ThreadPoolExecutor)(self.batches, self._run_cpptraj)
-            else:
-                core.network_construction_logger.info(f"Began processing frame batches sequentially.")
-                process_elementwise(in_parallel=False)(self.batches, self._run_cpptraj)
+        if __name__ == "__main__":
+            core.network_construction_logger.info(f"Began processing frame batches in parallel.")
+            process_elementwise(in_parallel=True, Executor=ThreadPoolExecutor)(self.batches, self._run_cpptraj)
+        else:
+            core.network_construction_logger.info(f"Began processing frame batches sequentially.")
+            process_elementwise(in_parallel=False)(self.batches, self._run_cpptraj)
 
-            core.network_construction_logger.info(f"Successfully processed all the batches.")
-            return self.output_directory
-
-        except Exception as e:
-            core.network_construction_logger.exception(f"Unexpected error occurred during {inspect.currentframe().f_code.co_name} execution: {e}")
-            raise
+        core.network_construction_logger.info(f"Successfully processed all the batches.")
+        return self.output_directory
 
 
 def main():

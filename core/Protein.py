@@ -1,30 +1,32 @@
+#!AllostericPathwayAnalyzer/venv/bin/python3
+
+# external imports
 import os
 from typing import Union, Tuple, List
 from math import log, exp
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import shared_memory
-import core.util as util # this is temporary
 from itertools import chain
 import numpy as np
 
-
-root_config = util.load_json_config("/home/yehor/research_project/AllostericPathwayAnalyzer/configs/root.json")
-logger = util.set_up_logging("AllostericPathwayAnalyzer/configs/logging.json", "network_construction_module")
+# local imports
+import core
+from .util import normalize_vector, process_elementwise, init_error_handler_n_logger, generic_error_handler_n_logger, import_network_components
 
 
 class Protein:
-
     """
-    Represents a protein as a multidimensional electrostatic network with allosteric pathways analysis capabilities.
+    Represents a protein as a multidimensional electrostatic network with capabilities of allosteric communication analysis.
     
     This class provides methods to load and manage protein interaction networks, store matrices in shared memory,
-    and generate allosteric pathways based on probabilities and energies between residues.
+    and generate allosteric pathways based on signal transition probabilities and energies between residues.
     """
 
+    @init_error_handler_n_logger(core.network_construction_logger)
     def __init__(self, network_directory_path: str, interactions_precision_limit_decimals: int = 1, seed: Union[int, None] = None) -> None:
 
         # Import the network components
-        network_components: Tuple[Tuple] = util.import_network_components(network_directory_path)
+        network_components: Tuple[Tuple] = import_network_components(network_directory_path)
 
         # set up public instance attributes
         self.residues = network_components[0]
@@ -32,9 +34,9 @@ class Protein:
         self.residues_range: int = self.number_residues
         self.number_matrices: int = len(network_components[1])
         self.seed: int = self._set_seed(seed)
-        self.output_file: str = os.path.join(util.create_output_dir(root_config["GLOBAL"]["output_directory_path"],
-                                                                    root_config["Protein"]["output_directory_name"]),
-                                                                    root_config["Protein"]["pathways_file_name"])
+        self.output_file: str = os.path.join(core.create_output_dir(core.root_config["GLOBAL"]["output_directory_path"],
+                                                                    core.root_config["Protein"]["output_directory_name"]),
+                                                                    core.root_config["Protein"]["pathways_file_name"])
 
         # set up private instance attributes
         self._interaction_matrices_shared_memory = Protein._store_matrices_in_shared_memory(network_components[1])
@@ -59,6 +61,7 @@ class Protein:
     #######################
 
     @staticmethod
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def _store_matrices_in_shared_memory(matrices: Tuple[np.ndarray]) -> shared_memory.SharedMemory:
         total_size = sum(matrix.nbytes for matrix in matrices)
         # Create shared memory for the matrices
@@ -72,6 +75,7 @@ class Protein:
             offset_size += matrix_size
         return shm
     
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def _set_seed(self, seed: Union[int, None] = None) -> int:
         seed = np.random.randint(0, 2**32 - 1) if seed is None else seed
         self.seed = seed
@@ -82,6 +86,7 @@ class Protein:
     # MEMORY INTERACTIONS #
     #######################
 
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def _get_interaction_matrix(self, index: int) -> np.ndarray:
         # access the memory block
         memory_block = self._interaction_matrices_shared_memory
@@ -93,6 +98,7 @@ class Protein:
         matrix = np.ndarray(self._matrix_shape, dtype=self._matrix_dtype, buffer=data)
         return matrix
 
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def _get_probability_matrix(self, index: int) -> np.ndarray:
         # access the memory block
         memory_block = self._probability_matrices_shared_memory
@@ -104,12 +110,15 @@ class Protein:
         matrix = np.ndarray(self._matrix_shape, dtype=self._matrix_dtype, buffer=data)
         return matrix
 
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def _get_all_interaction_matrices(self):
         return [self._get_interaction_matrix(i) for i in range(self.number_matrices)]
 
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def _get_all_probability_matrices(self):
         return [self._get_probability_matrix(i) for i in range(self.number_matrices)]
 
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def _get_transitions_prob_vector(self, residue_index: int, transition_probabilities_matrix: np.array) -> np.array:
         return transition_probabilities_matrix[residue_index, :].copy()
 
@@ -117,6 +126,7 @@ class Protein:
     # PATHWAYS GENERATION AND FORMATTING #
     ######################################
 
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def _get_next_probability_matrix_and_selection_probability(self, preceding_residue: Union[None, int], current_residue: int, next_residue: int, current_matrix_index: int) -> Tuple[int, float]:
 
         # Ensure preceding_residue is valid
@@ -155,6 +165,7 @@ class Protein:
 
         return selected_matrix_index, matrix_selection_probability
 
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def _generate_allosteric_signal_pathway(self, start: int, number_steps: Union[None, int] = None, target_residues: Union[None, Tuple[int]] = None) -> Tuple[list, float]:
         
         pathway: List[int] = [start]
@@ -168,7 +179,7 @@ class Protein:
         for _ in range(number_steps):
             probability_vector: np.ndarray = self._get_transitions_prob_vector(current_residue, self._get_probability_matrix(current_matrix_index)) # 1-D array
             probability_vector[pathway] = 0.0  # Avoid loops by setting already visited residues to 0
-            probability_vector = util.normalize_vector(probability_vector)
+            probability_vector = normalize_vector(probability_vector)
             next_residue = np.random.choice(range(0, self.residues_range), p=probability_vector)
             residue_selection_probability = probability_vector[next_residue]
 
@@ -189,12 +200,14 @@ class Protein:
 
         return pathway, aggregated_probability
     
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def _generate_multiple_pathways(self, num_pathways: int, start: int, number_steps: Union[None, int] = None, target_residues: Union[None, Tuple[int]] = None):
         pathway_probability_pairs = []
         for _ in range(num_pathways):
             pathway_probability_pairs.append(self._generate_allosteric_signal_pathway(start, number_steps, target_residues))
         return pathway_probability_pairs
 
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def _format_pathway(self, visited_residues_indices: list, VMD_compatible: bool = True) -> str:
         if VMD_compatible:
             path = "resid"
@@ -211,6 +224,7 @@ class Protein:
     # PUBLIC METHODS #
     ##################
 
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def create_pathways(self, start_residue: int, number_steps: Union[None, int] = None, target_residues: Union[None, Tuple[int]] = None,
                         number_pathways: int = 100, filter_out_improbable: bool = True, percentage_kept: float = 0.1):
 
@@ -221,7 +235,7 @@ class Protein:
         pathway_batches = [pathway_batch_size + 1 if i < residual_pathways else pathway_batch_size for i in range(available_cores)]
 
         # Generate pathways in parallel with ProcessPoolExecutor
-        generated_pathways = util.process_elementwise(in_parallel=False, Executor=ProcessPoolExecutor, max_workers=available_cores)(
+        generated_pathways = process_elementwise(in_parallel=False, Executor=ProcessPoolExecutor, max_workers=available_cores)(
             pathway_batches, self._generate_multiple_pathways, start_residue, number_steps, target_residues)
 
         # Flatten the list of lists of pathways
@@ -252,6 +266,7 @@ class Protein:
 
         return self.output_file
     
+    @generic_error_handler_n_logger(core.network_construction_logger)
     def memory_cleanup(self):
         if self._memory_cleaned_up:
             return
