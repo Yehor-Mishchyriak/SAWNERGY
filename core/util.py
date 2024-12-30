@@ -15,11 +15,30 @@ from functools import wraps
 # General functions distributed across the modules #
 ####################################################
 def load_json_config(config_location: str) -> dict:
+    """
+    Loads a JSON configuration file.
+
+    Args:
+        config_location (str): Path to the JSON configuration file.
+
+    Returns:
+        dict: Parsed JSON configuration.
+    """
     with open(config_location, "r") as config_file:
         config = load(config_file)
     return config
 
 def create_output_dir(output_directory_location: str, output_directory_name: str) -> str:
+    """
+    Creates a unique output directory.
+
+    Args:
+        output_directory_location (str): Path to the parent directory.
+        output_directory_name (str): Base name for the output directory.
+
+    Returns:
+        str: Path to the created output directory.
+    """
     # get the current time to ensure that the name of the output is unique
     current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
 
@@ -32,6 +51,17 @@ def create_output_dir(output_directory_location: str, output_directory_name: str
     return output_directory_path
 
 def set_up_logging(config_location, logger_name, handler_name):
+    """
+    Configures logging based on a JSON configuration file.
+
+    Args:
+        config_location (str): Path to the logging configuration file.
+        logger_name (str): Name of the logger to set up.
+        handler_name (str): Name of the logging handler to use.
+
+    Returns:
+        logging.Logger: Configured logger.
+    """
     try:
         # load and configure logging
         config = load_json_config(config_location)
@@ -53,7 +83,17 @@ def set_up_logging(config_location, logger_name, handler_name):
     return logging.getLogger(logger_name)
 
 def process_elementwise(in_parallel=False, Executor=None, max_workers=None):
+    """
+    Processes elements in an iterable using a function, either sequentially or in parallel.
 
+    Args:
+        in_parallel (bool, optional): Whether to process in parallel. Defaults to False.
+        Executor: Executor class for parallel processing (e.g., ThreadPoolExecutor).
+        max_workers (int, optional): Maximum number of workers for parallel processing.
+
+    Returns:
+        function: A function to process elements from an iterable.
+    """
     def inner(iterable, function, *extra_args, **extra_kwargs):
 
         nonlocal in_parallel
@@ -154,6 +194,15 @@ def generic_error_handler_n_logger(logger, exclude_logging_exceptions=()):
 
 # numerically stable softmax (no overflow even for large values of x_i)
 def _softmax(x: np.array):
+    """
+    Computes the numerically stable softmax of a vector.
+
+    Args:
+        x (np.array): Input vector.
+
+    Returns:
+        np.array: Softmax-transformed vector.
+    """
     # x is a vector
     max_x_i = np.max(x)
     # elementwise exponentiation for vector x
@@ -164,6 +213,15 @@ def _softmax(x: np.array):
 # as well as avoiding underflow when multiplying small probabilities
 # note the necessity of exponentiating eventually for converting back from the log space
 def _log_softmax(x: np.array):
+    """
+    Computes the numerically stable log-softmax of a vector.
+
+    Args:
+        x (np.array): Input vector.
+
+    Returns:
+        np.array: Log-softmax-transformed vector.
+    """
     # x is a vector
     max_x_i = np.max(x)
     # add up the logs of sums
@@ -171,9 +229,27 @@ def _log_softmax(x: np.array):
     return x - log_sum_exp # normalize in the log space
 
 def normalize_vector(v: np.array):
+    """
+    Normalizes a vector using the softmax function.
+
+    Args:
+        v (np.array): Input vector.
+
+    Returns:
+        np.array: Softmax-normalized vector.
+    """
     return _softmax(v)
 
 def normalize_rows(matrix: np.array):
+    """
+    Normalizes each row of a matrix using the softmax function.
+
+    Args:
+        matrix (np.array): Input matrix.
+
+    Returns:
+        np.array: Row-normalized matrix.
+    """
     return np.apply_along_axis(normalize_vector, axis=1, arr=matrix)
 
 ####################################
@@ -185,6 +261,16 @@ def normalize_rows(matrix: np.array):
 ##################
 
 def construct_batch_sequence(number_frames, batch_size):
+    """
+    Constructs a sequence of frame batches based on the total number of frames and batch size.
+
+    Args:
+        number_frames (int): Total number of frames.
+        batch_size (int): Number of frames per batch.
+
+    Returns:
+        list: List of tuples representing frame batches.
+    """
     number_batches, residual_frames = divmod(number_frames, batch_size)
     batches = [(batch_size*k-(batch_size-1), batch_size*k) for k in range(1, number_batches+1)]
     # add residual frames if any
@@ -199,8 +285,16 @@ def construct_batch_sequence(number_frames, batch_size):
 
 def _split_entry(res_atm: str) -> tuple:
     """
+    Splits a residue-atom string into residue name and index.
+
+    Args:
+        res_atm (str): Input string in the format "RES_XX@YY".
+
+    Returns:
+        tuple: Residue name and index.
+    
     Example:
-    TRP_91@C -> [TRP, 91@C] -> (TRP, 91)
+        TRP_91@C -> [TRP, 91@C] -> (TRP, 91)
     """
     split_entry = res_atm.split("_")
     residue = split_entry[0]
@@ -208,6 +302,15 @@ def _split_entry(res_atm: str) -> tuple:
     return residue, residue_index
 
 def _parse_line(line: str) -> str:
+    """
+    Parses a line of residue interaction data into a CSV-compatible format.
+
+    Args:
+        line (str): Line of interaction data.
+
+    Returns:
+        str: Parsed CSV-compatible line.
+    """
     try:
         res_atm_A, _, _, res_atm_B, _, _, _, energy = line.split()
     except ValueError: # needed to add this line because cpptraj sometimes adds information on van der Waals (I think this is a bug)
@@ -218,11 +321,27 @@ def _parse_line(line: str) -> str:
     return f"{res_A},{res_A_index},{res_B},{res_B_index},{energy}\n"
 
 def read_lines(file_path: str) -> list:
+    """
+    Reads lines from a file, skipping the first line.
+
+    Args:
+        file_path (str): Path to the input file.
+
+    Returns:
+        list: List of lines from the file.
+    """
     with open(file_path, "r") as file:
         lines = file.readlines()[1::]
         return lines
 
 def write_csv(lines: list, output_file_path: str) -> None:
+    """
+    Writes parsed interaction data to a CSV file.
+
+    Args:
+        lines (list): List of lines to write.
+        output_file_path (str): Path to the output CSV file.
+    """
     header = "residue_i,residue_i_index,residue_j,residue_j_index,energy\n"
     with open(output_file_path, "w") as output_file:
         output_file.write(header)
@@ -235,6 +354,15 @@ def write_csv(lines: list, output_file_path: str) -> None:
 ################################
 
 def frames_from_name(file_name):
+    """
+    Extracts the start and end frame numbers from a file name.
+
+    Args:
+        file_name (str): File name containing frame information.
+
+    Returns:
+        tuple: Start and end frame numbers.
+    """
     matched = search(r"(\d+)-(\d+)", file_name)
     start_frame = matched.group(1)
     end_frame = matched.group(2)
