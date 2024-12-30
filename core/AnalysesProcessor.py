@@ -15,6 +15,9 @@ class AnalysesProcessor:
     """
     A class for processing cpptraj .dat analysis files and converting them into .csv of the following schema:
     residue_i,residue_i_index,residue_j,residue_j_index,energy
+
+    Attributes:
+        output_directory (str): Path to the directory where the output csv files will be saved.
     """
 
     @init_error_handler_n_logger(core.network_construction_logger)
