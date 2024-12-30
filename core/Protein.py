@@ -19,7 +19,7 @@ class Protein:
     Represents a protein as a multidimensional electrostatic network with capabilities of allosteric communication analysis.
     
     This class provides methods to load and manage protein interaction networks, store matrices in shared memory,
-    and generate allosteric pathways based on signal transition probabilities and energies between residues.
+    and generate allosteric pathways based on signal transition probabilities and interaction energies between residues.
 
     Attributes:
         residues (tuple): an tuple of residue names, ordered so that each index corresponds to its residue name;
@@ -48,7 +48,7 @@ class Protein:
         # Each 393x393 matrix (in case of p53) is ~2.4MB, so 100 matrices is ~240MB and 1,000 matrices is ~2.4GB, which isn't catostrophically large,
         # but if you are working with a bigger system than p53, the size of individual matrices will grow quadratically
         network_components: Tuple[Tuple] = import_network_components(network_directory_path)
-        core.protein_module_logger
+        core.protein_module_logger.info(f"Successfully imported the network components")
 
         # set up public instance attributes
         self.residues: tuple = network_components[0]
@@ -68,6 +68,9 @@ class Protein:
         self._matrix_shape = network_components[1][0].shape
         self._matrix_dtype = network_components[1][0].dtype
         self._interactions_precision_limit_decimals: int = interactions_precision_limit_decimals
+
+        core.protein_module_logger.info(f"Successfully initialized the {self.__class__.__name__} class with:
+                                        {self.number_residues} residues, {self.number_matrices} matrices, and seed = {self.seed}.")
 
     def __enter__(self):
         return self
@@ -96,6 +99,7 @@ class Protein:
         """
         total_size = sum(matrix.nbytes for matrix in matrices)
         # Create shared memory for the matrices
+        core.protein_module_logger.info(f"Creating shared memory for matrices, total size: {total_size} bytes.")
         shm = shared_memory.SharedMemory(create=True, size=total_size)
         # Copy the matrices to the shared memory block
         offset_size = 0
@@ -104,6 +108,7 @@ class Protein:
             mapped_matrix = np.ndarray(matrix.shape, dtype=matrix.dtype, buffer=shm.buf[offset_size:offset_size + matrix_size])
             np.copyto(mapped_matrix, matrix)  # Copy data into shared memory
             offset_size += matrix_size
+        core.protein_module_logger.info(f"Successfully stored {len(matrices)} matrices in shared memory.")
         return shm
     
     @generic_error_handler_n_logger(core.protein_module_logger)
@@ -220,6 +225,10 @@ class Protein:
         Returns:
             Tuple[int, float]: Selected matrix index and its selection probability.
         """
+        core.protein_module_logger.debug(f"Selecting the next probability matrix based on:
+                                         preceding_residue: {preceding_residue},
+                                         current_residue: {current_residue},
+                                         current_matrix_index: {current_matrix_index}")
         # Ensure preceding_residue is valid
         if preceding_residue is None or preceding_residue in (current_residue, next_residue):
             valid_residues = [i for i in range(self._residues_range) if i not in (current_residue, next_residue)]
@@ -227,7 +236,7 @@ class Protein:
 
         # Get the last observed energy between preceding and current residue
         last_observed_energy_btw_preceding_current: float = self._get_interaction_matrix(current_matrix_index)[preceding_residue, current_residue]
-
+        core.protein_module_logger.debug(f"last_observed_energy_btw_preceding_current: {last_observed_energy_btw_preceding_current}")
         # Calculate rounded energies and their probabilities
         rounded_energy_counts_btw_current_next: np.ndarray = np.round([matrix[current_residue, next_residue] 
                                                         for matrix in self._get_all_interaction_matrices()],
@@ -237,13 +246,14 @@ class Protein:
         values_counts: Tuple[np.ndarray] = np.unique(rounded_energy_counts_btw_current_next, return_counts=True) # 1-D arrays
         # unique interaction energies between the current and the next reisues, and their frequencies across the matrices
         unique_rounded_energies_btw_current_next, frequencies = values_counts # len(unique) == len(counts) -> True
-
+        core.protein_module_logger.debug(f"unique_rounded_energies_btw_current_next and frequencies:
+                                         {zip(unique_rounded_energies_btw_current_next, frequencies)}")
         # Calculate probabilities
         probabilities: np.ndarray = frequencies / self.number_matrices
 
         # Draw an energy value based on the probability distribution
         drawn_energy: float = np.random.choice(unique_rounded_energies_btw_current_next, p=probabilities)
-
+        core.protein_module_logger.debug(f"The drawn energies: {drawn_energy}")
         # Select the matrix index where the energy matches
         selected_matrix_index: int = min(
             [(which_matrix, abs(matrix[preceding_residue, current_residue] - last_observed_energy_btw_preceding_current))
@@ -253,6 +263,8 @@ class Protein:
 
         # Calculate matrix selection probability
         matrix_selection_probability: float = 1 / frequencies[np.where(unique_rounded_energies_btw_current_next == drawn_energy)][0]
+
+        core.protein_module_logger.debug(f"selected_matrix_index, matrix_selection_probability: {selected_matrix_index}, {matrix_selection_probability}")
 
         return selected_matrix_index, matrix_selection_probability
 
@@ -278,9 +290,12 @@ class Protein:
         next_residue: Union[int, None] = None
 
         for _ in range(number_steps):
+            core.protein_module_logger.debug(f"current_matrix_index: {current_matrix_index}, preceding_residue: {preceding_residue}, current_residue: {current_residue}, next_residue: {next_residue}")
             probability_vector: np.ndarray = self._get_transitions_prob_vector(current_residue, self._get_probability_matrix(current_matrix_index)) # 1-D array
             probability_vector[pathway] = 0.0  # Avoid loops by setting already visited residues to 0
+            core.protein_module_logger.debug(f"Current pathway: {pathway}")
             probability_vector = normalize_vector(probability_vector)
+            core.protein_module_logger.debug(f"Current probability vector for moving from {current_residue}: {probability_vector}")
             next_residue = np.random.choice(range(0, self._residues_range), p=probability_vector)
             residue_selection_probability = probability_vector[next_residue]
 
@@ -369,11 +384,12 @@ class Protein:
         # Calculate batch sizes for each core
         pathway_batch_size, residual_pathways = divmod(number_pathways, available_cores)
         pathway_batches = [pathway_batch_size + 1 if i < residual_pathways else pathway_batch_size for i in range(available_cores)]
-
+        core.protein_module_logger.info(f"Generating {len(pathway_batches)} pathway batches in parallel; Each batch is {pathway_batch_size} pathways big")
         # Generate pathways in parallel with ProcessPoolExecutor
         generated_pathways = process_elementwise(in_parallel=False, Executor=ProcessPoolExecutor, max_workers=available_cores)(
             pathway_batches, self._generate_multiple_pathways, start_residue, number_steps, target_residues)
 
+        core.protein_module_logger.info(f"Successfully generated all the pathways")
         # Flatten the list of lists of pathways
         generated_pathways = list(chain.from_iterable(generated_pathways))
         generated_pathways.sort(key=lambda x: x[1], reverse=True)
@@ -417,6 +433,7 @@ class Protein:
         
         # Set the flag to indicate cleanup is done
         self._memory_cleaned_up = True
+        core.protein_module_logger.info(f"Successully cleaned up the shared memory space")
 
 
 def main():
