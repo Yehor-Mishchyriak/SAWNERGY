@@ -169,8 +169,21 @@ class ToMatricesConverter:
     
 
 def main():
-    """To be filled in"""
-    pass
+    """
+    Main function to execute the converter.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Target directory with optional output directory")
+    parser.add_argument('target_directory', type=str, help='The directory containing the csv interaction energy files')
+    parser.add_argument('--output_directory', type=str, default=None, help='The directory to save the matrices to')
+
+    args = parser.parse_args()
+
+    to_matrices_converter = ToMatricesConverter(args.output_directory)
+
+    # return the output directory to the stdout
+    print(to_matrices_converter.process_target_directory(args.target_directory))
 
 
 if __name__ == "__main__":
