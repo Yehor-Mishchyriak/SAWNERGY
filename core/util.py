@@ -1,126 +1,256 @@
 #!AllostericPathwayAnalyzer/venv/bin/python3
 
-import numpy as np
+import os
+import atexit
 import logging
-from re import search
+from logging.config import dictConfig
+from datetime import datetime
+import numpy as np
+from json import load
 from concurrent.futures import as_completed
+from re import search
+from functools import wraps
 
-#############################
-# MATRIX RELATED OPERATIONS #
-#############################
+####################################################
+# General functions distributed across the modules #
+####################################################
+def load_json_config(config_location: str) -> dict:
+    with open(config_location, "r") as config_file:
+        config = load(config_file)
+    return config
 
-def softmax(matrix: np.array, axis=1):
-    """
-    Compute the softmax of each row of the input matrix.
+def create_output_dir(output_directory_location: str, output_directory_name: str) -> str:
+    # get the current time to ensure that the name of the output is unique
+    current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
 
-    Parameters:
-    matrix (np.array): Input matrix.
-    axis (int): Axis along which to compute the softmax. Default is 1.
+    # create the complete path to the output directory
+    output_directory_path = os.path.join(output_directory_location, f"{output_directory_name}_{current_time}")
 
-    Returns:
-    np.array: The softmax of the input matrix.
-    """
+    # create the output directory
+    os.makedirs(output_directory_path, exist_ok=True)
+
+    return output_directory_path
+
+def set_up_logging(config_location, logger_name, handler_name):
     try:
-        magnitudes_matrix = np.abs(matrix)
-        shift_magnitudes_matrix = magnitudes_matrix - np.max(magnitudes_matrix, axis=axis, keepdims=True)
-        exponents = np.exp(shift_magnitudes_matrix)
-        probabilities_matrix = exponents / np.sum(exponents, axis=axis, keepdims=True)
-        # Ensure the probability of going from residue i to itself is 0.0
-        np.fill_diagonal(probabilities_matrix, 0.0)
-        renormalized_matrix = normalize_row_vectors(probabilities_matrix)
-        return renormalized_matrix
+        # load and configure logging
+        config = load_json_config(config_location)
+        dictConfig(config)
     except Exception as e:
-        logging.error(f"Error in softmax function: {e}")
-        raise
+        raise RuntimeError(f"Failed to load or configure logging: {e}")
 
-def transition_probs_from_interactions(matrix: np.array):
-    """
-    Compute transition probabilities from interaction matrix using softmax.
+    # retrieve the handler by name
+    handler = logging.getHandlerByName(handler_name)
+    if handler is None:
+        raise ValueError(f"Handler '{handler_name}' not found in the logging configuration.")
 
-    Parameters:
-    matrix (np.array): Interaction matrix.
+    # start the listener if the handler supports it
+    if hasattr(handler, 'listener'):
+        handler.listener.start()
+        atexit.register(handler.listener.stop)
 
-    Returns:
-    np.array: Transition probabilities.
-    """
-    return softmax(matrix)
+    # return the configured logger
+    return logging.getLogger(logger_name)
 
-# TODO: DELETE THIS FUNCTION, KEEP ONLY SOFTMAX FOR NORMALISATION
-def normalize_vector(vector: np.array):
-    """
-    Normalize a 1D numpy array.
-
-    Parameters:
-    vector (np.array): Input vector.
-
-    Returns:
-    np.array: Normalized vector.
-
-    Raises:
-    ValueError: If the input array is not one-dimensional.
-    """
-    if len(vector.shape) > 1:
-        raise ValueError("Expected one-dimensional np.array")
-    total = np.sum(vector)
-    if total == 0:
-        return np.zeros_like(vector)  # return a zero vector if the sum is zero to avoid division by zero
-    normalized_vector = vector / total
-    # Ensure the sum of the normalized vector is exactly 1
-    if not np.isclose(np.sum(normalized_vector), 1.0):
-        normalized_vector /= np.sum(normalized_vector)
-    return normalized_vector
-
-def normalize_row_vectors(vectors: np.array):
-    """
-    Normalize each row vector of a 2D numpy array.
-
-    Parameters:
-    vectors (np.array): Input 2D array with row vectors.
-
-    Returns:
-    np.array: Array with normalized row vectors.
-    """
-    return np.apply_along_axis(func1d=normalize_vector, axis=1, arr=vectors)
-
-
-####################
-# HELPER FUNCTIONS #
-####################
-# TODO: DOC STRING, ERROR HANGLING, LOGGING
-def process_elementwise(in_parallel=False, Executor=None):
-
-    if Executor is None:
-        raise ValueError("An 'Executor' argument must be provided.")
+def process_elementwise(in_parallel=False, Executor=None, max_workers=None):
 
     def inner(iterable, function, *extra_args, **extra_kwargs):
 
         nonlocal in_parallel
         nonlocal Executor
+        nonlocal max_workers
 
         results = []
         if in_parallel:
-            with Executor() as executor:
+
+            if max_workers is None:
+                max_workers = os.cpu_count()
+            
+            if Executor is None:
+                raise ValueError("An 'Executor' argument must be provided.")
+
+            print("Running in parallel")
+            with Executor(max_workers=max_workers) as executor:
                 tasks = [executor.submit(function, element, *extra_args, **extra_kwargs) for element in iterable]
 
                 for future in as_completed(tasks):
                     result = future.result()
                     results.append(result)
         else:
+            print("Running sequentially")
             results = [function(element, *extra_args, **extra_kwargs) for element in iterable]
         return results
     
     return inner
 
-def extract_frames_range(file_name):
-    pattern = r"(\d+)-(\d+)"
-    matched = search(pattern, file_name)
+# DECORATORS FOR GENERIC ERROR HANDLING AND LOGGING:
+
+def init_error_handler_n_logger(logger):
+    """
+    A decorator to log exceptions occurring during __init__.
+
+    Args:
+        logger: A logging.Logger instance used for logging exceptions.
+    Returns:
+        A wrapped function with error logging capabilities.
+    """
+    def decorator(init):
+        @wraps(init)
+        def wrapper(*args, **kwargs):
+            try:
+                # attempt to initialize the class
+                return init(*args, **kwargs)
+            except OSError as e:
+                class_name = args[0].__class__.__name__
+                logger.critical(
+                    f"Failed to create or access the output directory during {class_name} initialization. "
+                    f"Error: {e}"
+                )
+                raise OSError(
+                    f"An error occurred while creating or accessing the output directory for {class_name} class: {e}. "
+                    f"Check permissions and available disk space."
+                ) from e
+            except KeyError as e:
+                class_name = args[0].__class__.__name__
+                logger.critical(f"Corrupt/incompatible root configuration file in {class_name}: {e}")
+                raise KeyError(f"Missing configuration key: {e}") from e
+            except Exception as e:
+                class_name = args[0].__class__.__name__
+                logger.exception(f"Unexpected error occurred during {class_name} initialization: {e}")
+                raise
+        return wrapper
+    return decorator
+
+def generic_error_handler_n_logger(logger, exclude_logging_exceptions=()):
+    """
+    A decorator to log unexpected exceptions during the execution of a function.
+
+    Args:
+        logger: A logging.Logger instance used for logging exceptions.
+        exclude_exceptions (tuple): A tuple of exception types to exclude from logging.
+
+    Returns:
+        A wrapped function with error logging capabilities.
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except exclude_logging_exceptions as e:
+                # skip logging for excluded exceptions, just re-raise
+                raise
+            except Exception as e:
+                # log unexpected exceptions
+                func_name = func.__name__
+                logger.exception(f"Unexpected error occurred in function '{func_name}': {e}")
+                raise
+        return wrapper
+    return decorator
+
+#############################
+# Matrix related operations #
+#############################
+
+# numerically stable softmax (no overflow even for large values of x_i)
+def _softmax(x: np.array):
+    # x is a vector
+    max_x_i = np.max(x)
+    # elementwise exponentiation for vector x
+    exp_x = np.exp(x - max_x_i) # (note the trick with the uniform subtraction of the largest entry)
+    return exp_x / np.sum(exp_x) # normalize each entry in the exponent space
+
+# numerically stable log-softmax: avoiding overflow with large exponents
+# as well as avoiding underflow when multiplying small probabilities
+# note the necessity of exponentiating eventually for converting back from the log space
+def _log_softmax(x: np.array):
+    # x is a vector
+    max_x_i = np.max(x)
+    # add up the logs of sums
+    log_sum_exp = max_x_i + np.log(np.sum(np.exp(x - max_x_i)))
+    return x - log_sum_exp # normalize in the log space
+
+def normalize_vector(v: np.array):
+    return _softmax(v)
+
+def normalize_rows(matrix: np.array):
+    return np.apply_along_axis(normalize_vector, axis=1, arr=matrix)
+
+####################################
+# MODULE-SPECIFIC HELPER FUNCTIONS #
+####################################
+
+##################
+# FramesAnalyzer #
+##################
+
+def construct_batch_sequence(number_frames, batch_size):
+    number_batches, residual_frames = divmod(number_frames, batch_size)
+    batches = [(batch_size*k-(batch_size-1), batch_size*k) for k in range(1, number_batches+1)]
+    # add residual frames if any
+    if residual_frames > 0:
+        last_frame = batches[-1][1]
+        residual_batch = (last_frame, last_frame + residual_frames)
+        batches.append(residual_batch)
+
+#####################
+# AnalysesProcessor #
+#####################
+
+def _split_entry(res_atm: str) -> tuple:
+    """
+    Example:
+    TRP_91@C -> [TRP, 91@C] -> (TRP, 91)
+    """
+    split_entry = res_atm.split("_")
+    residue = split_entry[0]
+    residue_index = split_entry[1].split("@")[0]
+    return residue, residue_index
+
+def _parse_line(line: str) -> str:
+    try:
+        res_atm_A, _, _, res_atm_B, _, _, _, energy = line.split()
+    except ValueError: # needed to add this line because cpptraj sometimes adds information on van der Waals (I think this is a bug)
+        res_atm_A, _, _, res_atm_B, _, _, _, _, _, energy = line.split()
+
+    res_A, res_A_index = _split_entry(res_atm_A)
+    res_B, res_B_index = _split_entry(res_atm_B)
+    return f"{res_A},{res_A_index},{res_B},{res_B_index},{energy}\n"
+
+def read_lines(file_path: str) -> list:
+    with open(file_path, "r") as file:
+        lines = file.readlines()[1::]
+        return lines
+
+def write_csv(lines: list, output_file_path: str) -> None:
+    header = "residue_i,residue_i_index,residue_j,residue_j_index,energy\n"
+    with open(output_file_path, "w") as output_file:
+        output_file.write(header)
+        for line in lines:
+            parsed_line = _parse_line(line)
+            output_file.write(parsed_line)
+
+################################
+# InteractionsToProbsConverter #
+################################
+
+def frames_from_name(file_name):
+    matched = search(r"(\d+)-(\d+)", file_name)
     start_frame = matched.group(1)
     end_frame = matched.group(2)
     return int(start_frame), int(end_frame)
 
+###########
+# Protein #
+###########
+
+def import_network_components(directory_path: str):
+    raise NotImplemented
+
 
 def main():
     pass
+
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,47 @@
+{
+    "version": 1,
+    "disable_existing_loggers": false,
+
+    "formatters": {
+        "simple": {"format": "[%(levelname)s]: MESSAGE: %(message)s"},
+        "detailed": {"format": "[%(levelname)s]: TIME: %(asctime)s, LOGGER: %(name)s, FILE: %(filename)s , LINE: %(lineno)d, MESSAGE: %(message)s",
+                     "datefmt": "%Y-%m-%dT%H:%M:%S%z"}
+    },
+
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+            "stream": "ext://sys.stdout"},
+
+        "file_handler_construction_module": {
+            "class": "logging.handlers.RotatingFileHandler", 
+            "formatter": "detailed", 
+            "filename": "network_construction_module.log", 
+            "maxBytes": "1000000", 
+            "backupCount": 3},
+
+        "file_handler_protein_module": {
+            "class": "logging.handlers.RotatingFileHandler", 
+            "formatter": "detailed", 
+            "filename": "protein_module.log", 
+            "maxBytes": "1000000", 
+            "backupCount": 3},
+
+        "queue_handler_construction_module": {
+            "class": "logging.handlers.QueueHandler", 
+            "handlers": ["console", "file_handler_construction_module"], 
+            "respect_handler_level": true},
+
+        "queue_handler_protein_module": {
+            "class": "logging.handlers.QueueHandler", 
+            "handlers": ["console", "file_handler_protein_module"], 
+            "respect_handler_level": true}
+    },
+
+    "loggers": {
+        "root": {"level": "DEBUG"},
+        "network_construction_module": {"handlers": ["queue_handler_construction_module"], "propagate": true},
+        "protein_module": {"handlers": ["queue_handler_protein_module"], "propagate": true}
+    }
+}

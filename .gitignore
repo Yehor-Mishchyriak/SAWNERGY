@@ -2,26 +2,12 @@
 *
 
 # Except:
-!interfaces/
 !core/
 !configs/
-!interfaces/AnalysesProcessorABC.py
-!interfaces/AtToResConverterABC.py
-!interfaces/FramesAnalyzerABC.py
-!interfaces/InteractionsToProbsConverterABC.py
-!core/FramesAnalyzer.py
-!core/AnalysesProcessor.py
-!core/AtToResConverter.py
-!core/InteractionsToProbsConverter.py
-!core/Protein.py
-!core/util.py
-!core/pdbToDict.py
-!configs/logging_config.py
-!configs/logging_config.json
-!configs/root_config.json
-!model.py
-!generate_config_dir.sh
+!core/*.py
+!configs/*.json
+!main.py
+!generate_network.sh
 !.gitignore
 !requirements.txt
 !README.md
-
