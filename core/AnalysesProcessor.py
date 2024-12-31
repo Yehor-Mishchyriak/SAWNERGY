@@ -103,7 +103,7 @@ def main():
     args = parser.parse_args()
 
     analyses_processor = AnalysesProcessor(args.output_directory)
-    
+
     # return the output directory to the stdout
     print(analyses_processor.process_target_directory(args.target_directory))
 

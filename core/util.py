@@ -10,10 +10,12 @@ from json import load
 from concurrent.futures import as_completed
 from re import search
 from functools import wraps
+import ast
 
 ####################################################
 # General functions distributed across the modules #
 ####################################################
+
 def load_json_config(config_location: str) -> dict:
     """
     Loads a JSON configuration file.
@@ -372,8 +374,77 @@ def frames_from_name(file_name):
 # Protein #
 ###########
 
-def import_network_components(directory_path: str):
-    raise NotImplemented
+def import_network_components(directory_path: str, config: dict):
+    """
+    Imports network components from the specified directory.
+
+    Args:
+        directory_path (str): Path to the directory containing network components.
+        config (dict): Configuration dictionary specifying file and directory names.
+
+    Returns:
+        tuple: A tuple containing residues (tuple), interaction matrices (tuple), and probability matrices (tuple).
+
+    Raises:
+        FileNotFoundError: If the directory or expected files are not found.
+        ValueError: If residue mapping or matrix loading fails due to invalid content.
+    """
+    # check if the directory exists
+    if not os.path.exists(directory_path):
+        raise FileNotFoundError(f"The specified directory does not exist: {directory_path}")
+
+    residues: tuple = None
+    interaction_matrices = []
+    probability_matrices = []
+
+    # get all entries in the directory
+    try:
+        stored_items = [os.path.join(directory_path, dir) for dir in os.listdir(directory_path)]
+    except OSError as e:
+        raise FileNotFoundError(f"Could not list contents of directory {directory_path}: {e}")
+
+    for entry in stored_items:
+        if os.path.isdir(entry):
+            # check for subdirectory contents
+            try:
+                matrices = os.listdir(entry)
+            except OSError as e:
+                raise FileNotFoundError(f"Could not access subdirectory {entry}: {e}")
+
+            for matrix in matrices:
+                matrix_path = os.path.join(entry, matrix)
+
+                if config["ToMatricesConverter"]["interactions_matrix_name"] in matrix:
+                    try:
+                        interaction_matrices.append(np.load(matrix_path))
+                    except Exception as e:
+                        raise ValueError(f"Error loading interaction matrix from {matrix_path}: {e}")
+
+                elif config["ToMatricesConverter"]["probabilities_matrix_name"] in matrix:
+                    try:
+                        probability_matrices.append(np.load(matrix_path))
+                    except Exception as e:
+                        raise ValueError(f"Error loading probability matrix from {matrix_path}: {e}")
+
+        elif config["ToMatricesConverter"]["id_to_res_map_name"] in entry:
+            # load residues mapping
+            try:
+                with open(entry, "r") as f:
+                    residues = ast.literal_eval(f.readline())
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Residue mapping file not found: {entry}")
+            except SyntaxError as e:
+                raise ValueError(f"Error parsing residue mapping in {entry}: {e}")
+
+    # validate results
+    if residues is None:
+        raise ValueError("Residue mapping file is missing or empty.")
+    if not interaction_matrices:
+        raise ValueError("No interaction matrices were found in the specified directory.")
+    if not probability_matrices:
+        raise ValueError("No probability matrices were found in the specified directory.")
+
+    return residues, tuple(interaction_matrices), tuple(probability_matrices)
 
 
 def main():

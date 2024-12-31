@@ -110,8 +110,8 @@ class ToMatricesConverter:
             # extract the frames range for the file
         start_frame, end_frame = frames_from_name(csv_file_name)
             # construct the path for the container directory
-        matrices_directory_path = os.path.join(self.output_directory,
-                                        core.root_config["ToMatricesConverter"]["start_end_frames_dependent_matrices_directory_name"].format(start_frame, end_frame))
+        container_dir_name = core.root_config["ToMatricesConverter"]["start_end_frames_dependent_matrices_directory_name"].format(start_frame, end_frame)
+        matrices_directory_path = os.path.join(self.output_directory, container_dir_name)
             # create the container directory
         os.makedirs(matrices_directory_path, exist_ok=True)
             # construct the paths for the output matrices
@@ -150,22 +150,35 @@ class ToMatricesConverter:
         core.network_construction_logger.info(f"Successfully processed all the interatomic interaction energy csv files.")
         return self.output_directory
 
-    @staticmethod
     @generic_error_handler_n_logger(core.network_construction_logger)
-    def map_id_to_res(df: pd.DataFrame) -> Tuple[int, str]:
+    def map_id_to_res(self, csv_file_path: str) -> None:
         """
-        Maps residue IDs to residue names based on a DataFrame.
+        Maps residue IDs to their corresponding residue names from a CSV file
+        and saves the mapping as a .txt file.
+
+        This function reads a CSV file containing residue data, extracts unique
+        residue IDs and their corresponding names, sorts them by residue ID,
+        and saves the mapping to a text file in the output directory.
 
         Args:
-            df (pd.DataFrame): Input DataFrame with residue IDs and names.
-
-        Returns:
-            tuple: A tuple mapping residue IDs to residue names.
+            csv_file_path (str): Path to the input CSV file containing residue data.
         """
         core.network_construction_logger.info("Mapping residue IDs to names.")
-        result = tuple(df.sort_values(by=["residue_i_index"]).drop_duplicates(subset=["residue_i_index"])["residue_i"])
+        df = pd.read_csv(csv_file_path)
+        # extract and sort unique residues
+        result = tuple(df.sort_values(by=["residue_i_index"])
+                       .drop_duplicates(subset=["residue_i_index"])["residue_i"])
         core.network_construction_logger.info("Successfully mapped residue IDs to names.")
-        return result
+        
+        # construct output file path
+        output_file_path = os.path.join(self.output_directory, core.root_config["ToMatricesConverter"]["id_to_res_map_name"])
+        core.network_construction_logger.info(f"Saving the map to: {output_file_path}")
+        
+        # save the result as a string
+        with open(output_file_path, "w") as output_file:
+            output_file.write(str(result))
+        
+        core.network_construction_logger.info("Residue ID-to-name map saved successfully.")
     
 
 def main():

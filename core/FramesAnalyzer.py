@@ -76,8 +76,8 @@ class FramesAnalyzer:
             start_end (tuple): A tuple containing the start and end frame indices for the batch.
         """
         start_frame, end_frame = start_end
-        output_file_path = os.path.join(self.output_directory,
-                                     core.root_config["FramesAnalyzer"]["start_end_frames_dependent_analysis_file_name"].format(start_frame, end_frame))
+        output_file_name = core.root_config["FramesAnalyzer"]["start_end_frames_dependent_analysis_file_name"].format(start_frame, end_frame)
+        output_file_path = os.path.join(self.output_directory, output_file_name)
 
         command = f"""echo \"parm {self.topology_file}
                     trajin {self.trajectory_file} {start_frame} {end_frame}
