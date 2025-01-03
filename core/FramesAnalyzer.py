@@ -15,6 +15,8 @@ from .util import construct_batch_sequence, process_elementwise, init_error_hand
 class FramesAnalyzer:
     """
     A class for exctracting interatomic interaction energies from an MD trajectory frames using cpptraj.
+    
+    !Note: THE CLASS USES Threading TO ACHIEVE PARALLELISM
 
     Attributes:
         topology_file (str): Path to the MD topology file.
@@ -66,7 +68,7 @@ class FramesAnalyzer:
         self.output_directory = output_directory_path if output_directory_path else core.create_output_dir(
                                                         core.root_config["GLOBAL"]["output_directory_path"],
                                                         core.root_config["FramesAnalyzer"]["output_directory_name"])
-
+        
     @generic_error_handler_n_logger(core.network_construction_logger, exclude_logging_exceptions=(CalledProcessError,))
     def _run_cpptraj(self, start_end: Tuple[int,int]) -> None:
         """
@@ -101,13 +103,8 @@ class FramesAnalyzer:
         Returns:
             str: Path to the output directory containing the cpptraj results.
         """
-        if __name__ == "__main__":
-            core.network_construction_logger.info(f"Began processing frame batches in parallel.")
-            process_elementwise(in_parallel=True, Executor=ThreadPoolExecutor)(self.batches, self._run_cpptraj)
-        else:
-            core.network_construction_logger.info(f"Began processing frame batches sequentially.")
-            process_elementwise(in_parallel=False)(self.batches, self._run_cpptraj)
-
+        core.network_construction_logger.info(f"Began processing frame batches in parallel.")
+        process_elementwise(in_parallel=True, Executor=ThreadPoolExecutor)(self.batches, self._run_cpptraj)
         core.network_construction_logger.info(f"Successfully processed all the batches.")
         return self.output_directory
 

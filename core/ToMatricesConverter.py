@@ -17,6 +17,8 @@ class ToMatricesConverter:
     A class for converting residue interaction energy data from CSV files into interaction matrices 
     and transition probability matrices, and saving the results.
 
+    !Note: THE CLASS USES Multiprocessing TO ACHIEVE PARALLELISM
+
     Attributes:
         output_directory (str): Path to the directory where the output matrices will be saved.
     """
@@ -35,6 +37,8 @@ class ToMatricesConverter:
 
         core.network_construction_logger.info(f"Successfully created the output directory for {self.__class__.__name__} class.")
 
+    # WILL RECODE THIS FUNCTION TO MAKE IT SUITABLE FOR PARALLELISATION WITHOUT NEED FOR MULTIPROCESSING
+    # MIGHT DO NUMBA AND NJIT
     @generic_error_handler_n_logger(core.network_construction_logger)
     def _aggregate_energies(self, csv_file_path: str) -> pd.DataFrame:
         """
@@ -59,6 +63,8 @@ class ToMatricesConverter:
         core.network_construction_logger.info(f"Successfully aggregated energies from file: {csv_file_path}")
         return aggregated_energies_by_pairs
 
+    # WILL RECODE THIS FUNCTION TO MAKE IT SUITABLE FOR PARALLELISATION WITHOUT NEED FOR MULTIPROCESSING
+    # MIGHT DO NUMBA AND NJIT
     @generic_error_handler_n_logger(core.network_construction_logger)
     def _to_interactions_probablities_matrices(aggregated_energies: pd.DataFrame, dimension: int) -> np.ndarray:
         """
@@ -126,7 +132,7 @@ class ToMatricesConverter:
         core.network_construction_logger.info(f"Successfully processed and saved matrices for file: {csv_file_path}")
 
     @generic_error_handler_n_logger(core.network_construction_logger)
-    def process_target_directory(self, target_directory_path: str, dimension: int) -> str:
+    def process_target_directory(self, target_directory_path: str, dimension: int, in_parallel=True) -> str:
         """
         Processes all CSV files in the target directory, converting them to matrices and saving the results.
 
@@ -140,9 +146,24 @@ class ToMatricesConverter:
         # assumes the directory contains only the relevant .csv files
         csv_files_paths = (os.path.join(target_directory_path, file) for file in os.listdir(target_directory_path))
 
-        if __name__ == "__main__":
+        if in_parallel:
             core.network_construction_logger.info(f"Began processing interatomic interaction energy csv files in parallel.")
-            process_elementwise(in_parallel=True, Executor=ProcessPoolExecutor)(csv_files_paths, self._aggregate_convert_save, dimension)
+
+            try:
+                process_elementwise(in_parallel=True, Executor=ProcessPoolExecutor)(csv_files_paths, self._aggregate_convert_save, dimension)
+
+            except RuntimeError as e:
+                if __name__ != "__main__":
+                    core.network_construction_logger.warning(f"Parallel processing has failed likely due to platform-specific issues;"
+                                                             f"to allow {self.__class__.__name__} to use parallel processing,
+                                                             execute it as the main module -- not an imported module."
+                                                             f"Error message: {e}")
+                else:
+                    core.network_construction_logger.warning(f"Parallel processing has failed due to an unexpected error")
+
+                core.network_construction_logger.info("Falling back to sequential processing")
+                process_elementwise(in_parallel=False)(csv_files_paths, self._aggregate_convert_save, dimension)
+                
         else:
             core.network_construction_logger.info(f"Began processing interatomic interaction energy csv files sequentially.")
             process_elementwise(in_parallel=False)(csv_files_paths, self._aggregate_convert_save, dimension)

@@ -16,6 +16,8 @@ class AnalysesProcessor:
     A class for processing cpptraj .dat analysis files and converting them into .csv of the following schema:
     residue_i,residue_i_index,residue_j,residue_j_index,energy
 
+    !Note: THE CLASS USES Threading TO ACHIEVE PARALLELISM
+
     Attributes:
         output_directory (str): Path to the directory where the output csv files will be saved.
     """
@@ -78,14 +80,8 @@ class AnalysesProcessor:
         """
         # assumes the directory contains only cpptraj output files!
         analysis_files_paths = (os.path.join(target_directory_path, file) for file in os.listdir(target_directory_path))
-
-        if __name__ == "__main__":
-            core.network_construction_logger.info(f"Began processing cpptraj output files in parallel.")
-            process_elementwise(in_parallel=True, Executor=ThreadPoolExecutor)(analysis_files_paths, self._cpptraj_to_csv)
-        else:
-            core.network_construction_logger.info(f"Began processing cpptraj output files sequentially.")
-            process_elementwise(in_parallel=False)(analysis_files_paths, self._cpptraj_to_csv)
-
+        core.network_construction_logger.info(f"Began processing cpptraj output files in parallel.")
+        process_elementwise(in_parallel=True, Executor=ThreadPoolExecutor)(analysis_files_paths, self._cpptraj_to_csv)
         core.network_construction_logger.info(f"Successfully processed all the cpptraj output files.")
         return self.output_directory
 
