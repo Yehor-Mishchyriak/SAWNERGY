@@ -1,3 +1,5 @@
+#!/AllostericPathwayAnalyzer/venv/bin/python3
+
 from shutil import rmtree
 from os import listdir
 

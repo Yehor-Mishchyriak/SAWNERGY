@@ -6,8 +6,8 @@
 !configs/
 !core/*.py
 !configs/*.json
-!main.py
 !network_construction.py
+!main.py
 !.gitignore
 !requirements.txt
 !README.md

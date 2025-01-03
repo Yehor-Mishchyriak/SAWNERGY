@@ -111,7 +111,6 @@ def process_elementwise(in_parallel=False, Executor=None, max_workers=None):
             if Executor is None:
                 raise ValueError("An 'Executor' argument must be provided.")
 
-            print("Running in parallel")
             with Executor(max_workers=max_workers) as executor:
                 tasks = [executor.submit(function, element, *extra_args, **extra_kwargs) for element in iterable]
 
@@ -119,7 +118,6 @@ def process_elementwise(in_parallel=False, Executor=None, max_workers=None):
                     result = future.result()
                     results.append(result)
         else:
-            print("Running sequentially")
             results = [function(element, *extra_args, **extra_kwargs) for element in iterable]
         return results
     
