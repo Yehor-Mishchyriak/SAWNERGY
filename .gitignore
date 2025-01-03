@@ -8,6 +8,7 @@
 !configs/*.json
 !network_construction.py
 !main.py
+!QtheJob.sh
 !.gitignore
 !requirements.txt
 !README.md
