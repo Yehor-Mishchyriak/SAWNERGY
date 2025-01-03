@@ -163,7 +163,7 @@ class ToMatricesConverter:
 
                 core.network_construction_logger.info("Falling back to sequential processing")
                 process_elementwise(in_parallel=False)(csv_files_paths, self._aggregate_convert_save, dimension)
-                
+
         else:
             core.network_construction_logger.info(f"Began processing interatomic interaction energy csv files sequentially.")
             process_elementwise(in_parallel=False)(csv_files_paths, self._aggregate_convert_save, dimension)
@@ -172,7 +172,7 @@ class ToMatricesConverter:
         return self.output_directory
 
     @generic_error_handler_n_logger(core.network_construction_logger)
-    def map_id_to_res(self, csv_file_path: str) -> None:
+    def map_id_to_res(self, csv_file_path: str) -> tuple:
         """
         Maps residue IDs to their corresponding residue names from a CSV file
         and saves the mapping as a .txt file.
@@ -183,6 +183,9 @@ class ToMatricesConverter:
 
         Args:
             csv_file_path (str): Path to the input CSV file containing residue data.
+        
+        Returns:
+            tuple: a tuple of residue names
         """
         core.network_construction_logger.info("Mapping residue IDs to names.")
         df = pd.read_csv(csv_file_path)
@@ -200,6 +203,8 @@ class ToMatricesConverter:
             output_file.write(str(result))
         
         core.network_construction_logger.info("Residue ID-to-name map saved successfully.")
+
+        return result
     
 
 def main():

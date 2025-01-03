@@ -7,7 +7,7 @@
 !core/*.py
 !configs/*.json
 !main.py
-!generate_network.sh
+!network_construction.py
 !.gitignore
 !requirements.txt
 !README.md
