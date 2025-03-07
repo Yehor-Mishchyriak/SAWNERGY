@@ -2,13 +2,9 @@
 *
 
 # Except:
-!core/
-!configs/
-!core/*.py
-!configs/*.json
-!network_construction.py
-!main.py
-!QtheJob.sh
+!allosteric_pathway_analyzer/
+!allosteric_pathway_analyzer/*.py
+!allosteric_pathway_analyzer/*.json
 !.gitignore
 !requirements.txt
 !README.md
