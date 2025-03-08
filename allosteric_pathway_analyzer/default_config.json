@@ -13,8 +13,8 @@
     "ToMatricesConverter":{
         "output_directory_name": "Int_Prob_Matrices_{time}",
         "matrices_directory_name": "{start}-{end}",
-        "interactions_matrix_name": "interactions",
-        "probabilities_matrix_name": "probabilities",
+        "interactions_matrix_name": "interactions.npy",
+        "probabilities_matrix_name": "probabilities.npy",
         "id_to_res_map_name": "id_to_res_map.txt"
     },
     "Protein":{

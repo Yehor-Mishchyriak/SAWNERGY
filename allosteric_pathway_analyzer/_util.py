@@ -2,6 +2,7 @@ import os
 import psutil
 import numpy as np
 import re
+from ast import literal_eval
 from math import ceil
 from datetime import datetime
 from concurrent.futures import as_completed
@@ -428,18 +429,85 @@ def frames_from_name(file_name: str) -> Tuple[int, int]:
 # protein #
 ###########
 
-def import_network_components(directory_path: str, config: Dict[str, Any]) -> None:
+def _retrieve_matrices(matrices_directory_path: str, config: Dict[str, str]) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Imports network components based on the provided configuration from a directory.
+    Retrieve the interaction and probability matrices stored as .npy files in a specified directory.
+
+    This function uses the configuration employed during the network construction to determine the file names
+    for the interactions and probabilities matrices. It scans the provided directory and loads the matrices
+    using NumPy. If a matrix file is not found, the corresponding return value is None.
 
     Args:
-        directory_path (str): Path to the directory containing network component files.
-        config (Dict[str, Any]): Configuration dictionary for importing network components.
+        matrices_directory_path (str): The path to the directory containing the .npy matrix files.
+        config (Dict[str, str]): A configuration file employed during the network construction.
 
-    Raises:
-        NotImplementedError: This function is not yet implemented.
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: A tuple where the first element is the interaction matrix
+        and the second element is the probability matrix.
     """
-    raise NotImplementedError
+    config = config["ToMatricesConverter"]
+    interaction_matrix = None
+    probability_matrix = None
+    for np_matrix in os.listdir(matrices_directory_path):
+        np_matrix_path = os.path.join(matrices_directory_path, np_matrix)
+        if np_matrix == config["interactions_matrix_name"]:
+            interaction_matrix = np.load(np_matrix_path)
+        elif np_matrix == config["probabilities_matrix_name"]:
+            probability_matrix = np.load(np_matrix_path)
+    return interaction_matrix, probability_matrix
+
+def _retrieve_res_map(id_to_res_map_path: str) -> Tuple[str, ...]:
+    """
+    Retrieve the residue mapping from a file.
+
+    The file is expected to contain a single tuple of residue names located at the first line.
+    This function reads the file content and uses literal_eval to safely evaluate the string into a Python object.
+
+    Args:
+        id_to_res_map_path (str): The path to the file containing the residue mapping.
+
+    Returns:
+        Tuple[str, ...]: The residue mapping as a tuple.
+    """
+    with open(id_to_res_map_path, 'r') as file:
+        id_to_res_string = file.read()
+    # Note: literal_eval is safer than eval() because it only parses literals.
+    id_to_res_map = literal_eval(id_to_res_string)
+    return id_to_res_map
+
+def import_network_components(directory_path: str, config: Dict[str, str]) -> Tuple[Tuple[str, ...], list[np.ndarray], list[np.ndarray]]:
+    """
+    Import network components from a directory based on the provided configuration.
+
+    This function scans the specified directory for subdirectories and files. For each subdirectory, it retrieves the 
+    interaction and probability matrices. If a file matching the residue mapping name (as specified 
+    in the configuration) is found, it retrieves the residue mapping.
+    
+    Args:
+        directory_path (str): The path to the directory containing the network component files.
+        config (Dict[str, str]): The configuration file used for the network construction. Required for the directory scanning.
+
+    Returns:
+        Tuple[Tuple[str, ...], list[np.ndarray], list[np.ndarray]]:
+            - The first element is the residue mapping (or None if not found).
+            - The second element is a list of interaction matrices.
+            - The third element is a list of probability matrices.
+    """
+    id_to_res_map: Tuple[str, ...] = None
+    interaction_matrices: list = []
+    probability_matrices: list = []
+
+    sorted_paths = [os.path.join(directory_path, file) for file in sorted(os.listdir(directory_path))]
+    for path_ in sorted_paths:
+        if os.path.isdir(path_):
+            interaction_matrix, probability_matrix = _retrieve_matrices(path_, config)
+            interaction_matrices.append(interaction_matrix)
+            probability_matrices.append(probability_matrix)
+        elif os.path.basename(path_) == config["ToMatricesConverter"]["id_to_res_map_name"]:
+            id_to_res_map = _retrieve_res_map(path_)
+    
+    return id_to_res_map, interaction_matrices, probability_matrices
+
 
 if __name__ == "__main__":
     pass

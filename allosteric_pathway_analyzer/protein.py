@@ -34,14 +34,15 @@ class Protein:
             interactions_precision_limit_decimals (int, optional): Number of decimals used when rounding interaction energies.
                 Defaults to 1.
         """
-        default_config: Dict[str, Any] = pkg_globals.default_config[self.__class__.__name__]
+        self.config = None
+        self.set_config(pkg_globals.default_config[self.__class__.__name__])
+        
         network_components: Tuple[
             Tuple[Any, ...], Tuple[np.ndarray, ...], Tuple[np.ndarray, ...]
-        ] = _util.import_network_components(network_directory_path, default_config)  # type: ignore
+        ] = _util.import_network_components(network_directory_path, self.config)
 
         # Set up public instance attributes.
         self.config: Optional[Dict[str, Any]] = None
-        self.set_config(default_config)
         self.residues: Tuple[Any, ...] = network_components[0]
         self.number_residues: int = len(self.residues)
         self.number_matrices: int = len(network_components[1])
