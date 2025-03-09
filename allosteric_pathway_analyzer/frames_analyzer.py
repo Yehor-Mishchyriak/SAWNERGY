@@ -28,11 +28,13 @@ class FramesAnalyzer:
         Raises:
             FileNotFoundError: If the cpptraj executable is not found or is inaccessible.
         """
-        self.config = None
+        self.global_config = None
+        self.cls_config = None
+        self.set_config(pkg_globals.default_config)
+
         self._cpptraj = _util.cpptraj_is_available_at(cpptraj_abs_path)
         if self._cpptraj is None:
             raise FileNotFoundError(f"cpptraj was not found or is inaccessible at {cpptraj_abs_path}")
-        self.set_config(pkg_globals.default_config[self.__class__.__name__])
 
     @property
     def which_cpptraj(self) -> Optional[str]:
@@ -51,27 +53,34 @@ class FramesAnalyzer:
         Returns:
             str: A string representation including the configuration and cpptraj path.
         """
-        return f"{self.__class__.__name__}(config={self.config}, _cpptraj={self._cpptraj})"
+        return f"{self.__class__.__name__}(config={self.cls_config}, _cpptraj={self._cpptraj})"
 
     def set_config(self, config: dict) -> None:
         """
-        Set the configuration for the FramesAnalyzer.
+        Set the global and FramesAnalyzer-specific configuration.
 
-        The configuration must include the keys:
-          - "output_directory_name"
-          - "cpptraj_file_name"
-
+        The configuration must include:
+            - FramesAnalyzer
+                - 'output_directory_name'
+                - 'cpptraj_file_name'
+        
         Args:
-            config (dict): A configuration dictionary.
-
+            config (dict): A configuration dictionary
+        
         Raises:
-            ValueError: If required configuration keys are missing.
+            ValueError: If the required configuration keys are missing
         """
-        if "output_directory_name" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing output_directory_name field")
-        if "cpptraj_file_name" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing cpptraj_file_name field")
-        self.config = config
+        if self.__class__.__name__ not in config:
+            raise ValueError(f"Invalid config: missing {self.__class__.__name__} sub-config")
+        
+        sub_config = config[self.__class__.__name__]
+        if "output_directory_name" not in sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing output_directory_name field")
+        if "cpptraj_file_name" not in sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing cpptraj_file_name field")
+        
+        self.global_config = config
+        self.cls_config = config[self.__class__.__name__]
 
     def run_cpptraj(self, start_end: Tuple[int, int], topology_file: str, trajectory_file: str,
                      cpptraj_analysis_command: str, cpptraj_output_type: str, output_directory: str) -> None:
@@ -96,9 +105,9 @@ class FramesAnalyzer:
         """
         start_frame, end_frame = start_end
         try:
-            output_file_name = self.config["cpptraj_file_name"].format(start=start_frame, end=end_frame)
+            output_file_name = self.cls_config["cpptraj_file_name"].format(start=start_frame, end=end_frame)
         except KeyError:
-            raise KeyError(f"Wrong 'cpptraj_file_name' format. Expected a string containing {{\"start\"}}-{{\"end\"}}, instead got: {self.config["cpptraj_file_name"]}")
+            raise KeyError(f"Wrong 'cpptraj_file_name' format. Expected a string containing {{\"start\"}}-{{\"end\"}}, instead got: {self.cls_config["cpptraj_file_name"]}")
         output_file_path = os.path.join(output_directory, output_file_name)
 
         command = (
@@ -139,7 +148,7 @@ class FramesAnalyzer:
         """
         output_directory = (
             output_directory_path if output_directory_path
-            else _util.create_output_dir(os.getcwd(), self.config["output_directory_name"])
+            else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name"])
         )
 
         # If in_one_batch is True, treat all frames as one batch.

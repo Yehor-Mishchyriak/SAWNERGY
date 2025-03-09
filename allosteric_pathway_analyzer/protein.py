@@ -11,6 +11,10 @@ from types import TracebackType
 from . import pkg_globals
 from . import _util
 
+# TODO: 
+# [] fix the docstrings
+# [] ensure the indexing is correct
+# [] investigate the matrices
 
 class Protein:
     """
@@ -34,24 +38,23 @@ class Protein:
             interactions_precision_limit_decimals (int, optional): Number of decimals used when rounding interaction energies.
                 Defaults to 1.
         """
-        self.config = None
-        self.set_config(pkg_globals.default_config[self.__class__.__name__])
-        
+        self.global_config = None
+        self.cls_config = None
+        self.set_config(pkg_globals.default_config)
         network_components: Tuple[
             Tuple[Any, ...], Tuple[np.ndarray, ...], Tuple[np.ndarray, ...]
-        ] = _util.import_network_components(network_directory_path, self.config)
+        ] = _util.import_network_components(network_directory_path, self.global_config)
 
         # Set up public instance attributes.
-        self.config: Optional[Dict[str, Any]] = None
         self.residues: Tuple[Any, ...] = network_components[0]
         self.number_residues: int = len(self.residues)
         self.number_matrices: int = len(network_components[1])
 
         # Set up private instance attributes.
         self._residues_range: int = self.number_residues
+        self._memory_cleaned_up: bool = False
         self._interaction_matrices_shared_memory: shared_memory.SharedMemory = Protein._store_matrices_in_shared_memory(network_components[1])
         self._probability_matrices_shared_memory: shared_memory.SharedMemory = Protein._store_matrices_in_shared_memory(network_components[2])
-        self._memory_cleaned_up: bool = False
         self._matrix_size: int = network_components[1][0].nbytes
         self._matrix_shape: Tuple[int, ...] = network_components[1][0].shape
         self._matrix_dtype: np.dtype = network_components[1][0].dtype
@@ -84,14 +87,6 @@ class Protein:
         """
         self.memory_cleanup()
 
-    def __del__(self) -> None:
-        """
-        Destructor for the Protein instance.
-
-        Ensures that shared memory resources are released when the instance is garbage collected.
-        """
-        self.memory_cleanup()
-
     def __repr__(self) -> str:
         """
         Return a string representation of the Protein instance.
@@ -99,34 +94,58 @@ class Protein:
         Returns:
             str: A string that includes the number of residues, number of matrices, and the pathways file name from the configuration.
         """
-        return (
-            f"{self.__class__.__name__}(number_residues={self.number_residues}, "
-            f"number_matrices={self.number_matrices}, pathways_file_name={self.config['pathways_file_name']})"
-        )
+        return f"{self.__class__.__name__}(number_residues={self.number_residues}, number_matrices={self.number_matrices})"
 
     def set_config(self, config: Dict[str, Any]) -> None:
         """
-        Set the configuration for the Protein instance.
+        Set the global and ToMatricesConverter-specific configuration.
 
-        Validates that the required configuration keys are present and sets the instance's configuration.
+        The configuration must include:
+            - ToMatricesConverter
+                - 'output_directory_name'
+                - 'matrices_directory_name'
+                - 'interactions_matrix_name'
+                - 'probabilities_matrix_name'
+                - 'id_to_res_map_name'
+            - Protein
+                - 'output_directory_name'
+                - 'pathways_file_name'
+                - 'pathways_file_header'
 
         Args:
-            config (Dict[str, Any]): Configuration dictionary that must include:
-                - "output_directory_name"
-                - "pathways_file_name"
-                - "pathways_file_header"
-
-        Raises:
-            ValueError: If any required configuration key is missing.
-        """
-        if "output_directory_name" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing output_directory_name field")
-        if "pathways_file_name" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing pathways_file_name field")
-        if "pathways_file_header" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing pathways_file_header field")
+            config (dict): A configuration dictionary
         
-        self.config = config
+        Raises:
+            ValueError: If the required configuration keys are missing
+        """
+        if "ToMatricesConverter" not in config:
+            raise ValueError(f"Invalid config: missing ToMatricesConverter sub-config")
+        
+        tmc_sub_config = config["ToMatricesConverter"]
+        if "output_directory_name" not in tmc_sub_config:
+            raise ValueError(f"Invalid ToMatricesConverter sub-config: missing output_directory_name field")
+        if "matrices_directory_name" not in tmc_sub_config:
+            raise ValueError(f"Invalid ToMatricesConverter sub-config: missing matrices_directory_name field")
+        if "interactions_matrix_name" not in tmc_sub_config:
+            raise ValueError(f"Invalid ToMatricesConverter sub-config: missing interactions_matrix_name field")
+        if "probabilities_matrix_name" not in tmc_sub_config:
+            raise ValueError(f"Invalid ToMatricesConverter sub-config: missing probabilities_matrix_name field")
+        if "id_to_res_map_name" not in tmc_sub_config:
+            raise ValueError(f"Invalid ToMatricesConverter sub-config: missing id_to_res_map_name field")
+
+        if self.__class__.__name__ not in config:
+            raise ValueError(f"Invalid config: missing {self.__class__.__name__} sub-config")
+
+        protein_sub_config = config[self.__class__.__name__]
+        if "output_directory_name" not in protein_sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing output_directory_name field")
+        if "pathways_file_name" not in protein_sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing pathways_file_name field")
+        if "pathways_file_header" not in protein_sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing pathways_file_header field")
+        
+        self.global_config = config
+        self.cls_config = config[self.__class__.__name__]
 
     #######################
     # INIT HELPER METHODS #
@@ -328,7 +347,7 @@ class Protein:
                 current_residue, self._get_probability_matrix(current_matrix_index)
             )
             # Avoid revisiting residues by zeroing out probabilities for already visited indices.
-            probability_vector[pathway] = 0.0  
+            probability_vector[pathway] = 0.0
             probability_vector = _util.normalize_vector(probability_vector)
             next_residue = np.random.choice(range(0, self._residues_range), p=probability_vector)
             residue_selection_probability: float = probability_vector[next_residue]
@@ -394,7 +413,7 @@ class Protein:
         """
         if VMD_compatible:
             path: str = "resid"
-            format_ = lambda id: f" {id + 1}"
+            format_ = lambda id: f" {id + 1}" # adding 1 due to zero-indexing under the hood
         else:
             path = ""
             format_ = lambda id: f" ({id + 1}-{self.residues[id]})"
@@ -434,7 +453,7 @@ class Protein:
         Returns:
             str: The constructed output file path.
         """
-        output_file_name: str = self.config["pathways_file_name"].format(index=pathways_batch_index)
+        output_file_name: str = self.cls_config["pathways_file_name"].format(index=pathways_batch_index)
         return os.path.join(output_directory, output_file_name)
 
     ##################
@@ -443,60 +462,42 @@ class Protein:
 
     def create_pathways(
         self, 
-        start_residue: int, 
-        target_residues: Tuple[int, ...], 
-        number_steps: int,
-        number_pathways: int, 
-        in_parallel: bool, 
-        pathways_batch_index: int,
+        start_residue: int,
+        number_pathways: int,
+        in_parallel: bool,
+        target_residues: Optional[list[int]] = list(),
+        number_steps: Optional[int] = None,
+        pathways_batch_index: Optional[int] = 1,
         output_directory: Optional[str] = None, 
         num_workers: Optional[int] = None, 
         seed: Optional[int] = None
     ) -> str:
-        """
-        Create allosteric signal pathways and write them to an output file.
-
-        This method validates the input parameters, sets the random seed, generates pathways (either in parallel
-        or sequentially), sorts them by aggregated probability (in descending order), and writes the pathways along with
-        a header to an output file.
-
-        Args:
-            start_residue (int): The starting residue index.
-            target_residues (Tuple[int, ...]): A tuple of target residue indices.
-            number_steps (int): Maximum number of steps for each pathway.
-            number_pathways (int): Total number of pathways to generate.
-            in_parallel (bool): Whether to generate pathways in parallel.
-            pathways_batch_index (int): Batch index used for naming the output file.
-            output_directory (Optional[str]): The directory to save the output file. Defaults to the current working directory if not provided.
-            num_workers (Optional[int]): Number of worker processes for parallel processing (required if in_parallel is True).
-            seed (Optional[int]): Random seed for reproducibility. If None, a random seed is generated.
-
-        Returns:
-            str: The file path of the output file containing the generated pathways.
-
-        Raises:
-            ValueError: If input parameters are invalid or required parameters for parallel processing are missing.
-        """
-        if start_residue not in range(0, self._residues_range):
-            raise ValueError(f"Invalid 'start_residue' argument. Expected an integer value in [0, {self._residues_range-1}]; Instead got: {start_residue}")
-        
-        if number_steps not in range(0, self._residues_range):
-            raise ValueError(f"Invalid 'number_steps' argument. Expected an integer value in [0, {self._residues_range-1}]; Instead got: {number_steps}")
+        if start_residue not in range(1, self._residues_range):
+            raise ValueError(f"Invalid 'start_residue' argument. Expected an integer value in [0, {self._residues_range}]; Instead got: {start_residue}")
         
         if not isinstance(number_pathways, int) or number_pathways <= 0:
             raise ValueError(f"Invalid 'number_pathways' argument. Expected a positive integer value; Instead got: {number_pathways}")
-        
+
+        if number_steps is None:
+            number_steps = self._residues_range
+        if not isinstance(number_steps, int) or number_steps <= 0:
+            raise ValueError(f"Invalid 'number_steps' argument. Expected a positive integer value; Instead got: {number_steps}")
+
         if seed is None:
             seed = np.random.randint(0, 2**32 - 1)
         np.random.seed(seed)
 
-        header: str = self.config["pathways_file_header"].format(
+        header: str = self.cls_config["pathways_file_header"].format(
             start_residue=start_residue,
             number_steps=number_steps,
             target_residues=target_residues,
             number_pathways=number_pathways,
             seed=seed
         )
+
+        # needed due to 0-based indexing under the hood
+        zero_indexed_start_residue = start_residue - 1
+        zero_indexed_target_residues = tuple([i-1 for i in target_residues])
 
         if in_parallel:
             if num_workers is None:
@@ -514,9 +515,9 @@ class Protein:
             )(
                 pathway_batches,
                 self._generate_multiple_pathways,
-                start_residue,
+                zero_indexed_start_residue,
                 number_steps,
-                target_residues
+                zero_indexed_target_residues
             )
             
         else:
@@ -528,9 +529,9 @@ class Protein:
             )(
                 pathway_batches,
                 self._generate_multiple_pathways,
-                start_residue,
+                zero_indexed_start_residue,
                 number_steps,
-                target_residues
+                zero_indexed_target_residues
             )
 
         # Flatten the list of lists of pathways and sort them by aggregated probability (in descending order).

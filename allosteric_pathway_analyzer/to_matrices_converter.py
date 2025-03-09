@@ -18,8 +18,9 @@ class ToMatricesConverter:
         The configuration is set using the default configuration from pkg_globals,
         based on the class name.
         """
-        self.config = None
-        self.set_config(pkg_globals.default_config[self.__class__.__name__])
+        self.global_config = None
+        self.cls_config = None
+        self.set_config(pkg_globals.default_config)
 
     def __repr__(self) -> str:
         """
@@ -28,37 +29,43 @@ class ToMatricesConverter:
         Returns:
             str: A string that represents the instance including its configuration.
         """
-        return f"{self.__class__.__name__}(config={self.config})"
+        return f"{self.__class__.__name__}(config={self.cls_config})"
 
     def set_config(self, config: dict) -> None:
         """
-        Set the configuration for the converter.
+        Set the global and ToMatricesConverter-specific configuration.
 
-        This method validates that all required configuration keys are present.
+        The configuration must include:
+            - ToMatricesConverter
+                - 'output_directory_name'
+                - 'matrices_directory_name'
+                - 'interactions_matrix_name'
+                - 'probabilities_matrix_name'
+                - 'id_to_res_map_name'
         
         Args:
-            config (dict): Configuration dictionary containing the following keys:
-                - "output_directory_name"
-                - "matrices_directory_name"
-                - "interactions_matrix_name"
-                - "probabilities_matrix_name"
-                - "id_to_res_map_name"
+            config (dict): A configuration dictionary
         
         Raises:
-            ValueError: If any required configuration key is missing.
+            ValueError: If the required configuration keys are missing
         """
-        if "output_directory_name" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing output_directory_name field")
-        if "matrices_directory_name" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing matrices_directory_name field")
-        if "interactions_matrix_name" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing interactions_matrix_name field")
-        if "probabilities_matrix_name" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing probabilities_matrix_name field")
-        if "id_to_res_map_name" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing id_to_res_map_name field")
+        if self.__class__.__name__ not in config:
+            raise ValueError(f"Invalid config: missing {self.__class__.__name__} sub-config")
         
-        self.config = config
+        sub_config = config[self.__class__.__name__]
+        if "output_directory_name" not in sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing output_directory_name field")
+        if "matrices_directory_name" not in sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing matrices_directory_name field")
+        if "interactions_matrix_name" not in sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing interactions_matrix_name field")
+        if "probabilities_matrix_name" not in sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing probabilities_matrix_name field")
+        if "id_to_res_map_name" not in sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing id_to_res_map_name field")
+        
+        self.global_config = config
+        self.cls_config = config[self.__class__.__name__]
 
     def _construct_matrices_output_paths(self, csv_file_path: str, output_directory: str) -> Tuple[str, str]:
         """
@@ -82,15 +89,15 @@ class ToMatricesConverter:
         start_frame, end_frame = _util.frames_from_name(csv_file_name)
 
         # construct the output directory path
-        container_dir_name = self.config["matrices_directory_name"].format(start=start_frame, end=end_frame)
+        container_dir_name = self.cls_config["matrices_directory_name"].format(start=start_frame, end=end_frame)
         matrices_directory_path = os.path.join(output_directory, container_dir_name)
 
         # create the output directory
         os.makedirs(matrices_directory_path, exist_ok=True)
 
         # construct the paths for the future interactions and probabilities matrices 
-        interactions_output_path = os.path.join(matrices_directory_path, self.config["interactions_matrix_name"])
-        probabilities_output_path = os.path.join(matrices_directory_path, self.config["probabilities_matrix_name"])
+        interactions_output_path = os.path.join(matrices_directory_path, self.cls_config["interactions_matrix_name"])
+        probabilities_output_path = os.path.join(matrices_directory_path, self.cls_config["probabilities_matrix_name"])
 
         return interactions_output_path, probabilities_output_path
 
@@ -217,6 +224,7 @@ class ToMatricesConverter:
                 Required if `in_parallel` is True.
             output_directory_path (Optional[str]): Directory where the output matrices will be saved.
                 If not provided, a default output directory is created.
+            create_id_to_res_map (Optional[bool]): Flag indicating whether to create an IDs to residues map (recommended). Defaults to True. 
         
         Returns:
             str: The path to the output directory where matrices are saved.
@@ -224,7 +232,7 @@ class ToMatricesConverter:
         Raises:
             ValueError: If parallel processing is requested but required parameters are missing.
         """
-        output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.config["output_directory_name"])
+        output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name"])
         csv_file_paths = [os.path.join(target_directory_path, file) for file in os.listdir(target_directory_path)]
 
         if in_parallel:
@@ -272,10 +280,10 @@ class ToMatricesConverter:
         Returns:
             Tuple[Any, ...]: A tuple containing the unique residue labels corresponding to each residue ID.
         """
-        output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.config["output_directory_name"])
+        output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name"])
         df = pd.read_csv(csv_file_path)
         result = tuple(df.sort_values(by=["residue_i_index"]).drop_duplicates(subset=["residue_i_index"])["residue_i"])
-        output_file_path = os.path.join(output_directory, self.config["id_to_res_map_name"])
+        output_file_path = os.path.join(output_directory, self.cls_config["id_to_res_map_name"])
         with open(output_file_path, "w") as output_file:
             output_file.write(str(result))
 

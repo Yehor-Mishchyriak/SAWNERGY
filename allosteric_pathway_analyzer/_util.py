@@ -496,7 +496,6 @@ def import_network_components(directory_path: str, config: Dict[str, str]) -> Tu
     id_to_res_map: Tuple[str, ...] = None
     interaction_matrices: list = []
     probability_matrices: list = []
-
     sorted_paths = [os.path.join(directory_path, file) for file in sorted(os.listdir(directory_path))]
     for path_ in sorted_paths:
         if os.path.isdir(path_):

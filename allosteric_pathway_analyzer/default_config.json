@@ -20,6 +20,6 @@
     "Protein":{
         "output_directory_name": "Generated_pathways_{time}",
         "pathways_file_name": "pathways_{index}.apa",
-        "pathways_file_header": "HEADER:\n  start_residue: {start_residue}\n    number_steps: {number_steps}\n  target_residues: {target_residues}\n    number_pathways: {number_pathways}\n    seed: {seed}\n"
+        "pathways_file_header": "[HEADER\n    start_residue: {start_residue}\n    number_steps: {number_steps}\n    target_residues: {target_residues}\n    number_pathways: {number_pathways}\n    seed: {seed}\n]"
     }
 }

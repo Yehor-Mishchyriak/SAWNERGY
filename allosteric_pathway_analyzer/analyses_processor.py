@@ -23,8 +23,9 @@ class AnalysesProcessor:
         
         The configuration is retrieved from pkg_globals.default_config using the class name.
         """
-        self.config = None
-        self.set_config(pkg_globals.default_config[self.__class__.__name__])
+        self.global_config = None
+        self.cls_config = None
+        self.set_config(pkg_globals.default_config)
     
     def __repr__(self) -> str:
         """
@@ -33,30 +34,37 @@ class AnalysesProcessor:
         Returns:
             str: String representation including the current configuration.
         """
-        return f"{self.__class__.__name__}(config={self.config})"
+        return f"{self.__class__.__name__}(config={self.cls_config})"
 
     def set_config(self, config: dict) -> None:
         """
-        Set the configuration for the AnalysesProcessor.
-        
-        The configuration must include the keys:
-          - "output_directory_name"
-          - "csv_file_header"
-          - "csv_file_name"
+        Set the global and AnalysesProcessor-specific configuration.
+
+        The configuration must include:
+            - AnalysesProcessor
+                - 'output_directory_name'
+                - 'csv_file_header'
+                - 'csv_file_name'
         
         Args:
-            config (dict): Configuration dictionary.
+            config (dict): A configuration dictionary
         
         Raises:
-            ValueError: If any required configuration key is missing.
+            ValueError: If the required configuration keys are missing
         """
-        if "output_directory_name" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing output_directory_name field")
-        if "csv_file_header" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing csv_file_header field")
-        if "csv_file_name" not in config:
-            raise ValueError(f"Invalid {self.__class__.__name__} config: missing csv_file_name field")
-        self.config = config
+        if self.__class__.__name__ not in config:
+            raise ValueError(f"Invalid config: missing {self.__class__.__name__} sub-config")
+        
+        sub_config = config[self.__class__.__name__]
+        if "output_directory_name" not in sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing output_directory_name field")
+        if "csv_file_header" not in sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing csv_file_header field")
+        if "csv_file_name" not in sub_config:
+            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing csv_file_name field")
+        
+        self.global_config = config
+        self.cls_config = config[self.__class__.__name__]
 
     def _construct_csv_file_path(self, cpptraj_file_path: str, output_directory: str) -> str:
         """
@@ -78,9 +86,9 @@ class AnalysesProcessor:
 
         # Construct the CSV file name using the configuration template.
         try:
-            csv_file_name = self.config["csv_file_name"].format(start=start_frame, end=end_frame)
+            csv_file_name = self.cls_config["csv_file_name"].format(start=start_frame, end=end_frame)
         except KeyError:
-            raise KeyError(f"Wrong 'csv_file_name' format. Expected a string containing {{\"start\"}}-{{\"end\"}}, instead got: {self.config["cpptraj_file_name"]}")
+            raise KeyError(f"Wrong 'csv_file_name' format. Expected a string containing {{\"start\"}}-{{\"end\"}}, instead got: {self.cls_config["cpptraj_file_name"]}")
         csv_file_path = os.path.join(output_directory, csv_file_name)
 
         return csv_file_path
@@ -101,7 +109,7 @@ class AnalysesProcessor:
         """
         csv_file_path = self._construct_csv_file_path(cpptraj_file_path, output_directory)
         # Write the CSV header to the output file.
-        _util.write_csv_header(self.config["csv_file_header"], csv_file_path)
+        _util.write_csv_header(self.cls_config["csv_file_header"], csv_file_path)
         # Process the cpptraj file in chunks and append each chunk to the CSV file.
         for chunk in _util.chunked_file(cpptraj_file_path, allowed_memory_percentage_hint, num_workers):
             _util.append_csv_from_cpptraj_electrostatics(chunk, csv_file_path)
@@ -120,7 +128,7 @@ class AnalysesProcessor:
         # Read the entire cpptraj file.
         contents = _util.read_lines(cpptraj_file_path)
         # Write the CSV file with the provided header and contents.
-        _util.write_csv_from_cpptraj_electrostatics(self.config["csv_file_header"], contents, csv_file_path)
+        _util.write_csv_from_cpptraj_electrostatics(self.cls_config["csv_file_header"], contents, csv_file_path)
 
     def process_target_directory(self, target_directory_path: str,
                                 in_parallel: bool, allowed_memory_percentage_hint: Optional[float] = None,
@@ -149,7 +157,7 @@ class AnalysesProcessor:
             ValueError: If in_parallel is True and either 'num_workers' or 'allowed_memory_percentage_hint' is not provided.
         """
         # Determine the output directory.
-        output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.config["output_directory_name"])
+        output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name"])
         # List all files in the target directory (assumes they are all cpptraj output files).
         analysis_file_paths = [os.path.join(target_directory_path, file) for file in os.listdir(target_directory_path)]
         
