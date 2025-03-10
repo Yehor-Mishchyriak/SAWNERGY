@@ -88,7 +88,7 @@ class AnalysesProcessor:
         try:
             csv_file_name = self.cls_config["csv_file_name"].format(start=start_frame, end=end_frame)
         except KeyError:
-            raise KeyError(f"Wrong 'csv_file_name' format. Expected a string containing {{\"start\"}}-{{\"end\"}}, instead got: {self.cls_config["cpptraj_file_name"]}")
+            raise KeyError(f"Wrong 'csv_file_name' format. Expected a string containing {{\"start\"}}-{{\"end\"}}, instead got: {self.cls_config['cpptraj_file_name']}")
         csv_file_path = os.path.join(output_directory, csv_file_name)
 
         return csv_file_path
