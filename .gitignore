@@ -12,8 +12,6 @@
 
 #       Network construction
 !tests/network_construction/
-!tests/network_construction/_auxiliary_scripts/
-!tests/network_construction/_auxiliary_scripts/*.py
 
 !tests/network_construction/unit_testing/
 !tests/network_construction/unit_testing/*.py

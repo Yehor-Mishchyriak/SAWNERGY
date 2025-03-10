@@ -2,7 +2,6 @@
     "FramesAnalyzer":{
         "output_directory_name": "Processed_Frames_{time}",
         "cpptraj_file_name": "{start}-{end}.dat",
-        "pairwise_electrostatic_analysis": "pairwise :* :* cuteelec 1.0",
         "cpptraj_output_type": "avgout"
     },
     "AnalysesProcessor":{
