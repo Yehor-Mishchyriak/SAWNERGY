@@ -107,7 +107,7 @@ class FramesAnalyzer:
         try:
             output_file_name = self.cls_config["cpptraj_file_name"].format(start=start_frame, end=end_frame)
         except KeyError:
-            raise KeyError(f"Wrong 'cpptraj_file_name' format. Expected a string containing {{\"start\"}}-{{\"end\"}}, instead got: {self.cls_config["cpptraj_file_name"]}")
+            raise KeyError(f"Wrong 'cpptraj_file_name' format. Expected a string containing {{\"start\"}}-{{\"end\"}}, instead got: {self.cls_config['cpptraj_file_name']}")
         output_file_path = os.path.join(output_directory, output_file_name)
 
         command = (

@@ -1,0 +1,7 @@
+residue_i,residue_i_index,residue_j,residue_j_index,energy
+A,1,A,1,3.0e+00
+A,1,B,2,7.0e+00
+A,1,B,2,-2.0e+00
+A,1,B,2,-5.0e+00
+A,1,B,2,2.0e+00
+B,2,B,2,6.0e+00
