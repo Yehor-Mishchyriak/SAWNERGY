@@ -17,7 +17,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # This import is needed for 3D plotting
 
-# Example data: 10 frames, 5 residues, 3 coordinates (x, y, z)
+# Example data: 1 frames, 5 residues, 3 coordinates (x, y, z)
 # In practice, replace this with your actual COM data
 data = np.random.random((1, 5, 3))  
 
