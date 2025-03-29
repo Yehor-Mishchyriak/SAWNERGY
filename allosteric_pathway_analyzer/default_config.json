@@ -1,8 +1,12 @@
 {
     "FramesAnalyzer":{
-        "output_directory_name": "Processed_Frames_{time}",
-        "cpptraj_file_name": "{start}-{end}.dat",
-        "cpptraj_output_type": "avgout"
+        "output_directory_name": "Raw_MD_Data_{time}",
+        "elec_directory_name": "elec",
+        "vdw_directory_name": "vdw",
+        "hbond_directory_name": "hbond",
+        "coordinates_directory_name": "com",
+        "interactions_file_name": "{start_frame}-{end_frame}.dat",
+        "coordinates_file_name": "{res_id}.dat"
     },
     "AnalysesProcessor":{
         "output_directory_name": "Raw_Electrostatics_{time}",
