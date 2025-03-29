@@ -9,49 +9,16 @@ from . import _util
 
 
 class AnalysesProcessor:
-    """
-    A processor for converting cpptraj output files into CSV format.
-
-    This class provides methods for processing cpptraj output files either
-    incrementally (by chunk) or immediately (by reading the entire file), and
-    for processing all files in a target directory.
-    """
 
     def __init__(self) -> None:
-        """
-        Initialize an AnalysesProcessor instance using the default configuration.
-        
-        The configuration is retrieved from pkg_globals.default_config using the class name.
-        """
         self.global_config = None
         self.cls_config = None
         self.set_config(pkg_globals.default_config)
     
     def __repr__(self) -> str:
-        """
-        Return a string representation of the AnalysesProcessor instance.
-        
-        Returns:
-            str: String representation including the current configuration.
-        """
         return f"{self.__class__.__name__}(config={self.cls_config})"
 
     def set_config(self, config: dict) -> None:
-        """
-        Set the global and AnalysesProcessor-specific configuration.
-
-        The configuration must include:
-            - AnalysesProcessor
-                - 'output_directory_name'
-                - 'csv_file_header'
-                - 'csv_file_name'
-        
-        Args:
-            config (dict): A configuration dictionary
-        
-        Raises:
-            ValueError: If the required configuration keys are missing
-        """
         if self.__class__.__name__ not in config:
             raise ValueError(f"Invalid config: missing {self.__class__.__name__} sub-config")
         

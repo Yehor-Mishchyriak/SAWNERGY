@@ -10,24 +10,13 @@ from . import _util
 
 
 class FramesAnalyzer:
-    """
-    A class for analyzing MD trajectory frames using the cpptraj command line tool.
 
-    This class encapsulates configuration management and the execution of cpptraj commands
-    on specified frame batches, optionally in parallel.
-    """
+    cpptraj_elec_analysis_command = "pairwise :{start_res_id}-{end_res_id} :{start_res_id}-{end_res_id} cuteelec {cutoff} avgout"
+    cpptraj_vdw_analysis_command = "pairwise :{start_res_id}-{end_res_id} :{start_res_id}-{end_res_id} cutevdw {cutoff} avgout"
+    cpptraj_hbond_analysis_command = "donormask :{start_res_id}-{end_res_id} acceptormask :{start_res_id}-{end_res_id} distance 3.5 angle 120 avgout"
+    cpptraj_COM_analysis_command = "vector res_{res_id} center :{res_id} out"
 
     def __init__(self, cpptraj_abs_path: Optional[str] = None) -> None:
-        """
-        Initialize a FramesAnalyzer instance.
-
-        Args:
-            cpptraj_abs_path (Optional[str], optional): Absolute path to the cpptraj executable.
-                If None, the system PATH is searched. Defaults to None.
-
-        Raises:
-            FileNotFoundError: If the cpptraj executable is not found or is inaccessible.
-        """
         self.global_config = None
         self.cls_config = None
         self.set_config(pkg_globals.default_config)
@@ -38,38 +27,12 @@ class FramesAnalyzer:
 
     @property
     def which_cpptraj(self) -> Optional[str]:
-        """
-        Get the path to the cpptraj executable.
-
-        Returns:
-            Optional[str]: The absolute path to cpptraj if available; otherwise, None.
-        """
         return self._cpptraj
 
     def __repr__(self) -> str:
-        """
-        Return a string representation of the FramesAnalyzer instance.
-
-        Returns:
-            str: A string representation including the configuration and cpptraj path.
-        """
         return f"{self.__class__.__name__}(config={self.cls_config}, _cpptraj={self._cpptraj})"
 
     def set_config(self, config: dict) -> None:
-        """
-        Set the global and FramesAnalyzer-specific configuration.
-
-        The configuration must include:
-            - FramesAnalyzer
-                - 'output_directory_name'
-                - 'cpptraj_file_name'
-        
-        Args:
-            config (dict): A configuration dictionary
-        
-        Raises:
-            ValueError: If the required configuration keys are missing
-        """
         if self.__class__.__name__ not in config:
             raise ValueError(f"Invalid config: missing {self.__class__.__name__} sub-config")
         
@@ -84,25 +47,6 @@ class FramesAnalyzer:
 
     def run_cpptraj(self, start_end: Tuple[int, int], topology_file: str, trajectory_file: str,
                      cpptraj_analysis_command: str, cpptraj_output_type: str, output_directory: str) -> None:
-        """
-        Execute the cpptraj command for a given frame range.
-
-        This method builds and runs a command that pipes a series of cpptraj instructions
-        (including the topology, trajectory, analysis command, and output configuration)
-        to the cpptraj executable.
-
-        Args:
-            start_end (Tuple[int, int]): A tuple (start_frame, end_frame) specifying the frame range.
-            topology_file (str): Path to the topology file.
-            trajectory_file (str): Path to the trajectory file.
-            cpptraj_analysis_command (str): The analysis command to run in cpptraj.
-            cpptraj_output_type (str): The output type parameter for cpptraj.
-            output_directory (str): Directory where the cpptraj output file will be saved.
-
-        Raises:
-            RuntimeError: If execution of the cpptraj command fails.
-            KeyError: If a wrong 'cpptraj_file_name' format is passed.
-        """
         start_frame, end_frame = start_end
         try:
             output_file_name = self.cls_config["cpptraj_file_name"].format(start=start_frame, end=end_frame)
@@ -113,7 +57,7 @@ class FramesAnalyzer:
         command = (
             f'echo "parm {topology_file}\n'
             f'trajin {trajectory_file} {start_frame} {end_frame}\n'
-            f'{cpptraj_analysis_command} {cpptraj_output_type} {output_file_path} run" | '
+            f'{cpptraj_analysis_command} {output_file_path} run" | '
             f'{self._cpptraj} > /dev/null 2>&1'
         )
         try:
@@ -125,27 +69,6 @@ class FramesAnalyzer:
                        cpptraj_analysis_command: str, cpptraj_output_type: str,
                        number_frames: int, in_parallel: bool, batch_size: Optional[int] = 1,
                        in_one_batch: Optional[bool] = False, output_directory_path: Optional[str] = None) -> str:
-        """
-        Analyze frames by dividing them into batches and processing each batch with cpptraj.
-
-        The method creates an output directory (if not provided), divides the total frames
-        into batches (or uses a single batch if in_one_batch is True), and executes the cpptraj
-        command on each batch. Batches can be processed sequentially or in parallel.
-
-        Args:
-            topology_file (str): Path to the topology file.
-            trajectory_file (str): Path to the trajectory file.
-            cpptraj_analysis_command (str): The analysis command for cpptraj.
-            cpptraj_output_type (str): The output type parameter for cpptraj.
-            number_frames (int): Total number of frames to process.
-            in_parallel (bool): If True, process batches in parallel using ThreadPoolExecutor.
-            batch_size (Optional[int], optional): Number of frames per batch. Defaults to 1.
-            in_one_batch (Optional[bool], optional): If True, process all frames as a single batch. Defaults to False.
-            output_directory_path (Optional[str], optional): Path to the output directory. If None, a new directory is created.
-
-        Returns:
-            str: The path to the output directory where results are stored.
-        """
         output_directory = (
             output_directory_path if output_directory_path
             else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name"])
