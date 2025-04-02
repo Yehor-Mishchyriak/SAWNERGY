@@ -11,27 +11,23 @@ from types import TracebackType
 from . import pkg_globals
 from . import _util
 
-# TODO: 
-# [] fix the docstrings
-# [] ensure the indexing is correct
-# [] investigate the matrices
 
 class Protein:
     """
-    Represents a Protein with its network components and provides methods for generating allosteric signal pathways.
+    Represents a protein with its network components and provides methods for generating allosteric signal pathways.
 
-    The Protein class loads network components (residues, interaction matrices, and probability matrices) from a
-    specified directory using a given configuration. It stores the matrices in shared memory and provides methods
-    to generate, format, and write pathways based on transition probabilities.
+    This class loads network components (residues, interaction matrices, and probability matrices) from a specified
+    directory using a given configuration. It stores the matrices in shared memory and offers methods to generate,
+    format, and write pathways based on transition probabilities.
     """
 
     def __init__(self, network_directory_path: str, interactions_precision_limit_decimals: int = 1) -> None:
         """
         Initialize a Protein instance by loading network components from a specified directory.
 
-        The network components (residues, interaction matrices, and probability matrices) are imported using
-        the default configuration from pkg_globals. Interaction and probability matrices are stored in shared memory
-        for efficient access.
+        The network components (residues, interaction matrices, and probability matrices) are imported using the
+        default configuration from pkg_globals. Interaction and probability matrices are stored in shared memory for
+        efficient access.
 
         Args:
             network_directory_path (str): Path to the directory containing network component files.
@@ -45,12 +41,12 @@ class Protein:
             Tuple[Any, ...], Tuple[np.ndarray, ...], Tuple[np.ndarray, ...]
         ] = _util.import_network_components(network_directory_path, self.global_config)
 
-        # Set up public instance attributes.
+        # set up public instance attributes
         self.residues: Tuple[Any, ...] = network_components[0]
         self.number_residues: int = len(self.residues)
         self.number_matrices: int = len(network_components[1])
 
-        # Set up private instance attributes.
+        # set up private instance attributes
         self._residues_range: int = self.number_residues
         self._memory_cleaned_up: bool = False
         self._interaction_matrices_shared_memory: shared_memory.SharedMemory = Protein._store_matrices_in_shared_memory(network_components[1])
@@ -78,7 +74,7 @@ class Protein:
         """
         Exit the runtime context and perform cleanup.
 
-        This method ensures that shared memory resources are cleaned up when exiting the context.
+        This method ensures that shared memory resources are released when exiting the context.
 
         Args:
             exc_type (Optional[Type[BaseException]]): The type of exception raised, if any.
@@ -92,31 +88,31 @@ class Protein:
         Return a string representation of the Protein instance.
 
         Returns:
-            str: A string that includes the number of residues, number of matrices, and the pathways file name from the configuration.
+            str: A string that includes the number of residues and matrices.
         """
         return f"{self.__class__.__name__}(number_residues={self.number_residues}, number_matrices={self.number_matrices})"
 
     def set_config(self, config: Dict[str, Any]) -> None:
         """
-        Set the global and ToMatricesConverter-specific configuration.
+        Set the configuration for the Protein instance and the related ToMatricesConverter.
 
-        The configuration must include:
-            - ToMatricesConverter
-                - 'output_directory_name'
-                - 'matrices_directory_name'
-                - 'interactions_matrix_name'
-                - 'probabilities_matrix_name'
-                - 'id_to_res_map_name'
-            - Protein
-                - 'output_directory_name'
-                - 'pathways_file_name'
-                - 'pathways_file_header'
+        The configuration dictionary must include the following keys:
+            - "ToMatricesConverter" with sub-keys:
+                - "output_directory_name"
+                - "matrices_directory_name"
+                - "interactions_matrix_name"
+                - "probabilities_matrix_name"
+                - "id_to_res_map_name"
+            - "Protein" with sub-keys:
+                - "output_directory_name"
+                - "pathways_file_name"
+                - "pathways_file_header"
 
         Args:
-            config (dict): A configuration dictionary
+            config (dict): A configuration dictionary.
         
         Raises:
-            ValueError: If the required configuration keys are missing
+            ValueError: If any required configuration keys are missing.
         """
         if "ToMatricesConverter" not in config:
             raise ValueError(f"Invalid config: missing ToMatricesConverter sub-config")
@@ -165,14 +161,14 @@ class Protein:
             shared_memory.SharedMemory: A shared memory object containing the matrices.
         """
         total_size: int = sum(matrix.nbytes for matrix in matrices)
-        # Create shared memory for the matrices.
+        # create shared memory for the matrices
         shm: shared_memory.SharedMemory = shared_memory.SharedMemory(create=True, size=total_size)
-        # Copy the matrices into the shared memory block.
+        # copy the matrices into the shared memory block
         offset_size: int = 0
         for matrix in matrices:
             matrix_size: int = matrix.nbytes
             mapped_matrix: np.ndarray = np.ndarray(matrix.shape, dtype=matrix.dtype, buffer=shm.buf[offset_size:offset_size + matrix_size])
-            np.copyto(mapped_matrix, matrix)  # Copy data into shared memory.
+            np.copyto(mapped_matrix, matrix)  # copy data into shared memory
             offset_size += matrix_size
         return shm
 
@@ -273,29 +269,29 @@ class Protein:
         """
         if preceding_residue is None or preceding_residue in (current_residue, next_residue):
             valid_residues: List[int] = [i for i in range(self._residues_range) if i not in (current_residue, next_residue)]
-            # Randomly choose a valid residue when the preceding residue is invalid.
+            # randomly choose a valid residue when the preceding residue is invalid
             preceding_residue = np.random.choice(valid_residues)
 
-        # Get the last observed energy between the preceding and current residue.
+        # get the last observed energy between the preceding and current residue
         last_observed_energy_btw_preceding_current: float = self._get_interaction_matrix(current_matrix_index)[preceding_residue, current_residue]
         
-        # Round the energies between the current and next residue across all matrices.
+        # round the energies between the current and next residue across all matrices
         rounded_energy_counts_btw_current_next: np.ndarray = np.round(
             [matrix[current_residue, next_residue] for matrix in self._get_all_interaction_matrices()],
             decimals=self._interactions_precision_limit_decimals
         )
         
-        # Get unique rounded energies and their frequencies.
+        # get unique rounded energies and their frequencies
         values_counts: Tuple[np.ndarray, np.ndarray] = np.unique(rounded_energy_counts_btw_current_next, return_counts=True)
         unique_rounded_energies_btw_current_next, frequencies = values_counts
 
-        # Calculate probabilities for each unique energy.
+        # calculate probabilities for each unique energy
         probabilities: np.ndarray = frequencies / self.number_matrices
 
-        # Draw an energy value based on the probability distribution.
+        # draw an energy value based on the probability distribution
         drawn_energy: float = np.random.choice(unique_rounded_energies_btw_current_next, p=probabilities)
         
-        # Select the matrix index where the energy matches best.
+        # select the matrix index where the energy matches best
         selected_matrix_index: int = min(
             [
                 (which_matrix, abs(matrix[preceding_residue, current_residue] - last_observed_energy_btw_preceding_current))
@@ -305,7 +301,7 @@ class Protein:
             key=lambda matrix_difference_pair: matrix_difference_pair[1]
         )[0]
 
-        # Calculate matrix selection probability.
+        # calculate matrix selection probability
         matrix_selection_probability: float = 1 / frequencies[np.where(unique_rounded_energies_btw_current_next == drawn_energy)][0]
 
         return selected_matrix_index, matrix_selection_probability
@@ -319,9 +315,9 @@ class Protein:
         """
         Generate an allosteric signal pathway starting from a specified residue.
 
-        The pathway is generated by iteratively selecting the next residue based on the transition probabilities
-        from the probability matrices. The method calculates the aggregated probability of the pathway as the product
-        of individual selection probabilities.
+        The pathway is generated by iteratively selecting the next residue based on transition probabilities from the
+        probability matrices. The log of the aggregated probability of the pathway is computed as the sum of the natural
+        logarithms of the individual selection probabilities.
 
         Args:
             start (int): The starting residue index.
@@ -331,7 +327,7 @@ class Protein:
         Returns:
             Tuple[List[int], float]: A tuple containing:
                 - A list of residue indices representing the pathway.
-                - The aggregated probability of the pathway.
+                - The log of the aggregated probability of the pathway.
         """
         pathway: List[int] = [start]
         log_aggregated_probability: float = 0.0
@@ -342,11 +338,11 @@ class Protein:
         next_residue: Optional[int] = None
 
         for _ in range(number_steps):
-            # Get the transition probability vector for the current residue.
+            # get the transition probability vector for the current residue
             probability_vector: np.ndarray = self._get_transitions_prob_vector(
                 current_residue, self._get_probability_matrix(current_matrix_index)
             )
-            # Avoid revisiting residues by zeroing out probabilities for already visited indices.
+            # avoid revisiting residues by zeroing out probabilities for already visited indices
             probability_vector[pathway] = 0.0
             probability_vector = _util.normalize_vector(probability_vector)
             next_residue = np.random.choice(range(0, self._residues_range), p=probability_vector)
@@ -367,9 +363,7 @@ class Protein:
             current_residue = next_residue
             next_residue = None
 
-        aggregated_probability: float = np.exp(log_aggregated_probability)
-
-        return pathway, aggregated_probability
+        return pathway, log_aggregated_probability
 
     def _generate_multiple_pathways(
         self, 
@@ -388,8 +382,9 @@ class Protein:
             target_residues (Optional[Tuple[int, ...]]): Optional tuple of target residue indices that can terminate a pathway.
 
         Returns:
-            List[Tuple[List[int], float]]: A list of tuples where each tuple contains a pathway (list of residue indices)
-            and its aggregated probability.
+            List[Tuple[List[int], float]]: A list of tuples where each tuple contains:
+                - A pathway (list of residue indices).
+                - The log of its aggregated probability.
         """
         pathway_probability_pairs: List[Tuple[List[int], float]] = []
         for _ in range(num_pathways):
@@ -401,7 +396,7 @@ class Protein:
         Format a pathway into a string representation.
 
         Depending on the VMD_compatible flag, the pathway is formatted differently:
-          - If True, the pathway is formatted as residue numbers (starting with "resid").
+          - If True, the pathway is formatted as residue numbers (prefixed with "resid").
           - If False, each residue is represented by its index and associated residue label.
 
         Args:
@@ -413,7 +408,7 @@ class Protein:
         """
         if VMD_compatible:
             path: str = "resid"
-            format_ = lambda id: f" {id + 1}" # adding 1 due to zero-indexing under the hood
+            format_ = lambda id: f" {id + 1}"  # adding 1 due to zero-indexing under the hood
         else:
             path = ""
             format_ = lambda id: f" ({id + 1}-{self.residues[id]})"
@@ -424,21 +419,21 @@ class Protein:
 
     def _write_pathways(self, output_file_path: str, header: str, pathways: List[Tuple[List[int], float]]) -> None:
         """
-        Write generated pathways and their probabilities to an output file.
+        Write generated pathways and their log aggregated probabilities to an output file.
 
-        The output file will include a header and a list of pathways, each with an index, its aggregated probability,
+        The output file will include a header and a list of pathways, each with an index, its log aggregated probability,
         and the formatted pathway string.
 
         Args:
             output_file_path (str): The path to the file where pathways will be saved.
             header (str): The header string to write at the beginning of the file.
-            pathways (List[Tuple[List[int], float]]): A list of tuples, each containing a pathway and its probability.
+            pathways (List[Tuple[List[int], float]]): A list of tuples, each containing a pathway and its log aggregated probability.
         """
         with open(output_file_path, "w") as output:
             output.write(header + "\n")
             for index, pathway_and_probability in enumerate(pathways, start=1):
                 pathway, probability = pathway_and_probability
-                output.write(f"INDEX: {index}, PROBABILITY: {probability}, PATHWAY: {self._format_pathway(pathway)}\n")
+                output.write(f"INDEX: {index}, LOG PROBABILITY: {probability}, PATHWAY: {self._format_pathway(pathway)}\n")
 
     def _construct_pathways_output_path(self, output_directory: str, pathways_batch_index: int) -> str:
         """
@@ -465,23 +460,51 @@ class Protein:
         start_residue: int,
         number_pathways: int,
         in_parallel: bool,
-        target_residues: Optional[list[int]] = list(),
+        target_residues: Optional[List[int]] = None,
         number_steps: Optional[int] = None,
         pathways_batch_index: Optional[int] = 1,
         output_directory: Optional[str] = None, 
         num_workers: Optional[int] = None, 
         seed: Optional[int] = None
     ) -> str:
-        if start_residue not in range(1, self._residues_range):
-            raise ValueError(f"Invalid 'start_residue' argument. Expected an integer value in [0, {self._residues_range}]; Instead got: {start_residue}")
+        """
+        Generate allosteric signal pathways and write them to an output file.
+
+        This method creates one or more pathways starting from a given residue and saves the formatted results
+        to a file. Depending on the `in_parallel` flag, pathway generation is either processed sequentially or
+        distributed across multiple workers using a process pool. The output file contains each pathway along with
+        its log aggregated probability.
+
+        Args:
+            start_residue (int): The starting residue index (1-indexed).
+            number_pathways (int): The total number of pathways to generate.
+            in_parallel (bool): Whether to perform pathway generation in parallel.
+            target_residues (Optional[List[int]]): A list of target residue indices (1-indexed) that can terminate a pathway.
+                Defaults to None.
+            number_steps (Optional[int]): Maximum number of steps for each pathway. If None, defaults to the number of residues.
+            pathways_batch_index (Optional[int]): An index used for naming the output file. Defaults to 1.
+            output_directory (Optional[str]): Directory where the output file will be saved. If None, uses the current working directory.
+            num_workers (Optional[int]): Number of parallel workers to use when `in_parallel` is True.
+            seed (Optional[int]): Random seed for reproducibility. If None, a random seed is generated.
+
+        Returns:
+            str: The file path of the output file containing the generated pathways.
+
+        Raises:
+            ValueError: If any of the input parameters are invalid.
+        """
+        if target_residues is None:
+            target_residues = []
+        if start_residue not in range(1, self._residues_range + 1):
+            raise ValueError(f"Invalid 'start_residue' argument. Expected an integer value in [1, {self._residues_range}]; got: {start_residue}")
         
         if not isinstance(number_pathways, int) or number_pathways <= 0:
-            raise ValueError(f"Invalid 'number_pathways' argument. Expected a positive integer value; Instead got: {number_pathways}")
+            raise ValueError(f"Invalid 'number_pathways' argument. Expected a positive integer; got: {number_pathways}")
 
         if number_steps is None:
             number_steps = self._residues_range
         if not isinstance(number_steps, int) or number_steps <= 0:
-            raise ValueError(f"Invalid 'number_steps' argument. Expected a positive integer value; Instead got: {number_steps}")
+            raise ValueError(f"Invalid 'number_steps' argument. Expected a positive integer; got: {number_steps}")
 
         if seed is None:
             seed = np.random.randint(0, 2**32 - 1)
@@ -495,15 +518,15 @@ class Protein:
             seed=seed
         )
 
-        # needed due to 0-based indexing under the hood
+        # adjust for 0-based indexing internally
         zero_indexed_start_residue = start_residue - 1
-        zero_indexed_target_residues = tuple([i-1 for i in target_residues])
+        zero_indexed_target_residues = tuple([i - 1 for i in target_residues])
 
         if in_parallel:
             if num_workers is None:
-                raise ValueError("If in_parallel=True, num_workers parameter must be provided")
+                raise ValueError("If in_parallel=True, the num_workers parameter must be provided")
             
-            # Calculate batch sizes for parallel processing.
+            # calculate batch sizes for parallel processing
             pathway_batch_size, residual_pathways = divmod(number_pathways, num_workers)
             pathway_batches: List[int] = [pathway_batch_size + 1 if i < residual_pathways else pathway_batch_size for i in range(num_workers)]
 
@@ -521,7 +544,7 @@ class Protein:
             )
             
         else:
-            # For sequential processing, process all pathways as a single batch.
+            # for sequential processing, process all pathways as a single batch
             pathway_batches: List[int] = [number_pathways]
             generated_pathways = _util.process_elementwise(
                 in_parallel=False,
@@ -534,7 +557,7 @@ class Protein:
                 zero_indexed_target_residues
             )
 
-        # Flatten the list of lists of pathways and sort them by aggregated probability (in descending order).
+        # flatten the list of lists of pathways and sort them by log aggregated probability in descending order
         generated_pathways = list(chain.from_iterable(generated_pathways))
         generated_pathways.sort(key=lambda x: x[1], reverse=True)
 
