@@ -15,7 +15,7 @@ from . import _util
 # [] ensure no memory leaks;
 # [] ensure indexing is correct;
 # REMARK: I think applying softmax multiple times during renormalisation steps is leading to corrupt numbers;
-# REMARK: the probability matrices are wrong so before any work is done on the Protein class, especially in the context of testing,
+# REMARK: the probability matrices may be wrong so before any work is done on the Protein class, especially in the context of testing,
 #         other modules must be thoroughly tested and entirely debugged; ToMatricesConverter especially should be investigated;
 # [] try using l1 or l2 norms for normalisation and see how it compares to softmax in terms of the resulting probabilities;
 # [] add more modularity to ToMatricesConverter so that you can pass any normalisation function;
