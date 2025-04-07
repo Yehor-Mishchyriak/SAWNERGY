@@ -17,29 +17,27 @@ class FramesAnalyzer:
     # args: start residue, end residue, interaction energy cutoff value
     #       (if less than that, the interaction won't be recorded), path to the output file
     @staticmethod
-    def _elec_analysis(start_res_id, end_res_id, cutoff, output_file_path):
+    def _elec_analysis(start_res_id: int, end_res_id: int, cutoff: float, output_file_path: str):
         return f"pairwise :{start_res_id}-{end_res_id} :{start_res_id}-{end_res_id} cuteelec {cutoff} avgout {output_file_path}\nrun'"
     
     # purpose: extract pairwise van der Waals interactions between residues from a specific range
     # args: start residue, end residue, interaction energy cutoff value
     #       (if less than that, the interaction won't be recorded), path to the output file
     @staticmethod
-    def _vdw_analysis(start_res_id, end_res_id, cutoff, output_file_path):
+    def _vdw_analysis(start_res_id: int, end_res_id: int, cutoff: float, output_file_path: str):
         return f"pairwise :{start_res_id}-{end_res_id} :{start_res_id}-{end_res_id} cutevdw {cutoff} avgout {output_file_path}\nrun'"
 
     # purpose: extract pairwise hydrogen bond interactions between residues from a specific range
     # args: start residue, end residue, distance cutoff value, angle cutoff value
     #       (if less than either of these, the interaction won't be recorded), path to the output file
     @staticmethod
-    def _hbond_analysis(start_res_id, end_res_id, distance_cutoff, angle_cutoff, output_file_path):
+    def _hbond_analysis(start_res_id: int, end_res_id: int, distance_cutoff: float, angle_cutoff: float, output_file_path: str):
         return (f"donormask :{start_res_id}-{end_res_id} acceptormask :{start_res_id}-{end_res_id} distance {distance_cutoff} angle {angle_cutoff} avgout {output_file_path}\nrun'")
     
-    # purpose: helper method for the com_analysis function
-    #          that builds a cpptraj command that extracts
-    #          center of the mass of each individual residue from a specific residue range
+    # purpose: extract the center of the mass of each individual residue from a specific residue range
     # args: start residue, end residue, template for the path to the output file
     @staticmethod
-    def _com_analysis_commands(start_res_id: int, end_res_id: int, output_file_path_template: str):
+    def _com_analysis(start_res_id: int, end_res_id: int, output_file_path_template: str):
         s = ""
         for res_id in range(start_res_id, end_res_id+1):
             s += f"vector res_{res_id} center :{res_id} out {output_file_path_template.format(res_id=res_id)}\n"
@@ -50,12 +48,11 @@ class FramesAnalyzer:
     # purpose: load the molecular dynamics files
     # args: topology file, trajectory file, start frame, end frame
     @staticmethod
-    def load_data_from(topology_file, trajectory_file, start_frame, end_frame):
+    def load_data_from(topology_file: str, trajectory_file: str, start_frame: int, end_frame: int):
         return (f"echo 'parm {topology_file}\ntrajin {trajectory_file} {start_frame} {end_frame}\n")
     
-    # storing available interaction analyses in the dict
-    interaction_analyses = {"elec": _elec_analysis, "vdw": _vdw_analysis, "hbond": _hbond_analysis}
-    com_analysis = lambda start_res_id, end_res_id, output_file_path_template: FramesAnalyzer._com_analysis_commands(start_res_id, end_res_id, output_file_path_template)
+    # storing available analyses in the dict
+    available_analyses = {"elec": _elec_analysis, "vdw": _vdw_analysis, "hbond": _hbond_analysis, "com": _com_analysis}
 
     def __init__(self, cpptraj_abs_path: Optional[str] = None, config: Optional[dict] = None) -> None:
         self.global_config = None
@@ -124,32 +121,7 @@ class FramesAnalyzer:
                        in_parallel: bool, batch_size: Optional[int] = 1,
                        in_one_batch: Optional[bool] = False, plotable: Optional[bool] = False, 
                        start_end_residues: Optional[Tuple[int, int]] = None, output_directory_path: Optional[str] = None) -> str:
-        """_summary_
 
-        Args:
-            topology_file (str): _description_
-            trajectory_file (str): _description_
-            interaction_types_and_kwargs (dict): _description_
-            number_frames (int): _description_
-            in_parallel (bool): _description_
-            batch_size (Optional[int], optional): _description_. Defaults to 1.
-            in_one_batch (Optional[bool], optional): _description_. Defaults to False.
-            plotable (Optional[bool], optional): _description_. Defaults to False.
-            start_end_residues (Optional[Tuple[int, int]], optional): _description_. Defaults to None.
-            output_directory_path (Optional[str], optional): _description_. Defaults to None.
-
-        Raises:
-            ValueError: _description_
-
-        Returns:
-            str: _description_
-
-        interaction_types_and_kwargs = {
-            "elec": {start_res_id: <int>, end_res_id: <int>, cutoff: <float>},
-            "vdw": {start_res_id: <int>, end_res_id: <int>, cutoff: <float>},
-            "hbond": {start_res_id: <int>, end_res_id: <int>, distance_cutoff: <float>, angle_cutoff: <float>}
-        }
-        """
         output_directory = (
             output_directory_path if output_directory_path
             else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name_template"])
