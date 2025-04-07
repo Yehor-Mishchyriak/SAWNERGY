@@ -32,7 +32,7 @@ class FramesAnalyzer:
     #       (if less than either of these, the interaction won't be recorded), path to the output file
     @staticmethod
     def _hbond_analysis(start_res_id: int, end_res_id: int, distance_cutoff: float, angle_cutoff: float, output_file_path: str):
-        return (f"donormask :{start_res_id}-{end_res_id} acceptormask :{start_res_id}-{end_res_id} distance {distance_cutoff} angle {angle_cutoff} avgout {output_file_path}\nrun'")
+        return (f"hbond donormask :{start_res_id}-{end_res_id} acceptormask :{start_res_id}-{end_res_id} distance {distance_cutoff} angle {angle_cutoff} avgout {output_file_path}\nrun'")
     
     # purpose: extract the center of the mass of each individual residue from a specific residue range
     # args: start residue, end residue, template for the path to the output file
@@ -41,7 +41,7 @@ class FramesAnalyzer:
         s = ""
         for res_id in range(start_res_id, end_res_id+1):
             s += f"vector res_{res_id} center :{res_id} out {output_file_path_template.format(res_id=res_id)}\n"
-        return s[:-1] + " run' "
+        return s[:-1] + "\nrun' "
 
     # * PUBLIC CLASS FIELDS *
 
@@ -69,7 +69,7 @@ class FramesAnalyzer:
         
         # just storing the piping operator and the cpptraj output suppresion so that
         # its usage in the instance methods does not make the code verbose
-        self._through_cpptraj = f" | {self._cpptraj}" #> /dev/null 2>&1
+        self._through_cpptraj = f" | {self._cpptraj} > /dev/null 2>&1"
 
     @property
     def which_cpptraj(self) -> Optional[str]:
@@ -90,7 +90,7 @@ class FramesAnalyzer:
         output_file_path = os.path.join(output_directory, output_file_name)
 
         command = "".join([self.load_data_from(topology_file, trajectory_file, start_frame, end_frame),
-                          self.interaction_analyses[interaction_type](**analysis_kwargs, output_file_path=output_file_path),
+                          self.available_analyses[interaction_type](**analysis_kwargs, output_file_path=output_file_path),
                           self._through_cpptraj])
 
         try:
@@ -107,9 +107,8 @@ class FramesAnalyzer:
         output_file_path_template = os.path.join(output_directory, output_file_name_template)
 
         command = "".join([self.load_data_from(topology_file, trajectory_file, start_frame, end_frame),
-                          self.com_analysis(start_residue, end_residue, output_file_path_template),
+                          self.available_analyses["com"](start_residue, end_residue, output_file_path_template),
                           self._through_cpptraj])
-        print(command)
 
         try:
             run(command, check=True, shell=True)
@@ -135,25 +134,48 @@ class FramesAnalyzer:
 
         # extract interactions
         for interaction_type, analysis_kwargs in interaction_types_and_kwargs.items():
-            #! ERROR: you need to actually create this directory: self.cls_config[f"{interaction_type}_directory_name"]!!!
-            interaction_type_output_directory = os.path.join(output_directory, self.cls_config[f"{interaction_type}_directory_name"])
+            # create an intermediate folder for the specific interaction type
+            interaction_type_output_directory_path = os.path.join(output_directory, self.cls_config[f"{interaction_type}_directory_name"])
+            os.makedirs(interaction_type_output_directory_path, exist_ok=True)
             extract_interactions_from(batches,
                             self.extract_residue_interactions,
                             topology_file, trajectory_file,
                             interaction_type, analysis_kwargs,
-                            interaction_type_output_directory)
+                            interaction_type_output_directory_path)
 
         if plotable:
             if start_end_residues is None:
                 raise ValueError("If plotable=True, start_end_residues parameter must be provided")
+            com_output_directory_path = os.path.join(output_directory, self.cls_config["coordinates_directory_name"])
+            os.makedirs(com_output_directory_path, exist_ok=True)
             self.extract_residue_coordinates(start_end_residues=start_end_residues,
                                              start_end_frames=(1, number_frames),
                                              topology_file=topology_file,
                                              trajectory_file=trajectory_file,
-                                             output_directory=output_directory)
+                                             output_directory=com_output_directory_path)
 
         return output_directory
 
 
 if __name__ == "__main__":
     pass
+
+# * TEMP *
+# EXAMPLE USAGE: [works according to shallow testing; of course need to unit test the whole thing]
+"""
+fa = apa.FramesAnalyzer(cpptraj_abs_path="/home/yehor/miniforge3/envs/AmberTools23/bin/cpptraj")
+
+fa.process_trajectory(
+    topology_file="/home/yehor/Desktop/AllostericPathwayAnalyzer/untracked/MD_data/p53_WT_nowat.prmtop",
+    trajectory_file="/home/yehor/Desktop/AllostericPathwayAnalyzer/untracked/MD_data/p53_WT_md1000_str.nc",
+    interaction_types_and_kwargs={
+        "elec": {"start_res_id": 1, "end_res_id": 393, "cutoff": 1.0},
+        "vdw": {"start_res_id": 1, "end_res_id": 393, "cutoff": 1.0},
+        "hbond": {"start_res_id": 1, "end_res_id": 393, "distance_cutoff": 3.5, "angle_cutoff": 120}
+    },
+    number_frames=1000,
+    in_parallel=True,
+    batch_size=500,
+    plotable=True, start_end_residues=(1, 393)
+)
+"""
