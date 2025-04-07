@@ -1,12 +1,12 @@
 {
     "FramesAnalyzer":{
-        "output_directory_name": "Raw_MD_Data_{time}",
+        "output_directory_name_template": "Raw_MD_Data_{time}",
+        "interactions_file_name_template": "{start_frame}-{end_frame}.dat",
+        "coordinates_file_name_template": "{res_id}.dat",
         "elec_directory_name": "elec",
         "vdw_directory_name": "vdw",
         "hbond_directory_name": "hbond",
-        "coordinates_directory_name": "com",
-        "interactions_file_name": "{start_frame}-{end_frame}.dat",
-        "coordinates_file_name": "{res_id}.dat"
+        "coordinates_directory_name": "com"
     },
     "AnalysesProcessor":{
         "output_directory_name": "Raw_Electrostatics_{time}",
