@@ -354,6 +354,11 @@ def read_lines(file_path: str, skip_header: bool = True) -> List[str]:
         lines = file.readlines()
         return lines[1:] if skip_header else lines
 
+###################################################################################################
+# The read_lines function is good; what I need is individual parses for individual analysis types #
+# Then I will pass a parses to an HOF that does the writing and it will parse and write each line #
+###################################################################################################
+
 def write_csv_header(header: str, output_file_path: str) -> None:
     """
     Writes a CSV header to the specified file.
@@ -409,7 +414,7 @@ def frames_from_name(file_name: str) -> Tuple[int, int]:
     Extracts the start and end frame numbers from a file name.
 
     Args:
-        file_name (str): File name containing frame information in the format "start-end".
+        file_name (str): File name containing frame information in the format "<int>-<int>".
 
     Returns:
         Tuple[int, int]: The start and end frame numbers as integers.
@@ -422,8 +427,28 @@ def frames_from_name(file_name: str) -> Tuple[int, int]:
         start_frame = matched.group(1)
         end_frame = matched.group(2)
     except AttributeError:
-        raise ValueError(f"Cannot decompose the {file_name} string due to a wrong format; Expected: int-int")
+        raise ValueError(f"Cannot decompose the {file_name} string due to a wrong format; Expected: <int>-<int>")
     return int(start_frame), int(end_frame)
+
+def residue_id_from_name(file_name: str) -> int:
+    """
+    Extracts the residue id from a file name.
+
+    Args:
+        file_name (str): File name containing residue id information in the format "res_<int>".
+
+    Returns:
+        int: The corresponding residue id as an integer.
+
+    Raises:
+        ValueError: If the file name does not contain "res_" string followed by an integer.
+    """
+    matched = re.search(r"res_(\d+)", file_name)
+    try:
+        residue_id = matched.group(1)
+    except AttributeError:
+        raise ValueError(f"Cannot extract the residue id from {file_name} string due to a wrong format; Expected: res_<int>")
+    return int(residue_id)
 
 ###########
 # protein #

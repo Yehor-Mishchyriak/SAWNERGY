@@ -10,10 +10,13 @@ from . import _util
 
 class AnalysesProcessor:
 
-    def __init__(self) -> None:
+    def __init__(self, config: Optional[dict] = None) -> None:
         self.global_config = None
         self.cls_config = None
-        self.set_config(pkg_globals.default_config)
+        if config is None:
+            self.set_config(pkg_globals.default_config)
+        else:
+            self.set_config(config)
     
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(config={self.cls_config})"
@@ -23,18 +26,27 @@ class AnalysesProcessor:
         self.cls_config = config[self.__class__.__name__]
 
     def _construct_csv_file_path(self, cpptraj_file_path: str, output_directory: str) -> str:
-        # Extract frame range from the file name.
+        
         cpptraj_file_name = os.path.basename(cpptraj_file_path)
-        start_frame, end_frame = _util.frames_from_name(cpptraj_file_name)
+        cpptraj_file_analysis_type = os.path.basename(os.path.dirname(cpptraj_file_path))
+        
+        if cpptraj_file_analysis_type == "com":
+            res_id = _util.residue_id_from_name(cpptraj_file_name)
+            csv_file_name = self.cls_config["coordinates_file_name_template"].format(res_id=res_id)
+        else:
+            start_frame, end_frame = _util.frames_from_name(cpptraj_file_name)
+            csv_file_name = self.cls_config["interactions_file_name_template"].format(start=start_frame, end=end_frame)
 
-        # Construct the CSV file name using the configuration template.
-        try:
-            csv_file_name = self.cls_config["csv_file_name"].format(start=start_frame, end=end_frame)
-        except KeyError:
-            raise KeyError(f"Wrong 'csv_file_name' format. Expected a string containing {{\"start\"}}-{{\"end\"}}, instead got: {self.cls_config['cpptraj_file_name']}")
-        csv_file_path = os.path.join(output_directory, csv_file_name)
+        csv_file_path = os.path.join(output_directory, cpptraj_file_analysis_type, csv_file_name)
 
         return csv_file_path
+
+    def cpptraj_to_csv_immediately(self, cpptraj_file_path: str, output_directory: str) -> None:
+        csv_file_path = self._construct_csv_file_path(cpptraj_file_path, output_directory)
+        # Read the entire cpptraj file.
+        contents = _util.read_lines(cpptraj_file_path)
+        # Write the CSV file with the provided header and contents.
+        _util.write_csv_from_cpptraj(parser, header, contents, csv_file_path) # NEED TO IMPLEMENT IN UTIL
 
     def cpptraj_to_csv_incrementally(self, cpptraj_file_path: str, output_directory: str,
                                      allowed_memory_percentage_hint: float, num_workers: int) -> None:
@@ -43,15 +55,9 @@ class AnalysesProcessor:
         _util.write_csv_header(self.cls_config["csv_file_header"], csv_file_path)
         # Process the cpptraj file in chunks and append each chunk to the CSV file.
         for chunk in _util.chunked_file(cpptraj_file_path, allowed_memory_percentage_hint, num_workers):
-            _util.append_csv_from_cpptraj_electrostatics(chunk, csv_file_path)
+            _util.append_csv_from_cpptraj(parser, chunk, csv_file_path) # NEED TO IMPLEMENT IN UTIL
 
-    def cpptraj_to_csv_immediately(self, cpptraj_file_path: str, output_directory: str) -> None:
-        csv_file_path = self._construct_csv_file_path(cpptraj_file_path, output_directory)
-        # Read the entire cpptraj file.
-        contents = _util.read_lines(cpptraj_file_path)
-        # Write the CSV file with the provided header and contents.
-        _util.write_csv_from_cpptraj_electrostatics(self.cls_config["csv_file_header"], contents, csv_file_path)
-
+    # THIS ONE SHOULD BE ALRIGHT AFTER I'VE MADE THE PARSERS AND THE HOFs FOR THEM
     def process_target_directory(self, target_directory_path: str,
                                 in_parallel: bool, allowed_memory_percentage_hint: Optional[float] = None,
                                 num_workers: Optional[int] = None, output_directory_path: Optional[str] = None) -> str:

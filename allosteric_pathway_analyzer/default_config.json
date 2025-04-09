@@ -2,16 +2,21 @@
     "FramesAnalyzer":{
         "output_directory_name_template": "Raw_MD_Data_{time}",
         "interactions_file_name_template": "{start_frame}-{end_frame}.dat",
-        "coordinates_file_name_template": "{res_id}.dat",
+        "coordinates_file_name_template": "res_{res_id}.dat",
+
         "elec_directory_name": "elec",
         "vdw_directory_name": "vdw",
         "hbond_directory_name": "hbond",
         "coordinates_directory_name": "com"
     },
     "AnalysesProcessor":{
-        "output_directory_name": "Raw_Electrostatics_{time}",
-        "csv_file_header": "residue_i,residue_i_index,residue_j,residue_j_index,energy\n",
-        "csv_file_name": "{start}-{end}.csv"
+        "output_directory_name_template": "CSV_Formatted_MD_Data_{time}",
+        "interactions_file_name_template": "{start_frame}-{end_frame}.csv",
+        "coordinates_file_name_template": "res_{res_id}.csv",
+        "elec_csv_file_header": "residue_i,residue_i_index,residue_j,residue_j_index,energy\n",
+        "vdw_csv_file_header": "residue_i,residue_i_index,residue_j,residue_j_index,energy\n",
+        "hbond_csv_file_header": "acceptor_residue,acceptor_residue_index,donor_residue,donor_residue_index,fraction,distance,angle\n",
+        "coordinates_csv_file_header": "residue_index,x,y,z"
     },
     "ToMatricesConverter":{
         "output_directory_name": "Int_Prob_Matrices_{time}",
