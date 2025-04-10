@@ -146,7 +146,7 @@ class FramesAnalyzer:
         if plotable:
             if start_end_residues is None:
                 raise ValueError("If plotable=True, start_end_residues parameter must be provided")
-            com_output_directory_path = os.path.join(output_directory, self.cls_config["coordinates_directory_name"])
+            com_output_directory_path = os.path.join(output_directory, self.cls_config["com_directory_name"])
             os.makedirs(com_output_directory_path, exist_ok=True)
             self.extract_residue_coordinates(start_end_residues=start_end_residues,
                                              start_end_frames=(1, number_frames),

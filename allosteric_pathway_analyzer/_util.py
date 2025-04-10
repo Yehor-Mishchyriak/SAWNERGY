@@ -296,7 +296,22 @@ def construct_batch_sequence(number_frames: int, batch_size: int) -> List[Tuple[
 # analyses_processor #
 ######################
 
-def _split_entry(res_atm: str) -> Tuple[str, str]:
+def read_lines(file_path: str, skip_header: bool = True) -> List[str]:
+    """
+    Reads all lines from a file, optionally skipping the header.
+
+    Args:
+        file_path (str): Path to the file.
+        skip_header (bool, optional): Whether to skip the first line. Defaults to True.
+
+    Returns:
+        List[str]: A list of lines from the file.
+    """
+    with open(file_path, "r", encoding="utf-8") as file:
+        lines = file.readlines()
+        return lines[1:] if skip_header else lines
+
+def _extract_resname_index(res_atm: str) -> Tuple[str, str]:
     """
     Splits a residue-atom string into the residue name and index.
 
@@ -321,12 +336,18 @@ def _split_entry(res_atm: str) -> Tuple[str, str]:
         raise ValueError(f"Cannot decompose the {res_atm} string due to a wrong format; Expected: MOLECULE_INDEX@ATOM")
     return residue, index
 
-def _parse_cpptraj_electrostatics_line(line: str) -> str:
+# if you add more interaction types, just add their corresponding parsers and you will be all set
+
+def com_parser(line: str) -> str:
+    frame, x, y, z, _, _, _= line.split()
+    return f"{frame},{x},{y},{z}\n"
+
+def elec_vdw_parser(line: str) -> str:
     """
-    Parses a line of residue interaction data into a CSV-compatible format.
+    Parses a line of elec or vdw residue interaction data into a CSV-compatible format.
 
     Args:
-        line (str): A line of interaction data.
+        line (str): A line of elec or vdw interaction data.
 
     Returns:
         str: A CSV-formatted string with residue names, indices, and energy.
@@ -335,29 +356,26 @@ def _parse_cpptraj_electrostatics_line(line: str) -> str:
         res_atm_A, _, _, res_atm_B, _, _, _, energy = line.split()
     except ValueError: # needed to add this line because cpptraj sometimes adds information on van der Waals (I think this is a bug)
         res_atm_A, _, _, res_atm_B, _, _, _, _, _, energy = line.split()
-    res_A, res_A_index = _split_entry(res_atm_A)
-    res_B, res_B_index = _split_entry(res_atm_B)
+    res_A, res_A_index = _extract_resname_index(res_atm_A)
+    res_B, res_B_index = _extract_resname_index(res_atm_B)
     return f"{res_A},{res_A_index},{res_B},{res_B_index},{energy}\n"
 
-def read_lines(file_path: str, skip_header: bool = True) -> List[str]:
+def hbond_parser(line: str) -> str:
     """
-    Reads all lines from a file, optionally skipping the header.
+    Parses a line of hydrogen bond interaction data into a CSV-compatible format.
 
     Args:
-        file_path (str): Path to the file.
-        skip_header (bool, optional): Whether to skip the first line. Defaults to True.
+        line (str): A line of hydrogen bond interaction data.
 
     Returns:
-        List[str]: A list of lines from the file.
+        str: A CSV-formatted string containing the acceptor residue name and index, donor residue name and index, fraction, distance, and angle.
     """
-    with open(file_path, "r", encoding="utf-8") as file:
-        lines = file.readlines()
-        return lines[1:] if skip_header else lines
+    acceptor_res_atm, _, donor_res_atm, _, fraction, distance, angle = line.split()
+    acceptor_res, acceptor_res_index = _extract_resname_index(acceptor_res_atm)
+    donor_res, donor_res_index = _extract_resname_index(donor_res_atm)
+    return f"{acceptor_res},{acceptor_res_index},{donor_res},{donor_res_index},{fraction},{distance},{angle}\n"
 
-###################################################################################################
-# The read_lines function is good; what I need is individual parses for individual analysis types #
-# Then I will pass a parses to an HOF that does the writing and it will parse and write each line #
-###################################################################################################
+cpptraj_data_parsers = {"vdw": elec_vdw_parser, "elec": elec_vdw_parser, "hbond": hbond_parser, "com": com_parser}
 
 def write_csv_header(header: str, output_file_path: str) -> None:
     """
@@ -371,39 +389,50 @@ def write_csv_header(header: str, output_file_path: str) -> None:
     with open(output_file_path, "w", encoding="utf-8") as output_file:
         output_file.write(header)
 
-def write_csv_from_cpptraj_electrostatics(header: str, lines: List[str], output_file_path: str) -> None:
+def write_csv_from_cpptraj(parser: Callable[[str], str], header: str, lines: List[str], output_file_path: str) -> None:
     """
-    Writes parsed interaction data to a CSV file, including a header.
+    Parses interaction data from each line in 'lines' using the provided 'parser' function and writes the result to a CSV file.
+    The output file will include the specified header followed by the parsed data lines in the CSV format.
 
     Args:
-        header (str): The CSV header string.
-        lines (List[str]): A list of lines containing raw interaction data.
-        output_file_path (str): The path to the output CSV file.
+        parser (Callable[[str], str]): A function that takes a raw string line as input and returns a parsed CSV-formatted string.
+        header (str): The header line to be written at the top of the CSV file.
+        lines (List[str]): A list of raw data lines to be parsed and written to the CSV.
+        output_file_path (str): The file path where the output CSV should be saved.
+
+    Raises:
+        ValueError: If a line cannot be parsed by the parser function.
     """
     with open(output_file_path, "w", encoding="utf-8") as output_file:
         output_file.write(header)
         for line in lines:
             try:
-                parsed_line = _parse_cpptraj_electrostatics_line(line)
+                parsed_line = parser(line)
             except Exception as e:
                 raise ValueError(f"Error while parsing cpptraj files, wrong line format: {e}")
             output_file.write(parsed_line)
 
-def append_csv_from_cpptraj_electrostatics(lines: List[str], output_file_path: str) -> None:
+def append_csv_from_cpptraj(parser: Callable[[str], str], lines: List[str], output_file_path: str) -> None:
     """
-    Appends parsed interaction data to an existing CSV file.
+    Parses interaction data from each line in 'lines' using the provided 'parser' function and appends the result to an existing CSV file.
+    The CSV file at 'output_file_path' will be updated by adding the parsed data lines.
 
     Args:
-        lines (List[str]): A list of lines containing raw interaction data.
-        output_file_path (str): The path to the CSV file to which data will be appended.
+        parser (Callable[[str], str]): A function that takes a raw string line as input and returns a parsed CSV-formatted string.
+        lines (List[str]): A list of raw data lines to be parsed and appended to the CSV file.
+        output_file_path (str): The path of the CSV file where the parsed data is to be appended.
+
+    Raises:
+        ValueError: If the parser function fails to process a line, indicating that the line has an incorrect format.
     """
     with open(output_file_path, "a", encoding="utf-8") as output_file:
         for line in lines:
             try:
-                parsed_line = _parse_cpptraj_electrostatics_line(line)
+                parsed_line = parser(line)
             except Exception as e:
                 raise ValueError(f"Error while parsing cpptraj files, wrong line format: {e}")
             output_file.write(parsed_line)
+
 
 #########################
 # to_matrices_converter #
