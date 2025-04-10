@@ -53,6 +53,14 @@ class ToMatricesConverter:
         aggregated_energies = df.groupby(["residue_i_index", "residue_j_index"], as_index=False)["energy"].sum()
         return aggregated_energies
 
+    # !TMP
+    @staticmethod
+    def coords_to_np(csv_files: str) -> pd.DataFrame:
+        for i in os.listdir(csv_files):
+            data = np.loadtxt(os.path.join(csv_files, i), delimiter=',', skiprows=1)
+            name = _util.residue_id_from_name(i)
+            np.save(f"/home/yehor/Desktop/AllostericPathwayAnalyzer/untracked/test_runs/test_3_v3/tmp/{name}", data)
+
     @staticmethod
     def to_interactions_probablities_matrices(aggregated_energies: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         # extract indices and energy values
