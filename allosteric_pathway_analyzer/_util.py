@@ -360,6 +360,22 @@ def elec_vdw_parser(line: str) -> str:
     res_B, res_B_index = _extract_resname_index(res_atm_B)
     return f"{res_A},{res_A_index},{res_B},{res_B_index},{energy}\n"
 
+def _compute_hbond_strength(fraction: float, distance: float, angle: float) -> float:
+    """
+    Computes a heuristic strength for a hydrogen bond based on its occupancy, distance, and angle.
+    
+    Args:
+        fraction (float): The fraction of time (between 0 and 1) the hydrogen bond is observed.
+        distance (float): The average donor-acceptor distance (in Å).
+        angle (float): The average hydrogen bond angle (in degrees), where 180° is ideal.
+        
+    Returns:
+        float: A scalar value representing the hydrogen bond strength.
+    """
+    angular_factor = np.cos(np.radians(180 - angle))
+    strength = fraction * angular_factor / distance
+    return strength
+
 def hbond_parser(line: str) -> str:
     """
     Parses a line of hydrogen bond interaction data into a CSV-compatible format.
@@ -373,7 +389,7 @@ def hbond_parser(line: str) -> str:
     acceptor_res_atm, _, donor_res_atm, _, fraction, distance, angle = line.split()
     acceptor_res, acceptor_res_index = _extract_resname_index(acceptor_res_atm)
     donor_res, donor_res_index = _extract_resname_index(donor_res_atm)
-    return f"{acceptor_res},{acceptor_res_index},{donor_res},{donor_res_index},{fraction},{distance},{angle}\n"
+    return f"{acceptor_res},{acceptor_res_index},{donor_res},{donor_res_index},{_compute_hbond_strength(float(fraction),float(distance),float(angle))}\n"
 
 cpptraj_data_parsers = {"vdw": elec_vdw_parser, "elec": elec_vdw_parser, "hbond": hbond_parser, "com": com_parser}
 

@@ -46,7 +46,7 @@ class AnalysesProcessor:
     def cpptraj_to_csv_immediately(self, cpptraj_file_path: str, output_directory: str) -> None:
         analysis_type, csv_file_path = self._construct_csv_file_path(cpptraj_file_path, output_directory)
         parser = _util.cpptraj_data_parsers[analysis_type]
-        header = self.cls_config[f"{analysis_type}_csv_file_header"]
+        header = self.cls_config["com_csv_header" if analysis_type == "com" else "interactions_csv_header"]
         # read the entire cpptraj file
         contents = _util.read_lines(cpptraj_file_path)
         # write the CSV file with the provided header and contents
@@ -56,7 +56,7 @@ class AnalysesProcessor:
                                      allowed_memory_percentage_hint: float, num_workers: int) -> None:
         analysis_type, csv_file_path = self._construct_csv_file_path(cpptraj_file_path, output_directory)
         parser = _util.cpptraj_data_parsers[analysis_type]
-        header = self.cls_config[f"{analysis_type}_csv_file_header"]
+        header = self.cls_config["com_csv_header" if analysis_type == "com" else "interactions_csv_header"]
         # write the CSV header to the output file
         _util.write_csv_header(header, csv_file_path)
         # process the cpptraj file in chunks and append each chunk to the CSV file

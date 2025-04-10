@@ -12,10 +12,8 @@
         "output_directory_name_template": "CSV_Formatted_MD_Data_{time}",
         "interactions_file_name_template": "{start_frame}-{end_frame}.csv",
         "coordinates_file_name_template": "res_{res_id}.csv",
-        "elec_csv_file_header": "residue_i,residue_i_index,residue_j,residue_j_index,energy\n",
-        "vdw_csv_file_header": "residue_i,residue_i_index,residue_j,residue_j_index,energy\n",
-        "hbond_csv_file_header": "acceptor_residue,acceptor_residue_index,donor_residue,donor_residue_index,fraction,distance,angle\n",
-        "com_csv_file_header": "frame,x,y,z\n"
+        "interactions_csv_header": "residue_i,residue_i_index,residue_j,residue_j_index,energy\n",
+        "com_csv_header": "frame,x,y,z\n"
     },
     "ToMatricesConverter":{
         "output_directory_name": "Int_Prob_Matrices_{time}",

@@ -11,11 +11,14 @@ from . import pkg_globals
 from . import _util
 
 class ToMatricesConverter:
-    def __init__(self) -> None:
+    def __init__(self, config: Optional[dict] = None) -> None:
         self.global_config = None
         self.cls_config = None
-        self.set_config(pkg_globals.default_config)
-
+        if config is None:
+            self.set_config(pkg_globals.default_config)
+        else:
+            self.set_config(config)
+    
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(config={self.cls_config})"
 
