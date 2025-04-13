@@ -85,15 +85,22 @@ class FramesAnalyzer:
     def extract_residue_interactions(self, start_end_frames: Tuple[int, int], topology_file: str, trajectory_file: str,
                                      interaction_type: str, analysis_kwargs: dict, output_directory: str) -> None:
         
+        # create intermediate dir name
+        interaction_type_output_directory_path = os.path.join(output_directory, self.cls_config[f"{interaction_type}_directory_name"])
+        
+        # create file name
         start_frame, end_frame = start_end_frames
         output_file_name = self.cls_config["interactions_file_name_template"].format(start_frame=start_frame, end_frame=end_frame)
-        output_file_path = os.path.join(output_directory, output_file_name)
 
+        # create the path for the new file, and create the intermediate dir on that path using _util.new_dir_at(...)
+        output_file_path = os.path.join(_util.new_dir_at(interaction_type_output_directory_path), output_file_name)
+
+        # put the cpptraj command together
         command = "".join([self.load_data_from(topology_file, trajectory_file, start_frame, end_frame),
                           self.available_analyses[interaction_type](**analysis_kwargs, output_file_path=output_file_path),
                           self._through_cpptraj])
 
-        try:
+        try: # try executing the command
             run(command, check=True, shell=True)
         except SubprocessError as e:
             raise RuntimeError(f"An exception occurred while executing the '{command}' command: {e}")
@@ -101,16 +108,23 @@ class FramesAnalyzer:
     def extract_residue_coordinates(self, start_end_residues: Tuple[int, int], start_end_frames: Tuple[int, int],
                                     topology_file: str, trajectory_file: str, output_directory: str):
 
+        # create intermediate dir name
+        com_output_directory_path = os.path.join(output_directory, self.cls_config["com_directory_name"])
+
+        # create file name (template in this case)
         start_residue, end_residue = start_end_residues
         start_frame, end_frame = start_end_frames
         output_file_name_template = self.cls_config["coordinates_file_name_template"]
-        output_file_path_template = os.path.join(output_directory, output_file_name_template)
 
+        # create the path (template) for the new file, and create the intermediate dir on that path using _util.new_dir_at(...)
+        output_file_path_template = os.path.join(_util.new_dir_at(com_output_directory_path), output_file_name_template)
+
+        # put the cpptraj command together
         command = "".join([self.load_data_from(topology_file, trajectory_file, start_frame, end_frame),
-                          self.available_analyses["com"](start_residue, end_residue, output_file_path_template),
+                          self.available_analyses["com"](start_residue, end_residue, output_file_path_template=output_file_path_template),
                           self._through_cpptraj])
 
-        try:
+        try: # try executing the command
             run(command, check=True, shell=True)
         except SubprocessError as e:
             raise RuntimeError(f"An exception occurred while executing the '{command}' command: {e}")
@@ -134,25 +148,20 @@ class FramesAnalyzer:
 
         # extract interactions
         for interaction_type, analysis_kwargs in interaction_types_and_kwargs.items():
-            # create an intermediate folder for the specific interaction type
-            interaction_type_output_directory_path = os.path.join(output_directory, self.cls_config[f"{interaction_type}_directory_name"])
-            os.makedirs(interaction_type_output_directory_path, exist_ok=True)
             extract_interactions_from(batches,
                             self.extract_residue_interactions,
                             topology_file, trajectory_file,
                             interaction_type, analysis_kwargs,
-                            interaction_type_output_directory_path)
+                            output_directory)
 
         if plotable:
             if start_end_residues is None:
                 raise ValueError("If plotable=True, start_end_residues parameter must be provided")
-            com_output_directory_path = os.path.join(output_directory, self.cls_config["com_directory_name"])
-            os.makedirs(com_output_directory_path, exist_ok=True)
             self.extract_residue_coordinates(start_end_residues=start_end_residues,
                                              start_end_frames=(1, number_frames),
                                              topology_file=topology_file,
                                              trajectory_file=trajectory_file,
-                                             output_directory=com_output_directory_path)
+                                             output_directory=output_directory)
 
         return output_directory
 

@@ -30,6 +30,10 @@ def create_output_dir(output_directory_location: str, output_directory_name: str
     os.makedirs(output_directory_path, exist_ok=True) # Note: it will not raise an error or override the "output_directory_path" if it already exists
     return output_directory_path
 
+def new_dir_at(path: str) -> str:
+    os.makedirs(path, exist_ok=True)
+    return path
+
 def process_elementwise(in_parallel: bool = False,
                         Executor: Optional[Callable[..., Any]] = None,
                         max_workers: Optional[int] = None,

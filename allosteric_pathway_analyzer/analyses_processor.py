@@ -38,8 +38,7 @@ class AnalysesProcessor:
             csv_file_name = self.cls_config["interactions_file_name_template"].format(start_frame=start_frame, end_frame=end_frame)
 
         output_directory = os.path.join(output_directory, cpptraj_file_analysis_type)
-        os.makedirs(output_directory, exist_ok=True)
-        csv_file_path = os.path.join(output_directory, csv_file_name)
+        csv_file_path = os.path.join(_util.new_dir_at(output_directory), csv_file_name)
 
         return cpptraj_file_analysis_type, csv_file_path
 
