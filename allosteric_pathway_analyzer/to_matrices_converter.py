@@ -119,7 +119,7 @@ class ToMatricesConverter:
 
         residue_coords = []
         for csv_file_path in csv_file_paths:
-            data = np.loadtxt(csv_file_path, delimiter=',', skiprows=1)[1:4]
+            data = np.loadtxt(csv_file_path, delimiter=',', skiprows=1)[:, 1:4]
             residue_coords.append(data)
                                                                                #    0,          1,            2
         residue_coords = np.array(residue_coords) # 3D NumPy array of shape = (# residues, # frames, # coordinate_axes)
@@ -128,12 +128,11 @@ class ToMatricesConverter:
 
         output_directory = _util.new_dir_at(os.path.join(output_directory, self.cls_config["coordinates_directory_name"]))
         matrix_path_template = os.path.join(output_directory, self.cls_config["coordinates_file_name_template"])
-
         for frame_id in range(frames.shape[0]):
             frame = frames[frame_id]
-            np.save(matrix_path_template.format(frame_id=frame_id), frame)
+            np.save(matrix_path_template.format(frame_id=frame_id+1), frame)
 
-    def create_id_to_res_map():
+    def create_id_to_res_map(self):
         pass
 
     def process_target_directory(self, target_directory_path: str,
@@ -154,14 +153,16 @@ class ToMatricesConverter:
         target_subdirectory_paths = [os.path.join(target_directory_path, target_subdirectory) for target_subdirectory in os.listdir(target_directory_path)]
         if in_parallel:
             for target_subdirectory_path in target_subdirectory_paths:
-                if os.path.basename(target_directory_path) == "com":
-                    self.coords_to_np(target_directory_path, output_directory)
+                if os.path.basename(target_subdirectory_path) == "com":
+                    self.coords_to_np(target_subdirectory_path, output_directory)
+                    continue
                 convert_to_matrices(_util.chunked_dir(target_subdirectory_path, allowed_memory_percentage_hint, num_workers),
                                     self.process_multiple_csv_files, output_directory, normalisation_function, null_prob_value)
         else:
             for target_subdirectory_path in target_subdirectory_paths:
-                if os.path.basename(target_directory_path) == "com":
-                    self.coords_to_np(target_directory_path, output_directory)
+                if os.path.basename(target_subdirectory_path) == "com":
+                    self.coords_to_np(target_subdirectory_path, output_directory)
+                    continue
                 convert_to_matrices([os.path.join(target_subdirectory_path, file) for file in os.listdir(target_subdirectory_path)],
                                     self.aggregate_convert_save, output_directory, normalisation_function, null_prob_value)
 
