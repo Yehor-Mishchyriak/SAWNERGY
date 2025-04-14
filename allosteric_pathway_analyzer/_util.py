@@ -312,6 +312,18 @@ def construct_batch_sequence(number_frames: int, batch_size: int) -> List[Tuple[
         batches.append(residual_batch)
     return batches
 
+def id_to_res_map_from_pdb(pdb_file_path):
+    id_to_res_map = dict()
+    for line in read_lines(pdb_file_path, skip_header=True):
+        try:
+            _, _, _, residue, index, _, _, _, _, _, _ = line.split()
+        except ValueError: # too many to unpack; arises when the chain of polymer residues ends; just suppress
+            continue
+        id_to_res_map[int(index)-1] = residue
+    id_to_res_map = list(id_to_res_map.items())
+    id_to_res_map.sort(key=lambda res_id: res_id[0])
+    return tuple([res for _, res in id_to_res_map])
+
 ######################
 # analyses_processor #
 ######################

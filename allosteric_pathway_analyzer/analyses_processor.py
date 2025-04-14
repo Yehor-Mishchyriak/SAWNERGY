@@ -73,15 +73,19 @@ class AnalysesProcessor:
             convert_to_csv = _util.process_elementwise(in_parallel=True, Executor=ThreadPoolExecutor, capture_output=False, max_workers=num_workers)
         else:
             convert_to_csv = _util.process_elementwise(in_parallel=False, capture_output=False)
-        
+
         target_subdirectory_paths = [os.path.join(target_directory_path, target_subdirectory) for target_subdirectory in os.listdir(target_directory_path)]        
-        if in_parallel:
-            for target_subdirectory_path in target_subdirectory_paths:
-                analysis_file_paths = [os.path.join(target_subdirectory_path, file) for file in os.listdir(target_subdirectory_path)]
+        for path_ in target_subdirectory_paths:
+            
+            if not os.path.isdir(path_):
+                if os.path.basename(path_) == self.cls_config["id_to_res_map_name"]:
+                    os.rename(src=path_, dst=os.path.join(output_directory, self.cls_config["id_to_res_map_name"]))
+                continue
+
+            analysis_file_paths = [os.path.join(path_, file) for file in os.listdir(path_)]
+            if in_parallel:
                 convert_to_csv(analysis_file_paths, self.cpptraj_to_csv_incrementally, output_directory, allowed_memory_percentage_hint, num_workers)
-        else:
-            for target_subdirectory_path in target_subdirectory_paths:
-                analysis_file_paths = [os.path.join(target_subdirectory_path, file) for file in os.listdir(target_subdirectory_path)]
+            else:
                 convert_to_csv(analysis_file_paths, self.cpptraj_to_csv_immediately, output_directory)
 
         return output_directory

@@ -148,19 +148,22 @@ class ToMatricesConverter:
             convert_to_matrices = _util.process_elementwise(in_parallel=False, capture_output=False)
         
         target_subdirectory_paths = [os.path.join(target_directory_path, target_subdirectory) for target_subdirectory in os.listdir(target_directory_path)]
-        if in_parallel:
-            for target_subdirectory_path in target_subdirectory_paths:
-                if os.path.basename(target_subdirectory_path) == "com":
-                    self.coords_to_np(target_subdirectory_path, output_directory)
-                    continue
-                convert_to_matrices(_util.chunked_dir(target_subdirectory_path, allowed_memory_percentage_hint, num_workers),
+        for path_ in target_subdirectory_paths:
+            
+            if not os.path.isdir(path_):
+                if os.path.basename(path_) == self.cls_config["id_to_res_map_name"]:
+                    os.rename(src=path_, dst=os.path.join(output_directory, self.cls_config["id_to_res_map_name"]))
+                continue
+
+            if os.path.basename(path_) == "com":
+                self.coords_to_np(path_, output_directory)
+                continue
+
+            if in_parallel:
+                convert_to_matrices(_util.chunked_dir(path_, allowed_memory_percentage_hint, num_workers),
                                     self.process_multiple_csv_files, output_directory, normalisation_function, null_prob_value)
-        else:
-            for target_subdirectory_path in target_subdirectory_paths:
-                if os.path.basename(target_subdirectory_path) == "com":
-                    self.coords_to_np(target_subdirectory_path, output_directory)
-                    continue
-                convert_to_matrices([os.path.join(target_subdirectory_path, file) for file in os.listdir(target_subdirectory_path)],
+            else:
+                convert_to_matrices([os.path.join(path_, file) for file in os.listdir(path_)],
                                     self.aggregate_convert_save, output_directory, normalisation_function, null_prob_value)
 
         return output_directory

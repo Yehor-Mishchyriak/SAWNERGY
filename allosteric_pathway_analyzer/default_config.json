@@ -3,18 +3,19 @@
         "output_directory_name_template": "Raw_MD_Data_{time}",
         "interactions_file_name_template": "{start_frame}-{end_frame}.dat",
         "coordinates_file_name_template": "res_{res_id}.dat",
-        "id_to_res_map_name": "id_to_res_map.txt",
         "elec_directory_name": "elec",
         "vdw_directory_name": "vdw",
         "hbond_directory_name": "hbond",
-        "com_directory_name": "com"
+        "com_directory_name": "com",
+        "id_to_res_map_name": "id_to_res_map.txt"
     },
     "AnalysesProcessor":{
         "output_directory_name_template": "CSV_Formatted_MD_Data_{time}",
         "interactions_file_name_template": "{start_frame}-{end_frame}.csv",
         "coordinates_file_name_template": "res_{res_id}.csv",
         "interactions_csv_header": "residue_i,residue_i_index,residue_j,residue_j_index,energy\n",
-        "com_csv_header": "frame,x,y,z\n"
+        "com_csv_header": "frame,x,y,z\n",
+        "id_to_res_map_name": "id_to_res_map.txt"
     },
     "ToMatricesConverter":{
         "output_directory_name_template": "Int_Prob_Matrices_{time}",
@@ -22,7 +23,8 @@
         "interactions_matrix_name": "interactions.npy",
         "probabilities_matrix_name": "probabilities.npy",
         "coordinates_directory_name": "coordinates_by_frame",
-        "coordinates_file_name_template": "frame_{frame_id}.npy"
+        "coordinates_file_name_template": "frame_{frame_id}.npy",
+        "id_to_res_map_name": "id_to_res_map.txt"
     },
     "Protein":{
         "output_directory_name": "Generated_pathways_{time}",

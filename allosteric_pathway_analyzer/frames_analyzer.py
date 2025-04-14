@@ -3,6 +3,7 @@ import os
 from subprocess import run, SubprocessError
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
+from datetime import datetime
 
 # local imports
 from . import pkg_globals
@@ -43,6 +44,12 @@ class FramesAnalyzer:
             s += f"vector res_{res_id} center :{res_id} out {output_file_path_template.format(res_id=res_id)}\n"
         return s[:-1] + "\nrun' "
 
+    # purpose: convert md frames to a pdb file
+    # args: path to the output pdb file
+    @staticmethod
+    def _to_pdb(output_file_path):
+        return (f"trajout {output_file_path} pdb\nrun'")
+
     # * PUBLIC CLASS FIELDS *
 
     # purpose: load the molecular dynamics files
@@ -52,7 +59,7 @@ class FramesAnalyzer:
         return (f"echo 'parm {topology_file}\ntrajin {trajectory_file} {start_frame} {end_frame}\n")
     
     # storing available analyses in the dict
-    available_analyses = {"elec": _elec_analysis, "vdw": _vdw_analysis, "hbond": _hbond_analysis, "com": _com_analysis}
+    available_analyses = {"elec": _elec_analysis, "vdw": _vdw_analysis, "hbond": _hbond_analysis, "com": _com_analysis, "2pdb": _to_pdb}
 
     def __init__(self, cpptraj_abs_path: Optional[str] = None, config: Optional[dict] = None) -> None:
         self.global_config = None
@@ -69,7 +76,7 @@ class FramesAnalyzer:
         
         # just storing the piping operator and the cpptraj output suppresion so that
         # its usage in the instance methods does not make the code verbose
-        self._through_cpptraj = f" | {self._cpptraj}" #> /dev/null 2>&1
+        self._through_cpptraj = f" | {self._cpptraj} > /dev/null 2>&1"
 
     @property
     def which_cpptraj(self) -> Optional[str]:
@@ -128,15 +135,29 @@ class FramesAnalyzer:
             raise RuntimeError(f"An exception occurred while executing the '{command}' command: {e}")
 
     def create_id_to_res_map(self, topology_file: str, trajectory_file: str, output_directory: str):
-        output_file_path = os.path.join(output_directory, "data.pdb")
-        command = (f"parm {topology_file}\n"
-                  f"trajin {trajectory_file} 1 1 1\n"
-                  f"trajout {output_file_path} pdb\n") + self._through_cpptraj
-        print(command) # need to properly pass it to cpptraj; add 'run'
+        current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
+
+        output_file_path = os.path.join(output_directory, f"data{hash(current_time)}.pdb")
+        command = "".join([self.load_data_from(topology_file, trajectory_file, 1, 1),
+                           self.available_analyses["2pdb"](output_file_path),
+                           self._through_cpptraj])
+
         try: # try executing the command
             run(command, check=True, shell=True)
         except SubprocessError as e:
             raise RuntimeError(f"An exception occurred while executing the '{command}' command: {e}")
+        
+        id_to_res_map = _util.id_to_res_map_from_pdb(output_file_path)
+        
+        try: # try deleting the pdb
+            os.remove(output_file_path)
+        except OSError as e:
+            raise OSError(f"Could not clean up the temporarily created pdb file: {e}")
+        
+        id_to_res_map_path = os.path.join(output_directory, self.cls_config["id_to_res_map_name"])
+        with open(id_to_res_map_path, "w") as f:
+            f.write(str(id_to_res_map))
+        
 
     def process_trajectory(self, topology_file: str, trajectory_file: str,
                        interaction_types_and_kwargs: dict, number_frames: int,
@@ -145,28 +166,28 @@ class FramesAnalyzer:
                        start_end_residues: Optional[Tuple[int, int]] = None, output_directory_path: Optional[str] = None) -> str:
         output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name_template"])
         
-        # extract_interactions_from = _util.process_elementwise(in_parallel=in_parallel, Executor=ThreadPoolExecutor, capture_output=False)
+        extract_interactions_from = _util.process_elementwise(in_parallel=in_parallel, Executor=ThreadPoolExecutor, capture_output=False)
 
-        # # If in_one_batch is True, treat all frames as one batch.
-        # batch_size = number_frames if in_one_batch else batch_size
-        # batches = _util.construct_batch_sequence(number_frames, batch_size)
+        # If in_one_batch is True, treat all frames as one batch.
+        batch_size = number_frames if in_one_batch else batch_size
+        batches = _util.construct_batch_sequence(number_frames, batch_size)
 
-        # # extract interactions
-        # for interaction_type, analysis_kwargs in interaction_types_and_kwargs.items():
-        #     extract_interactions_from(batches,
-        #                     self.extract_residue_interactions,
-        #                     topology_file, trajectory_file,
-        #                     interaction_type, analysis_kwargs,
-        #                     output_directory)
+        # extract interactions
+        for interaction_type, analysis_kwargs in interaction_types_and_kwargs.items():
+            extract_interactions_from(batches,
+                            self.extract_residue_interactions,
+                            topology_file, trajectory_file,
+                            interaction_type, analysis_kwargs,
+                            output_directory)
 
-        # if plotable:
-        #     if start_end_residues is None:
-        #         raise ValueError("If plotable=True, start_end_residues parameter must be provided")
-        #     self.extract_residue_coordinates(start_end_residues=start_end_residues,
-        #                                      start_end_frames=(1, number_frames),
-        #                                      topology_file=topology_file,
-        #                                      trajectory_file=trajectory_file,
-        #                                      output_directory=output_directory)
+        if plotable:
+            if start_end_residues is None:
+                raise ValueError("If plotable=True, start_end_residues parameter must be provided")
+            self.extract_residue_coordinates(start_end_residues=start_end_residues,
+                                             start_end_frames=(1, number_frames),
+                                             topology_file=topology_file,
+                                             trajectory_file=trajectory_file,
+                                             output_directory=output_directory)
             
         self.create_id_to_res_map(topology_file, trajectory_file, output_directory)
         
