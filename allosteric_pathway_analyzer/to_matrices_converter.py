@@ -132,9 +132,6 @@ class ToMatricesConverter:
             frame = frames[frame_id]
             np.save(matrix_path_template.format(frame_id=frame_id+1), frame)
 
-    def create_id_to_res_map(self):
-        pass
-
     def process_target_directory(self, target_directory_path: str,
                                  in_parallel: bool, allowed_memory_percentage_hint: Optional[float] = None,
                                  num_workers: Optional[int] = None, output_directory_path: Optional[str] = None,
@@ -165,8 +162,6 @@ class ToMatricesConverter:
                     continue
                 convert_to_matrices([os.path.join(target_subdirectory_path, file) for file in os.listdir(target_subdirectory_path)],
                                     self.aggregate_convert_save, output_directory, normalisation_function, null_prob_value)
-
-        self.create_id_to_res_map()
 
         return output_directory
     
