@@ -34,6 +34,11 @@ def new_dir_at(path: str) -> str:
     os.makedirs(path, exist_ok=True)
     return path
 
+def name_and_analysis_type_from_path(file_path):
+    file_name = os.path.basename(file_path)
+    analysis_type = os.path.basename(os.path.dirname(file_path))
+    return file_name, analysis_type 
+
 def process_elementwise(in_parallel: bool = False,
                         Executor: Optional[Callable[..., Any]] = None,
                         max_workers: Optional[int] = None,
@@ -213,7 +218,16 @@ def chunked_dir(dir_path: str, allowed_memory_percentage_hint: float, num_worker
 # Matrix related operations #
 #############################
 
-def _softmax(x: np.ndarray) -> np.ndarray:
+# norm1:
+def l1(x: np.ndarray) -> np.ndarray:
+    return x / np.sum(x)
+
+# norm2:
+def l2(x: np.ndarray) -> np.ndarray:
+    return x / np.sqrt(np.sum(x**2))
+
+# norm3:
+def softmax(x: np.ndarray) -> np.ndarray:
     """
     Computes the numerically stable softmax of a vector.
 
@@ -227,7 +241,8 @@ def _softmax(x: np.ndarray) -> np.ndarray:
     exp_x = np.exp(x - max_x_i)
     return exp_x / np.sum(exp_x)
 
-def normalize_vector(v: np.ndarray) -> np.ndarray:
+# HOF1:
+def normalize_vector(v: np.ndarray, normalisation_function) -> np.ndarray:
     """
     Normalizes a vector using the softmax function.
 
@@ -237,9 +252,10 @@ def normalize_vector(v: np.ndarray) -> np.ndarray:
     Returns:
         np.ndarray: Softmax-normalized vector.
     """
-    return _softmax(v)
+    return normalisation_function(v)
 
-def normalize_rows(matrix: np.ndarray) -> np.ndarray:
+# HOF2:
+def normalize_rows(matrix: np.ndarray, normalisation_function) -> np.ndarray:
     """
     Normalizes each row of a matrix using the softmax function.
 
@@ -249,7 +265,7 @@ def normalize_rows(matrix: np.ndarray) -> np.ndarray:
     Returns:
         np.ndarray: Row-normalized matrix.
     """
-    return np.apply_along_axis(normalize_vector, axis=1, arr=matrix)
+    return np.apply_along_axis(normalize_vector, axis=1, arr=matrix, normalisation_function=normalisation_function)
 
 ####################################
 # MODULE-SPECIFIC HELPER FUNCTIONS #
@@ -463,7 +479,7 @@ def frames_from_name(file_name: str) -> Tuple[int, int]:
     Extracts the start and end frame numbers from a file name.
 
     Args:
-        file_name (str): File name containing frame information in the format "<int>-<int>".
+        file_name (str): File name containing frame information in the format "[int]-[int]".
 
     Returns:
         Tuple[int, int]: The start and end frame numbers as integers.
@@ -476,7 +492,7 @@ def frames_from_name(file_name: str) -> Tuple[int, int]:
         start_frame = matched.group(1)
         end_frame = matched.group(2)
     except AttributeError:
-        raise ValueError(f"Cannot decompose the {file_name} string due to a wrong format; Expected: <int>-<int>")
+        raise ValueError(f"Cannot decompose the {file_name} string due to a wrong format; Expected: [int]-[int]")
     return int(start_frame), int(end_frame)
 
 def residue_id_from_name(file_name: str) -> int:
@@ -484,7 +500,7 @@ def residue_id_from_name(file_name: str) -> int:
     Extracts the residue id from a file name.
 
     Args:
-        file_name (str): File name containing residue id information in the format "res_<int>".
+        file_name (str): File name containing residue id information in the format "res_[int]".
 
     Returns:
         int: The corresponding residue id as an integer.
@@ -496,7 +512,7 @@ def residue_id_from_name(file_name: str) -> int:
     try:
         residue_id = matched.group(1)
     except AttributeError:
-        raise ValueError(f"Cannot extract the residue id from {file_name} string due to a wrong format; Expected: res_<int>")
+        raise ValueError(f"Cannot extract the residue id from {file_name} string due to a wrong format; Expected: res_[int]")
     return int(residue_id)
 
 ###########

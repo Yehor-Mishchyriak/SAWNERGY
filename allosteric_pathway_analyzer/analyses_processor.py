@@ -1,7 +1,7 @@
 # external imports
 import os
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from typing import Optional, Tuple
 
 # local imports
 from . import pkg_globals
@@ -25,25 +25,23 @@ class AnalysesProcessor:
         self.global_config = config
         self.cls_config = config[self.__class__.__name__]
 
-    def _construct_csv_file_path(self, cpptraj_file_path: str, output_directory: str) -> str:
+    def _construct_csv_file_path(self, cpptraj_file_path: str, output_directory: str) -> Tuple[str, str]:
+        cpptraj_file_name, analysis_type = _util.name_and_analysis_type_from_path(cpptraj_file_path)
         
-        cpptraj_file_name = os.path.basename(cpptraj_file_path)
-        cpptraj_file_analysis_type = os.path.basename(os.path.dirname(cpptraj_file_path))
-        
-        if cpptraj_file_analysis_type == "com":
+        if analysis_type == "com":
             res_id = _util.residue_id_from_name(cpptraj_file_name)
             csv_file_name = self.cls_config["coordinates_file_name_template"].format(res_id=res_id)
         else:
             start_frame, end_frame = _util.frames_from_name(cpptraj_file_name)
             csv_file_name = self.cls_config["interactions_file_name_template"].format(start_frame=start_frame, end_frame=end_frame)
 
-        output_directory = os.path.join(output_directory, cpptraj_file_analysis_type)
+        output_directory = os.path.join(output_directory, analysis_type)
         csv_file_path = os.path.join(_util.new_dir_at(output_directory), csv_file_name)
 
-        return cpptraj_file_analysis_type, csv_file_path
+        return csv_file_path, analysis_type
 
     def cpptraj_to_csv_immediately(self, cpptraj_file_path: str, output_directory: str) -> None:
-        analysis_type, csv_file_path = self._construct_csv_file_path(cpptraj_file_path, output_directory)
+        csv_file_path, analysis_type = self._construct_csv_file_path(cpptraj_file_path, output_directory)
         parser = _util.cpptraj_data_parsers[analysis_type]
         header = self.cls_config["com_csv_header" if analysis_type == "com" else "interactions_csv_header"]
         # read the entire cpptraj file
@@ -53,7 +51,7 @@ class AnalysesProcessor:
 
     def cpptraj_to_csv_incrementally(self, cpptraj_file_path: str, output_directory: str,
                                      allowed_memory_percentage_hint: float, num_workers: int) -> None:
-        analysis_type, csv_file_path = self._construct_csv_file_path(cpptraj_file_path, output_directory)
+        csv_file_path, analysis_type = self._construct_csv_file_path(cpptraj_file_path, output_directory)
         parser = _util.cpptraj_data_parsers[analysis_type]
         header = self.cls_config["com_csv_header" if analysis_type == "com" else "interactions_csv_header"]
         # write the CSV header to the output file
@@ -65,40 +63,27 @@ class AnalysesProcessor:
     def process_target_directory(self, target_directory_path: str,
                                 in_parallel: bool, allowed_memory_percentage_hint: Optional[float] = None,
                                 num_workers: Optional[int] = None, output_directory_path: Optional[str] = None) -> str:
-        # Determine the output directory.
         output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name_template"])
         
-        for target_subdirectory in os.listdir(target_directory_path):
-            target_subdirectory_path = os.path.join(target_directory_path, target_subdirectory)
-            # List all files in the target subdirectory (assumes they are all cpptraj output files).
-            analysis_file_paths = [os.path.join(target_subdirectory_path, file) for file in os.listdir(target_subdirectory_path)]        
-            if in_parallel:
-                if num_workers is None:
-                    raise ValueError("If in_parallel=True, num_workers parameter must be provided")
-                if allowed_memory_percentage_hint is None:
-                    raise ValueError("If in_parallel=True, allowed_memory_percentage_hint parameter must be provided")
-                
-                _util.process_elementwise(
-                    in_parallel=True,
-                    Executor=ThreadPoolExecutor,
-                    capture_output=False,
-                    max_workers=num_workers
-                )(
-                    analysis_file_paths,
-                    self.cpptraj_to_csv_incrementally,
-                    output_directory,
-                    allowed_memory_percentage_hint,
-                    num_workers
-                )
-            else:
-                _util.process_elementwise(
-                    in_parallel=False,
-                    capture_output=False
-                )(
-                    analysis_file_paths,
-                    self.cpptraj_to_csv_immediately,
-                    output_directory
-                )
+        if in_parallel:
+            if num_workers is None:
+                raise ValueError("If in_parallel=True, num_workers parameter must be provided")
+            if allowed_memory_percentage_hint is None:
+                raise ValueError("If in_parallel=True, allowed_memory_percentage_hint parameter must be provided")
+            convert_to_csv = _util.process_elementwise(in_parallel=True, Executor=ThreadPoolExecutor, capture_output=False, max_workers=num_workers)
+        else:
+            convert_to_csv = _util.process_elementwise(in_parallel=False, capture_output=False)
+        
+        target_subdirectory_paths = [os.path.join(target_directory_path, target_subdirectory) for target_subdirectory in os.listdir(target_directory_path)]        
+        if in_parallel:
+            for target_subdirectory_path in target_subdirectory_paths:
+                analysis_file_paths = [os.path.join(target_subdirectory_path, file) for file in os.listdir(target_subdirectory_path)]
+                convert_to_csv(analysis_file_paths, self.cpptraj_to_csv_incrementally, output_directory, allowed_memory_percentage_hint, num_workers)
+        else:
+            for target_subdirectory_path in target_subdirectory_paths:
+                analysis_file_paths = [os.path.join(target_subdirectory_path, file) for file in os.listdir(target_subdirectory_path)]
+                convert_to_csv(analysis_file_paths, self.cpptraj_to_csv_immediately, output_directory)
+
         return output_directory
 
 

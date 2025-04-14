@@ -84,7 +84,6 @@ class FramesAnalyzer:
 
     def extract_residue_interactions(self, start_end_frames: Tuple[int, int], topology_file: str, trajectory_file: str,
                                      interaction_type: str, analysis_kwargs: dict, output_directory: str) -> None:
-        
         # create intermediate dir name
         interaction_type_output_directory_path = os.path.join(output_directory, self.cls_config[f"{interaction_type}_directory_name"])
         
@@ -107,7 +106,6 @@ class FramesAnalyzer:
 
     def extract_residue_coordinates(self, start_end_residues: Tuple[int, int], start_end_frames: Tuple[int, int],
                                     topology_file: str, trajectory_file: str, output_directory: str):
-
         # create intermediate dir name
         com_output_directory_path = os.path.join(output_directory, self.cls_config["com_directory_name"])
 
@@ -134,11 +132,7 @@ class FramesAnalyzer:
                        in_parallel: bool, batch_size: Optional[int] = 1,
                        in_one_batch: Optional[bool] = False, plotable: Optional[bool] = False, 
                        start_end_residues: Optional[Tuple[int, int]] = None, output_directory_path: Optional[str] = None) -> str:
-
-        output_directory = (
-            output_directory_path if output_directory_path
-            else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name_template"])
-        )
+        output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name_template"])
         
         extract_interactions_from = _util.process_elementwise(in_parallel=in_parallel, Executor=ThreadPoolExecutor, capture_output=False)
 
@@ -162,29 +156,9 @@ class FramesAnalyzer:
                                              topology_file=topology_file,
                                              trajectory_file=trajectory_file,
                                              output_directory=output_directory)
-
+        
         return output_directory
 
 
 if __name__ == "__main__":
     pass
-
-# * TEMP *
-# EXAMPLE USAGE: [works according to shallow testing; of course need to unit test the whole thing]
-"""
-fa = apa.FramesAnalyzer(cpptraj_abs_path="/home/yehor/miniforge3/envs/AmberTools23/bin/cpptraj")
-
-fa.process_trajectory(
-    topology_file="/home/yehor/Desktop/AllostericPathwayAnalyzer/untracked/MD_data/p53_WT_nowat.prmtop",
-    trajectory_file="/home/yehor/Desktop/AllostericPathwayAnalyzer/untracked/MD_data/p53_WT_md1000_str.nc",
-    interaction_types_and_kwargs={
-        "elec": {"start_res_id": 1, "end_res_id": 393, "cutoff": 1.0},
-        "vdw": {"start_res_id": 1, "end_res_id": 393, "cutoff": 1.0},
-        "hbond": {"start_res_id": 1, "end_res_id": 393, "distance_cutoff": 3.5, "angle_cutoff": 120}
-    },
-    number_frames=1000,
-    in_parallel=True,
-    batch_size=500,
-    plotable=True, start_end_residues=(1, 393)
-)
-"""

@@ -11,6 +11,9 @@ from . import pkg_globals
 from . import _util
 
 class ToMatricesConverter:
+
+    _defaults_to_residue_lvl = []
+
     def __init__(self, config: Optional[dict] = None) -> None:
         self.global_config = None
         self.cls_config = None
@@ -26,47 +29,47 @@ class ToMatricesConverter:
         self.global_config = config
         self.cls_config = config[self.__class__.__name__]
 
-    def _construct_matrices_output_paths(self, csv_file_path: str, output_directory: str) -> Tuple[str, str]:
-        # extract the frames range from the csv file name
-        csv_file_name = os.path.basename(csv_file_path)
+    # INTERACTIONS
+    def _construct_int_prob_matrix_file_paths(self, csv_file_path: str, output_directory: str) -> Tuple[str, str]:
+
+        csv_file_name, analysis_type = _util.name_and_analysis_type_from_path(csv_file_path)
+        if analysis_type == "com":
+            raise ValueError(f"Expected a csv file with interactions data; instead got: {analysis_type}")
+
         start_frame, end_frame = _util.frames_from_name(csv_file_name)
-
-        # construct the output directory path
-        container_dir_name = self.cls_config["matrices_directory_name"].format(start=start_frame, end=end_frame)
-        matrices_directory_path = os.path.join(output_directory, container_dir_name)
-
-        # create the output directory
-        os.makedirs(matrices_directory_path, exist_ok=True)
+        container_dir_name = self.cls_config["matrices_directory_name"].format(start_frame=start_frame, end_frame=end_frame)
+        matrices_directory_path = os.path.join(output_directory, analysis_type, container_dir_name)
 
         # construct the paths for the future interactions and probabilities matrices 
-        interactions_output_path = os.path.join(matrices_directory_path, self.cls_config["interactions_matrix_name"])
-        probabilities_output_path = os.path.join(matrices_directory_path, self.cls_config["probabilities_matrix_name"])
+        interactions_output_path = os.path.join(_util.new_dir_at(matrices_directory_path), self.cls_config["interactions_matrix_name"])
+        probabilities_output_path = os.path.join(_util.new_dir_at(matrices_directory_path), self.cls_config["probabilities_matrix_name"])
 
         return interactions_output_path, probabilities_output_path
-
+    
+    # aggregate
     @staticmethod
-    def aggregate_energies(csv_file_path: str) -> pd.DataFrame:
-        # read the CSV file into a df
+    def residue_int_from_atomic_int(csv_file_path: str) -> pd.DataFrame:
         df = pd.read_csv(csv_file_path)
-        
+        _, analysis_type = _util.name_and_analysis_type_from_path(csv_file_path)
+        if analysis_type in ToMatricesConverter._defaults_to_residue_lvl:
+            return df
         # group by the residue index columns, summing the energy values
         aggregated_energies = df.groupby(["residue_i_index", "residue_j_index"], as_index=False)["energy"].sum()
         return aggregated_energies
-
-    # !TMP
+    
+    # convert
     @staticmethod
-    def coords_to_np(csv_files: str) -> pd.DataFrame:
-        for i in os.listdir(csv_files):
-            data = np.loadtxt(os.path.join(csv_files, i), delimiter=',', skiprows=1)
-            name = _util.residue_id_from_name(i)
-            np.save(f"/home/yehor/Desktop/AllostericPathwayAnalyzer/untracked/test_runs/test_3_v3/tmp/{name}", data)
-
-    @staticmethod
-    def to_interactions_probablities_matrices(aggregated_energies: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
+    def to_interactions_probablities_matrices(energies: pd.DataFrame, normalisation_function = None, null_prob_value = None) -> Tuple[np.ndarray, np.ndarray]:
+        
+        if normalisation_function is None:
+            normalisation_function = _util.l1
+        if null_prob_value is None:
+            null_prob_value = 0.0
+        
         # extract indices and energy values
-        rows = aggregated_energies["residue_i_index"].to_numpy(dtype=np.intp)
-        cols = aggregated_energies["residue_j_index"].to_numpy(dtype=np.intp)
-        energies = aggregated_energies["energy"].to_numpy(dtype=np.float64)
+        rows = energies["residue_i_index"].to_numpy(dtype=np.intp)
+        cols = energies["residue_j_index"].to_numpy(dtype=np.intp)
+        energies = energies["energy"].to_numpy(dtype=np.float64)
         
         # determine the dimension of the matrix
         dim = max(rows.max(), cols.max()) + 1
@@ -83,10 +86,11 @@ class ToMatricesConverter:
         matrix = np.abs(matrix)
         
         # create probabilities matrix: copy and set diagonal to -infinity for normalization
-        probabilities_matrix = matrix.copy()
-        np.fill_diagonal(probabilities_matrix, -np.inf)
+        soon_probabilities_matrix = matrix.copy()
+        np.fill_diagonal(soon_probabilities_matrix, null_prob_value) # in case of softmax, we'd use -np.inf, for l_n norm, we use 0.0
+
         # normalize the probabilities matrix
-        probabilities_matrix = _util.normalize_rows(probabilities_matrix)
+        probabilities_matrix = _util.normalize_rows(soon_probabilities_matrix, normalisation_function)
         # set the diagonal to the smallest possible value to allow safe logarithm later on
         np.fill_diagonal(probabilities_matrix, float_info.min)
         
@@ -96,65 +100,74 @@ class ToMatricesConverter:
         
         return interactions_matrix, probabilities_matrix
 
-    def aggregate_convert_save(self, csv_file_path: str, output_directory: str) -> None:
-        aggregated_energies = ToMatricesConverter.aggregate_energies(csv_file_path)
-        interactions_matrix, probaility_matrix = ToMatricesConverter.to_interactions_probablities_matrices(aggregated_energies)
+    def aggregate_convert_save(self, csv_file_path: str, output_directory: str, normalisation_function = None, null_prob_value = None) -> None:
+        res_lvl_energies = ToMatricesConverter.residue_int_from_atomic_int(csv_file_path)
+        interactions_matrix, probaility_matrix = ToMatricesConverter.to_interactions_probablities_matrices(res_lvl_energies, normalisation_function, null_prob_value)
 
-        interactions_output_path, probabilities_output_path = self._construct_matrices_output_paths(csv_file_path, output_directory)
+        interactions_output_path, probabilities_output_path = self._construct_int_prob_matrix_file_paths(csv_file_path, output_directory)
         np.save(interactions_output_path, interactions_matrix)
         np.save(probabilities_output_path, probaility_matrix)
 
-    def process_multiple_csv_files(self, csv_files_to_process: List[str], output_directory: str) -> None:
+    def process_multiple_csv_files(self, csv_files_to_process: List[str], output_directory: str, normalisation_function = None, null_prob_value = None) -> None:
         for file in csv_files_to_process:
-            self.aggregate_convert_save(file, output_directory)
+            self.aggregate_convert_save(file, output_directory, normalisation_function, null_prob_value)
+
+    # COORDINATES
+    def coords_to_np(self, com_csv_dir_path: str, output_directory: str):
+        sorted_by_resid_com_files = sorted(os.listdir(com_csv_dir_path), key=_util.residue_id_from_name)
+        csv_file_paths = [os.path.join(com_csv_dir_path, com_file) for com_file in sorted_by_resid_com_files]
+
+        residue_coords = []
+        for csv_file_path in csv_file_paths:
+            data = np.loadtxt(csv_file_path, delimiter=',', skiprows=1)[1:4]
+            residue_coords.append(data)
+                                                                               #    0,          1,            2
+        residue_coords = np.array(residue_coords) # 3D NumPy array of shape = (# residues, # frames, # coordinate_axes)
+                                                                                           #    1,          0,            2
+        frames = np.transpose(residue_coords, axes=(1, 0, 2)) # 3D NumPy array of shape = (# frames, # residues, # coordinate_axes)
+
+        output_directory = _util.new_dir_at(os.path.join(output_directory, self.cls_config["coordinates_directory_name"]))
+        matrix_path_template = os.path.join(output_directory, self.cls_config["coordinates_file_name_template"])
+
+        for frame_id in range(frames.shape[0]):
+            frame = frames[frame_id]
+            np.save(matrix_path_template.format(frame_id=frame_id), frame)
+
+    def create_id_to_res_map():
+        pass
 
     def process_target_directory(self, target_directory_path: str,
                                  in_parallel: bool, allowed_memory_percentage_hint: Optional[float] = None,
                                  num_workers: Optional[int] = None, output_directory_path: Optional[str] = None,
-                                 create_id_to_res_map: Optional[bool] = True) -> str:
-        output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name"])
-        csv_file_paths = [os.path.join(target_directory_path, file) for file in os.listdir(target_directory_path)]
+                                 normalisation_function = None, null_prob_value = None) -> str:
+        output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name_template"])
 
         if in_parallel:
             if num_workers is None:
                 raise ValueError("If in_parallel=True, num_workers parameter must be provided")
             if allowed_memory_percentage_hint is None:
                 raise ValueError("If in_parallel=True, allowed_memory_percentage_hint parameter must be provided")
-            
-            _util.process_elementwise(
-                in_parallel=True,
-                Executor=ProcessPoolExecutor,
-                capture_output=False,
-                max_workers=num_workers
-            )(
-                _util.chunked_dir(target_directory_path, allowed_memory_percentage_hint, num_workers),
-                self.process_multiple_csv_files,
-                output_directory
-            )
+            convert_to_matrices = _util.process_elementwise(in_parallel=True, Executor=ProcessPoolExecutor, capture_output=False, max_workers=num_workers)
         else:
-            _util.process_elementwise(
-                in_parallel=False,
-                capture_output=False,
-            )(
-                csv_file_paths,
-                self.aggregate_convert_save,
-                output_directory
-            )
+            convert_to_matrices = _util.process_elementwise(in_parallel=False, capture_output=False)
+        
+        target_subdirectory_paths = [os.path.join(target_directory_path, target_subdirectory) for target_subdirectory in os.listdir(target_directory_path)]
+        if in_parallel:
+            for target_subdirectory_path in target_subdirectory_paths:
+                if os.path.basename(target_directory_path) == "com":
+                    self.coords_to_np(target_directory_path, output_directory)
+                convert_to_matrices(_util.chunked_dir(target_subdirectory_path, allowed_memory_percentage_hint, num_workers),
+                                    self.process_multiple_csv_files, output_directory, normalisation_function, null_prob_value)
+        else:
+            for target_subdirectory_path in target_subdirectory_paths:
+                if os.path.basename(target_directory_path) == "com":
+                    self.coords_to_np(target_directory_path, output_directory)
+                convert_to_matrices([os.path.join(target_subdirectory_path, file) for file in os.listdir(target_subdirectory_path)],
+                                    self.aggregate_convert_save, output_directory, normalisation_function, null_prob_value)
 
-        if create_id_to_res_map:
-            self.map_id_to_res(csv_file_paths[0], output_directory)
+        self.create_id_to_res_map()
 
         return output_directory
-
-    def map_id_to_res(self, csv_file_path: str, output_directory_path: Optional[str] = None) -> Tuple[Any, ...]:
-        output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name"])
-        df = pd.read_csv(csv_file_path)
-        result = tuple(df.sort_values(by=["residue_i_index"]).drop_duplicates(subset=["residue_i_index"])["residue_i"])
-        output_file_path = os.path.join(output_directory, self.cls_config["id_to_res_map_name"])
-        with open(output_file_path, "w") as output_file:
-            output_file.write(str(result))
-
-        return result
     
 
 if __name__ == "__main__":
