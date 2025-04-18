@@ -1,8 +1,7 @@
 # external imports
 import numpy as np
-import networkx as nx
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 keeps the 3‑D projection registered
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 keeps 3‑D projection registered
 import matplotlib.animation as animation
 from typing import Optional, Sequence, Tuple, Union
 
@@ -12,234 +11,213 @@ from . import _util
 
 
 class NetworkAnalyzer:
-    """Load per-frame centre-of-mass coordinates and interaction matrices
-    (electrostatic, van-der-Waals, hydrogen-bond) and provide static and
-    animated 3-D visualisations.
+    """3‑D visualisation of per‑frame interaction networks.
 
-    Parameters
+    Highlights
     ----------
-    network_directory_path : str
-        Folder produced by the preprocessing pipeline. Must contain at least
-        *com.npy* plus one or more interaction matrices with the keys present
-        in *config*.
-    config : dict, optional
-        Global config. Falls back to *pkg_globals.default_config*.
+    * **Rainbow colouring** along the polymer chain (residue 1 → residue N).
+    * Edge filtering by strongest *p %* (`top_percent`) or absolute cutoff.
+    * Zoomed‑in default view (`padding=0.1`).
+    * Optionally hide axes (`show_axes=False`).
+    * Handles negative weights by plotting |weight|, so edges are never lost.
     """
 
-    # ---------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Construction helpers
-    # ---------------------------------------------------------------------
+    # ------------------------------------------------------------------
     def __init__(self, network_directory_path: str, config: Optional[dict] = None) -> None:
-        self.global_config: dict | None = None
-        self.cls_config: dict | None = None
-
+        # configs -------------------------------------------------------
         self.set_config(pkg_globals.default_config if config is None else config)
 
-        # Load residues list and a dict‑of‑arrays with all matrices
-        # self.network_data["com"]                -> (n_frames, N, 3)
-        # self.network_data["elec"][0]            -> (n_frames, N, N)
+        # data ----------------------------------------------------------
         self.residues, self.network_data = _util.import_network_components(
             network_directory_path, self.global_config
         )
         self.number_residues: int = len(self.residues)
 
-    # ------------------------------------------------------------------
-    # Convenience dunder methods
-    # ------------------------------------------------------------------
-    def __repr__(self) -> str:  # pragma: no cover – only for debugging
-        return f"{self.__class__.__name__}(config={self.cls_config})"
+        # rainbow colours pre‑computed for every residue ----------------
+        cmap = plt.get_cmap("rainbow")
+        self.node_colors = cmap(np.linspace(0, 1, self.number_residues))
 
     # ------------------------------------------------------------------
-    # Public API
+    # Convenience
     # ------------------------------------------------------------------
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"{self.__class__.__name__}(config={self.cls_config})"
+
     def set_config(self, config: dict) -> None:
-        """Update run-time configuration and cache subsection for this class."""
         self.global_config = config
         self.cls_config = config[self.__class__.__name__]
 
-    # ..................................................................
-    # Single‑frame visualisation
-    # ..................................................................
-    def visualize_frame(self, frame_num: int, interaction_type: str | None = None) -> None:
-        """Render one simulation frame in a blocking Matplotlib window.
+    # ------------------------------------------------------------------
+    # Public visualisers
+    # ------------------------------------------------------------------
+    def visualize_frame(
+        self,
+        frame_num: int,
+        interaction_type: str | None = None,
+        *,
+        top_percent: float | None = None,
+        figsize: Tuple[int, int] = (10, 8),
+        padding: float = 0.1,
+        node_size: int = 120,
+        edge_scale: float = 1.0,
+        show_axes: bool = False,
+    ) -> None:
+        """Render a single trajectory frame."""
+        coords, edges = self._construct_frame(frame_num, interaction_type, top_percent)
 
-        Parameters
-        ----------
-        frame_num : int
-            1-based frame index.
-        interaction_type : {"elec", "vdw", "hbond", None}, optional
-            Which interaction network to overlay. ``None`` ⇒ points only.
-        """
-        coords, edges = self._construct_frame(frame_num, interaction_type)
-
-        fig = plt.figure()
+        # figure & axes -------------------------------------------------
+        fig = plt.figure(figsize=figsize)
         ax = fig.add_subplot(111, projection="3d")
-        self._set_equal_axes(ax, coords)
+        self._set_equal_axes(ax, coords, padding)
+        if not show_axes:
+            ax.set_axis_off()
 
-        # --- nodes ------------------------------------------------------
+        # nodes ---------------------------------------------------------
         x, y, z = coords.T
-        ax.scatter(x, y, z, s=100, color="blue")
-        for idx, (xi, yi, zi) in enumerate(coords):
-            ax.text(xi, yi, zi, f"{self.residues[idx]} {idx + 1}", size=10, color="black")
+        ax.scatter(x, y, z, s=node_size, c=self.node_colors, depthshade=True)
 
-        # --- edges ------------------------------------------------------
+        # colour‑bar legend --------------------------------------------
+        cbar = fig.colorbar(
+            plt.cm.ScalarMappable(cmap="rainbow"),
+            ax=ax,
+            fraction=0.025,
+            pad=0.04,
+            label="Residue index (1 → N)",
+        )
+        cbar.set_ticks([0, 1])
+        cbar.set_ticklabels(["1", str(self.number_residues)])
+
+        # edges ---------------------------------------------------------
         if edges is not None and edges.size:
             for i, j, w in edges:
-                xs = coords[[i, j], 0]
-                ys = coords[[i, j], 1]
-                zs = coords[[i, j], 2]
-                ax.plot(xs, ys, zs, linewidth=float(w), color="grey")
+                xs, ys, zs = coords[[int(i), int(j)]].T
+                lw = max(0.5, float(w) * edge_scale)
+                ax.plot(xs, ys, zs, linewidth=lw, color="grey", alpha=0.8)
 
+        plt.tight_layout()
         plt.show()
 
-    # ..................................................................
-    # Trajectory animation
     # ..................................................................
     def visualize_trajectory(
         self,
         frame_range: Union[Sequence[int], Tuple[int, int]],
         interaction_type: str | None = None,
+        *,
+        top_percent: float | None = None,
+        figsize: Tuple[int, int] = (10, 8),
+        padding: float = 0.1,
+        node_size: int = 120,
+        edge_scale: float = 1.0,
+        show_axes: bool = False,
         interval: int = 100,
     ) -> animation.FuncAnimation:
-        """Animate a trajectory segment.
+        """Animate a segment of the trajectory."""
+        # normalise frame list -----------------------------------------
+        frames = list(range(frame_range[0], frame_range[1] + 1)) if isinstance(frame_range, tuple) else list(frame_range)
 
-        Parameters
-        ----------
-        frame_range : sequence[int] | (start, stop)
-            Either an explicit list/array of 1-based frames *or* a 2-tuple
-            indicating an inclusive range ``(start, stop)``.
-        interaction_type : {"elec", "vdw", "hbond", None}, optional
-            Which interaction network to draw.
-        interval : int, default 100
-            Delay between frames in milliseconds.
+        # global bounding box for steady camera ------------------------
+        all_coords = np.concatenate([self._construct_frame(f, None)[0] for f in frames])
+        xyz_min, xyz_max = all_coords.min(0), all_coords.max(0)
+        span = xyz_max - xyz_min
+        xyz_min -= padding * span
+        xyz_max += padding * span
 
-        Returns
-        -------
-        matplotlib.animation.FuncAnimation
-            The animation handle (useful to save as GIF/MP4).
-        """
-        # ---- normalise *frame_range* into an iterable ------------------
-        if isinstance(frame_range, tuple):
-            frames = list(range(frame_range[0], frame_range[1] + 1))
-        else:
-            frames = list(frame_range)
-
-        # ---- pre‑compute global axis limits for a stable camera --------
-        all_coords = np.concatenate(
-            [self._construct_frame(f, None)[0] for f in frames], axis=0
-        )
-        xyz_min = all_coords.min(axis=0) - 2.0
-        xyz_max = all_coords.max(axis=0) + 2.0
-
-        fig = plt.figure()
+        # figure & axes -------------------------------------------------
+        fig = plt.figure(figsize=figsize)
         ax = fig.add_subplot(111, projection="3d")
         ax.set_xlim(xyz_min[0], xyz_max[0])
         ax.set_ylim(xyz_min[1], xyz_max[1])
         ax.set_zlim(xyz_min[2], xyz_max[2])
+        if not show_axes:
+            ax.set_axis_off()
 
-        # ---- persistent artists we update in‑place ---------------------
-        scat = ax.scatter([], [], [], s=100, color="blue")
-        text_handles: list[plt.Text] = []
+        # seed scatter so colour length matches points -----------------
+        first_coords, _ = self._construct_frame(frames[0], None)
+        scat = ax.scatter(
+            first_coords[:, 0], first_coords[:, 1], first_coords[:, 2],
+            s=node_size, c=self.node_colors, depthshade=True
+        )
+
+        # shared colour‑bar -------------------------------------------
+        cbar = fig.colorbar(
+            plt.cm.ScalarMappable(cmap="rainbow"),
+            ax=ax,
+            fraction=0.025,
+            pad=0.04,
+            label="Residue index (1 → N)",
+        )
+        cbar.set_ticks([0, 1])
+        cbar.set_ticklabels(["1", str(self.number_residues)])
+
+        # dynamic edge artists -----------------------------------------
         line_handles: list[plt.Artist] = []
 
-        def _clear_handles() -> None:
-            """Remove old text and lines from the axes."""
-            for h in text_handles + line_handles:
+        def _clear_lines():
+            for h in line_handles:
                 h.remove()
-            text_handles.clear()
             line_handles.clear()
 
-        def init():  # noqa: D401 – Matplotlib API
-            scat._offsets3d = ([], [], [])
-            return (scat,)
-
-        def update(frame_num: int):  # noqa: D401 – Matplotlib API
-            coords, edges = self._construct_frame(frame_num, interaction_type)
-            x, y, z = coords.T
-            scat._offsets3d = (x, y, z)
-
-            _clear_handles()
-
-            # --- node labels ------------------------------------------
-            for idx, (xi, yi, zi) in enumerate(coords):
-                text_handles.append(
-                    ax.text(xi, yi, zi, f"{self.residues[idx]} {idx + 1}", size=10, color="black")
-                )
-
-            # --- edges --------------------------------------------------
+        def update(fnum: int):
+            coords, edges = self._construct_frame(fnum, interaction_type, top_percent)
+            scat._offsets3d = coords.T
+            _clear_lines()
             if edges is not None and edges.size:
                 for i, j, w in edges:
-                    xs = coords[[int(i), int(j)], 0]
-                    ys = coords[[int(i), int(j)], 1]
-                    zs = coords[[int(i), int(j)], 2]
+                    xs, ys, zs = coords[[int(i), int(j)]].T
+                    lw = max(0.5, float(w) * edge_scale)
                     line_handles.append(
-                        ax.plot(xs, ys, zs, linewidth=float(w), color="grey")[0]
+                        ax.plot(xs, ys, zs, linewidth=lw, color="grey", alpha=0.8)[0]
                     )
+            return scat, *line_handles
 
-            return (scat, *text_handles, *line_handles)
-
-        anim = animation.FuncAnimation(
-            fig,
-            update,
-            frames=frames,
-            init_func=init,
-            interval=interval,
-            blit=False,  # blitting is not supported for 3‑D
-        )
+        ani = animation.FuncAnimation(fig, update, frames=frames, interval=interval, blit=False)
+        plt.tight_layout()
         plt.show()
-        return anim
+        return ani
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
     def _construct_frame(
-        self, frame_num: int, interaction_type: str | None = None
+        self,
+        frame_num: int,
+        interaction_type: str | None = None,
+        top_percent: float | None = None,
     ) -> Tuple[np.ndarray, np.ndarray | None]:
-        """Vectorised helper that extracts coordinates and edge list.
-
-        Parameters
-        ----------
-        frame_num : int
-            1-based frame index.
-        interaction_type : str | None
-            Key into *self.network_data* for the interaction matrix. ``None``
-            skips edge construction.
-
-        Returns
-        -------
-        coords : (N, 3) ndarray[float]
-            Residue centres of mass.
-        edges : (M, 3) ndarray[float] | None
-            Array of ``[i, j, weight]`` suitable for fast iteration in the
-            caller, or *None* when *interaction_type* is *None*.
-        """
-        # Convert to 0‑based index expected by the raw arrays
+        """Return coordinates and a filtered edge list."""
         idx = frame_num - 1
         coords = self.network_data[self.cls_config["com_directory_name"]][idx]
 
         if interaction_type is None:
             return coords, None
 
-        interaction_matrix = self.network_data[interaction_type][0][idx]
-        row, col = np.triu_indices(self.number_residues, k=1)
-        weights = interaction_matrix[row, col]
+        # upper‑triangle interactions ---------------------------------
+        mat = self.network_data[interaction_type][0][idx]
+        r, c = np.triu_indices(self.number_residues, 1)
+        w = np.abs(mat[r, c])  # take magnitude so negatives are visible
 
-        # Optional cut‑off from config (defaults to zero ⇒ all edges)
-        cutoff = self.cls_config.get("weight_cutoff", 0.0)
-        mask = weights > cutoff
-        edges = np.column_stack((row[mask], col[mask], weights[mask]))
+        # filtering ----------------------------------------------------
+        pct = top_percent if top_percent is not None else self.cls_config.get("weight_cutoff_percent")
+        if pct and 0 < pct <= 100 and np.any(w):
+            thr = np.percentile(w, 100 - pct)
+            mask = w >= thr
+        else:
+            cutoff = self.cls_config.get("weight_cutoff", 0.0)
+            mask = w > cutoff
+
+        edges = np.column_stack((r[mask], c[mask], w[mask]))
         return coords, edges
 
     # ------------------------------------------------------------------
-    # Static helpers
-    # ------------------------------------------------------------------
     @staticmethod
-    def _set_equal_axes(ax: Axes3D, coords: np.ndarray) -> None:
-        """Make 3-D axes equally scaled so spheres look like spheres."""
-        xyz_min = coords.min(axis=0)
-        xyz_max = coords.max(axis=0)
-        max_range = (xyz_max - xyz_min).max() / 2
-        mid = (xyz_min + xyz_max) / 2
-        ax.set_xlim(mid[0] - max_range, mid[0] + max_range)
-        ax.set_ylim(mid[1] - max_range, mid[1] + max_range)
-        ax.set_zlim(mid[2] - max_range, mid[2] + max_range)
+    def _set_equal_axes(ax: Axes3D, coords: np.ndarray, padding: float = 0.1) -> None:
+        """Set equal aspect with optional padding."""
+        xyz_min, xyz_max = coords.min(0), coords.max(0)
+        span = xyz_max - xyz_min
+        xyz_min -= padding * span
+        xyz_max += padding * span
+        ax.set_xlim(xyz_min[0], xyz_max[0])
+        ax.set_ylim(xyz_min[1], xyz_max[1])
+        ax.set_zlim(xyz_min[2], xyz_max[2])

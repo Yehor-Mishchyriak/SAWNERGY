@@ -559,6 +559,12 @@ def _process_containers(containers_path: str, config: Dict[str, str]):
         probability_matrices.append(probability_matrix)
     return interaction_matrices, probability_matrices
 
+def _retrieve_coordinate_matrices(directory_path: str):
+    coord_matrices = []
+    for matrix_path in [os.path.join(directory_path, name) for name in sorted(os.listdir(directory_path))]:
+        coord_matrices.append(np.load(matrix_path))
+    return coord_matrices
+
 def import_network_components(directory_path: str, config: Dict[str, str]):
     id_to_res_map: Tuple[str, ...] = None
     analyses_associated_data = {}
@@ -567,6 +573,9 @@ def import_network_components(directory_path: str, config: Dict[str, str]):
             if os.path.basename(path_) == config["FramesAnalyzer"]["id_to_res_map_name"]:
                 id_to_res_map = _retrieve_res_map(path_)
             continue
+        if os.path.basename(path_) == config["ToMatricesConverter"]["coordinates_directory_name"]:
+            analysis_type = os.path.basename(path_)
+            analyses_associated_data[analysis_type] = _retrieve_coordinate_matrices(path_)
         else:
             analysis_type = os.path.basename(path_)
             analyses_associated_data[analysis_type] = _process_containers(path_, config)

@@ -22,7 +22,7 @@
         "matrices_directory_name": "{start_frame}-{end_frame}",
         "interactions_matrix_name": "interactions.npy",
         "probabilities_matrix_name": "probabilities.npy",
-        "coordinates_directory_name": "coordinates_by_frame",
+        "coordinates_directory_name": "com",
         "coordinates_file_name_template": "frame_{frame_id}.npy",
         "id_to_res_map_name": "id_to_res_map.txt"
     },
