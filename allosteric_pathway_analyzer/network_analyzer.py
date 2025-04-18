@@ -89,11 +89,13 @@ class NetworkAnalyzer:
         cbar.set_ticks([0, 1])
         cbar.set_ticklabels(["1", str(self.number_residues)])
 
-        # edges ---------------------------------------------------------
+        # --- edges ---------------------------------------------------------
         if edges is not None and edges.size:
+            # normalise weights so the thickest line is ~3 pt
+            w_max = edges[:, 2].max()
             for i, j, w in edges:
                 xs, ys, zs = coords[[int(i), int(j)]].T
-                lw = max(0.5, float(w) * edge_scale)
+                lw = 0.5 + 2.5 * (w / w_max) * edge_scale  # 0.5 → 3 pt range
                 ax.plot(xs, ys, zs, linewidth=lw, color="grey", alpha=0.8)
 
         plt.tight_layout()
