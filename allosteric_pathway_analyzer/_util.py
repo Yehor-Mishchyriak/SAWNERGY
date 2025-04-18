@@ -527,26 +527,11 @@ def residue_id_from_name(file_name: str) -> int:
         raise ValueError(f"Cannot extract the residue id from {file_name} string due to a wrong format; Expected: res_[int]")
     return int(residue_id)
 
-###########
-# protein #
-###########
+################################
+# protein and network_analyzer #
+################################
 
-def _retrieve_matrices(matrices_directory_path: str, config: Dict[str, str]) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Retrieve the interaction and probability matrices stored as .npy files in a specified directory.
-
-    This function uses the configuration employed during the network construction to determine the file names
-    for the interactions and probabilities matrices. It scans the provided directory and loads the matrices
-    using NumPy. If a matrix file is not found, the corresponding return value is None.
-
-    Args:
-        matrices_directory_path (str): The path to the directory containing the .npy matrix files.
-        config (Dict[str, str]): A configuration file employed during the network construction.
-
-    Returns:
-        Tuple[np.ndarray, np.ndarray]: A tuple where the first element is the interaction matrix
-        and the second element is the probability matrix.
-    """
+def _retrieve_matrices_from_container(matrices_directory_path: str, config: Dict[str, str]):
     config = config["ToMatricesConverter"]
     interaction_matrix = None
     probability_matrix = None
@@ -558,56 +543,35 @@ def _retrieve_matrices(matrices_directory_path: str, config: Dict[str, str]) -> 
             probability_matrix = np.load(np_matrix_path)
     return interaction_matrix, probability_matrix
 
-def _retrieve_res_map(id_to_res_map_path: str) -> Tuple[str, ...]:
-    """
-    Retrieve the residue mapping from a file.
-
-    The file is expected to contain a single tuple of residue names located at the first line.
-    This function reads the file content and uses literal_eval to safely evaluate the string into a Python object.
-
-    Args:
-        id_to_res_map_path (str): The path to the file containing the residue mapping.
-
-    Returns:
-        Tuple[str, ...]: The residue mapping as a tuple.
-    """
+def _retrieve_res_map(id_to_res_map_path: str):
     with open(id_to_res_map_path, 'r') as file:
         id_to_res_string = file.read()
     # Note: literal_eval is safer than eval() because it only parses literals.
     id_to_res_map = literal_eval(id_to_res_string)
     return id_to_res_map
 
-def import_network_components(directory_path: str, config: Dict[str, str]) -> Tuple[Tuple[str, ...], list[np.ndarray], list[np.ndarray]]:
-    """
-    Import network components from a directory based on the provided configuration.
+def _process_containers(containers_path: str, config: Dict[str, str]):
+    interaction_matrices = []
+    probability_matrices = []
+    for container_path in [os.path.join(containers_path, name) for name in sorted(os.listdir(containers_path))]:
+        interaction_matrix, probability_matrix = _retrieve_matrices_from_container(container_path, config)
+        interaction_matrices.append(interaction_matrix)
+        probability_matrices.append(probability_matrix)
+    return interaction_matrices, probability_matrices
 
-    This function scans the specified directory for subdirectories and files. For each subdirectory, it retrieves the 
-    interaction and probability matrices. If a file matching the residue mapping name (as specified 
-    in the configuration) is found, it retrieves the residue mapping.
-    
-    Args:
-        directory_path (str): The path to the directory containing the network component files.
-        config (Dict[str, str]): The configuration file used for the network construction. Required for the directory scanning.
-
-    Returns:
-        Tuple[Tuple[str, ...], list[np.ndarray], list[np.ndarray]]:
-            - The first element is the residue mapping (or None if not found).
-            - The second element is a list of interaction matrices.
-            - The third element is a list of probability matrices.
-    """
+def import_network_components(directory_path: str, config: Dict[str, str]):
     id_to_res_map: Tuple[str, ...] = None
-    interaction_matrices: list = []
-    probability_matrices: list = []
-    sorted_paths = [os.path.join(directory_path, file) for file in sorted(os.listdir(directory_path))]
-    for path_ in sorted_paths:
-        if os.path.isdir(path_):
-            interaction_matrix, probability_matrix = _retrieve_matrices(path_, config)
-            interaction_matrices.append(interaction_matrix)
-            probability_matrices.append(probability_matrix)
-        elif os.path.basename(path_) == config["ToMatricesConverter"]["id_to_res_map_name"]:
-            id_to_res_map = _retrieve_res_map(path_)
-    
-    return id_to_res_map, interaction_matrices, probability_matrices
+    analyses_associated_data = {}
+    for path_ in [os.path.join(directory_path, name) for name in os.listdir(directory_path)]:
+        if not os.path.isdir(path_):
+            if os.path.basename(path_) == config["FramesAnalyzer"]["id_to_res_map_name"]:
+                id_to_res_map = _retrieve_res_map(path_)
+            continue
+        else:
+            analysis_type = os.path.basename(path_)
+            analyses_associated_data[analysis_type] = _process_containers(path_, config)
+    return id_to_res_map, analyses_associated_data
+
 
 
 if __name__ == "__main__":

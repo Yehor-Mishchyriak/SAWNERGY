@@ -134,7 +134,7 @@ class FramesAnalyzer:
         except SubprocessError as e:
             raise RuntimeError(f"An exception occurred while executing the '{command}' command: {e}")
 
-    def create_id_to_res_map(self, topology_file: str, trajectory_file: str, output_directory: str):
+    def create_id_to_res_map(self, topology_file: str, trajectory_file: str, start_end_residues: Tuple[int, int], output_directory: str):
         current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
 
         output_file_path = os.path.join(output_directory, f"data{hash(current_time)}.pdb")
@@ -147,7 +147,8 @@ class FramesAnalyzer:
         except SubprocessError as e:
             raise RuntimeError(f"An exception occurred while executing the '{command}' command: {e}")
         
-        id_to_res_map = _util.id_to_res_map_from_pdb(output_file_path)
+        start, end = start_end_residues
+        id_to_res_map = _util.id_to_res_map_from_pdb(output_file_path)[start-1, end]
         
         try: # try deleting the pdb
             os.remove(output_file_path)
@@ -189,7 +190,7 @@ class FramesAnalyzer:
                                              trajectory_file=trajectory_file,
                                              output_directory=output_directory)
             
-        self.create_id_to_res_map(topology_file, trajectory_file, output_directory)
+        self.create_id_to_res_map(topology_file, trajectory_file, start_end_residues, output_directory)
         
         return output_directory
 
