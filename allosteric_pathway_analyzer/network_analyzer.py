@@ -146,7 +146,7 @@ class NetworkAnalyzer:
             ax=ax,
             fraction=0.025,
             pad=0.04,
-            label="Residue index (1 → N)",
+            label=f"Residue index (1 → {self.number_residues})",
         )
         cbar.set_ticks([0, 1])
         cbar.set_ticklabels(["1", str(self.number_residues)])
