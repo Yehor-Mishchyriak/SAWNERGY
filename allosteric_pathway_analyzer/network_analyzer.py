@@ -11,17 +11,6 @@ from . import _util
 
 
 class NetworkAnalyzer:
-    """3‑D visualisation of per‑frame interaction networks.
-
-    Highlights
-    ----------
-    * **Rainbow colouring** along the polymer chain (residue 1 → residue N).
-    * Edge filtering by strongest *p %* (`top_percent`) or absolute cutoff.
-    * Zoomed‑in default view (`padding=0.1`).
-    * Optionally hide axes (`show_axes=False`).
-    * Handles negative weights by plotting |weight|, so edges are never lost.
-    """
-
     # ------------------------------------------------------------------
     # Construction helpers
     # ------------------------------------------------------------------
@@ -42,7 +31,7 @@ class NetworkAnalyzer:
     # ------------------------------------------------------------------
     # Convenience
     # ------------------------------------------------------------------
-    def __repr__(self) -> str:  # pragma: no cover
+    def __repr__(self) -> str:
         return f"{self.__class__.__name__}(config={self.cls_config})"
 
     def set_config(self, config: dict) -> None:
@@ -84,7 +73,7 @@ class NetworkAnalyzer:
             ax=ax,
             fraction=0.025,
             pad=0.04,
-            label="Residue index (1 → N)",
+            label=f"Residue index (1 → {self.number_residues})",
         )
         cbar.set_ticks([0, 1])
         cbar.set_ticklabels(["1", str(self.number_residues)])
