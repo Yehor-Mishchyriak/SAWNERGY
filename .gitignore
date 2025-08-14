@@ -2,9 +2,74 @@
 *
 
 # Except:
+#   Package core files
 !allosteric_pathway_analyzer/
 !allosteric_pathway_analyzer/*.py
 !allosteric_pathway_analyzer/*.json
+
+#   Package testing files
+!tests/
+
+#       Network construction
+!tests/network_construction/
+
+!tests/network_construction/unit_testing/
+!tests/network_construction/unit_testing/*.py
+
+!tests/network_construction/test_data/
+
+#           Large tests
+!tests/network_construction/test_data/large_test/
+
+!tests/network_construction/test_data/large_test/input/
+!tests/network_construction/test_data/large_test/input/*.dat
+
+!tests/network_construction/test_data/large_test/output/
+!tests/network_construction/test_data/large_test/output/ap/
+!tests/network_construction/test_data/large_test/output/ap/*.csv
+
+!tests/network_construction/test_data/large_test/output/tmc/
+!tests/network_construction/test_data/large_test/output/tmc/1-2/
+!tests/network_construction/test_data/large_test/output/tmc/1-2/*.npy
+!tests/network_construction/test_data/large_test/output/tmc/3-4/
+!tests/network_construction/test_data/large_test/output/tmc/3-4/*.npy
+
+#           Medium tests
+!tests/network_construction/test_data/medium_test/
+
+!tests/network_construction/test_data/medium_test/input/
+!tests/network_construction/test_data/medium_test/input/*.dat
+
+!tests/network_construction/test_data/medium_test/output/
+!tests/network_construction/test_data/small_test/output/ap/
+!tests/network_construction/test_data/medium_test/output/ap/*.csv
+
+!tests/network_construction/test_data/small_test/output/tmc/
+!tests/network_construction/test_data/medium_test/output/tmc/1-2/
+!tests/network_construction/test_data/medium_test/output/tmc/1-2/*.npy
+!tests/network_construction/test_data/medium_test/output/tmc/3-4/
+!tests/network_construction/test_data/medium_test/output/tmc/3-4/*.npy
+
+#           Small tests
+!tests/network_construction/test_data/small_test/
+
+!tests/network_construction/test_data/small_test/input/
+!tests/network_construction/test_data/small_test/input/*.dat
+
+!tests/network_construction/test_data/small_test/output/
+!tests/network_construction/test_data/small_test/output/ap/
+!tests/network_construction/test_data/small_test/output/ap/*.csv
+
+!tests/network_construction/test_data/small_test/output/tmc/
+!tests/network_construction/test_data/small_test/output/tmc/1-2/
+!tests/network_construction/test_data/small_test/output/tmc/1-2/*.npy
+!tests/network_construction/test_data/small_test/output/tmc/3-4/
+!tests/network_construction/test_data/small_test/output/tmc/3-4/*.npy
+
+#       Network construction
+!tests/network_traversal/
+
+#   Package auxilaries and globals
 !.gitignore
 !requirements.txt
 !README.md

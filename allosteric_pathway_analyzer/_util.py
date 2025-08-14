@@ -30,6 +30,15 @@ def create_output_dir(output_directory_location: str, output_directory_name: str
     os.makedirs(output_directory_path, exist_ok=True) # Note: it will not raise an error or override the "output_directory_path" if it already exists
     return output_directory_path
 
+def new_dir_at(path: str) -> str:
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def name_and_analysis_type_from_path(file_path):
+    file_name = os.path.basename(file_path)
+    analysis_type = os.path.basename(os.path.dirname(file_path))
+    return file_name, analysis_type 
+
 def process_elementwise(in_parallel: bool = False,
                         Executor: Optional[Callable[..., Any]] = None,
                         max_workers: Optional[int] = None,
@@ -209,7 +218,16 @@ def chunked_dir(dir_path: str, allowed_memory_percentage_hint: float, num_worker
 # Matrix related operations #
 #############################
 
-def _softmax(x: np.ndarray) -> np.ndarray:
+# norm1:
+def l1(x: np.ndarray) -> np.ndarray:
+    return x / np.sum(x)
+
+# norm2:
+def l2(x: np.ndarray) -> np.ndarray:
+    return x / np.sqrt(np.sum(x**2))
+
+# norm3:
+def softmax(x: np.ndarray) -> np.ndarray:
     """
     Computes the numerically stable softmax of a vector.
 
@@ -223,7 +241,8 @@ def _softmax(x: np.ndarray) -> np.ndarray:
     exp_x = np.exp(x - max_x_i)
     return exp_x / np.sum(exp_x)
 
-def normalize_vector(v: np.ndarray) -> np.ndarray:
+# HOF1:
+def normalize_vector(v: np.ndarray, normalisation_function) -> np.ndarray:
     """
     Normalizes a vector using the softmax function.
 
@@ -233,9 +252,10 @@ def normalize_vector(v: np.ndarray) -> np.ndarray:
     Returns:
         np.ndarray: Softmax-normalized vector.
     """
-    return _softmax(v)
+    return normalisation_function(v)
 
-def normalize_rows(matrix: np.ndarray) -> np.ndarray:
+# HOF2:
+def normalize_rows(matrix: np.ndarray, normalisation_function) -> np.ndarray:
     """
     Normalizes each row of a matrix using the softmax function.
 
@@ -245,7 +265,7 @@ def normalize_rows(matrix: np.ndarray) -> np.ndarray:
     Returns:
         np.ndarray: Row-normalized matrix.
     """
-    return np.apply_along_axis(normalize_vector, axis=1, arr=matrix)
+    return np.apply_along_axis(normalize_vector, axis=1, arr=matrix, normalisation_function=normalisation_function)
 
 ####################################
 # MODULE-SPECIFIC HELPER FUNCTIONS #
@@ -292,11 +312,38 @@ def construct_batch_sequence(number_frames: int, batch_size: int) -> List[Tuple[
         batches.append(residual_batch)
     return batches
 
+def id_to_res_map_from_pdb(pdb_file_path):
+    id_to_res_map = dict()
+    for line in read_lines(pdb_file_path, skip_header=True):
+        try:
+            _, _, _, residue, index, _, _, _, _, _, _ = line.split()
+        except ValueError: # too many to unpack; arises when the chain of polymer residues ends; just suppress
+            continue
+        id_to_res_map[int(index)-1] = residue
+    id_to_res_map = list(id_to_res_map.items())
+    id_to_res_map.sort(key=lambda res_id: res_id[0])
+    return tuple([res for _, res in id_to_res_map])
+
 ######################
 # analyses_processor #
 ######################
 
-def _split_entry(res_atm: str) -> Tuple[str, str]:
+def read_lines(file_path: str, skip_header: bool = True) -> List[str]:
+    """
+    Reads all lines from a file, optionally skipping the header.
+
+    Args:
+        file_path (str): Path to the file.
+        skip_header (bool, optional): Whether to skip the first line. Defaults to True.
+
+    Returns:
+        List[str]: A list of lines from the file.
+    """
+    with open(file_path, "r", encoding="utf-8") as file:
+        lines = file.readlines()
+        return lines[1:] if skip_header else lines
+
+def _extract_resname_index(res_atm: str) -> Tuple[str, str]:
     """
     Splits a residue-atom string into the residue name and index.
 
@@ -321,12 +368,18 @@ def _split_entry(res_atm: str) -> Tuple[str, str]:
         raise ValueError(f"Cannot decompose the {res_atm} string due to a wrong format; Expected: MOLECULE_INDEX@ATOM")
     return residue, index
 
-def _parse_cpptraj_electrostatics_line(line: str) -> str:
+# if you add more interaction types, just add their corresponding parsers and you will be all set
+
+def com_parser(line: str) -> str:
+    frame, x, y, z, _, _, _= line.split()
+    return f"{frame},{x},{y},{z}\n"
+
+def elec_vdw_parser(line: str) -> str:
     """
-    Parses a line of residue interaction data into a CSV-compatible format.
+    Parses a line of elec or vdw residue interaction data into a CSV-compatible format.
 
     Args:
-        line (str): A line of interaction data.
+        line (str): A line of elec or vdw interaction data.
 
     Returns:
         str: A CSV-formatted string with residue names, indices, and energy.
@@ -335,24 +388,42 @@ def _parse_cpptraj_electrostatics_line(line: str) -> str:
         res_atm_A, _, _, res_atm_B, _, _, _, energy = line.split()
     except ValueError: # needed to add this line because cpptraj sometimes adds information on van der Waals (I think this is a bug)
         res_atm_A, _, _, res_atm_B, _, _, _, _, _, energy = line.split()
-    res_A, res_A_index = _split_entry(res_atm_A)
-    res_B, res_B_index = _split_entry(res_atm_B)
+    res_A, res_A_index = _extract_resname_index(res_atm_A)
+    res_B, res_B_index = _extract_resname_index(res_atm_B)
     return f"{res_A},{res_A_index},{res_B},{res_B_index},{energy}\n"
 
-def read_lines(file_path: str, skip_header: bool = True) -> List[str]:
+def _compute_hbond_strength(fraction: float, distance: float, angle: float) -> float:
     """
-    Reads all lines from a file, optionally skipping the header.
+    Computes a heuristic strength for a hydrogen bond based on its occupancy, distance, and angle.
+    
+    Args:
+        fraction (float): The fraction of time (between 0 and 1) the hydrogen bond is observed.
+        distance (float): The average donor-acceptor distance (in Å).
+        angle (float): The average hydrogen bond angle (in degrees), where 180° is ideal.
+        
+    Returns:
+        float: A scalar value representing the hydrogen bond strength.
+    """
+    angular_factor = np.cos(np.radians(180 - angle))
+    strength = fraction * angular_factor / distance
+    return strength
+
+def hbond_parser(line: str) -> str:
+    """
+    Parses a line of hydrogen bond interaction data into a CSV-compatible format.
 
     Args:
-        file_path (str): Path to the file.
-        skip_header (bool, optional): Whether to skip the first line. Defaults to True.
+        line (str): A line of hydrogen bond interaction data.
 
     Returns:
-        List[str]: A list of lines from the file.
+        str: A CSV-formatted string containing the acceptor residue name and index, donor residue name and index, fraction, distance, and angle.
     """
-    with open(file_path, "r", encoding="utf-8") as file:
-        lines = file.readlines()
-        return lines[1:] if skip_header else lines
+    acceptor_res_atm, _, donor_res_atm, _, fraction, distance, angle = line.split()
+    acceptor_res, acceptor_res_index = _extract_resname_index(acceptor_res_atm)
+    donor_res, donor_res_index = _extract_resname_index(donor_res_atm)
+    return f"{acceptor_res},{acceptor_res_index},{donor_res},{donor_res_index},{_compute_hbond_strength(float(fraction),float(distance),float(angle))}\n"
+
+cpptraj_data_parsers = {"vdw": elec_vdw_parser, "elec": elec_vdw_parser, "hbond": hbond_parser, "com": com_parser}
 
 def write_csv_header(header: str, output_file_path: str) -> None:
     """
@@ -366,39 +437,50 @@ def write_csv_header(header: str, output_file_path: str) -> None:
     with open(output_file_path, "w", encoding="utf-8") as output_file:
         output_file.write(header)
 
-def write_csv_from_cpptraj_electrostatics(header: str, lines: List[str], output_file_path: str) -> None:
+def write_csv_from_cpptraj(parser: Callable[[str], str], header: str, lines: List[str], output_file_path: str) -> None:
     """
-    Writes parsed interaction data to a CSV file, including a header.
+    Parses interaction data from each line in 'lines' using the provided 'parser' function and writes the result to a CSV file.
+    The output file will include the specified header followed by the parsed data lines in the CSV format.
 
     Args:
-        header (str): The CSV header string.
-        lines (List[str]): A list of lines containing raw interaction data.
-        output_file_path (str): The path to the output CSV file.
+        parser (Callable[[str], str]): A function that takes a raw string line as input and returns a parsed CSV-formatted string.
+        header (str): The header line to be written at the top of the CSV file.
+        lines (List[str]): A list of raw data lines to be parsed and written to the CSV.
+        output_file_path (str): The file path where the output CSV should be saved.
+
+    Raises:
+        ValueError: If a line cannot be parsed by the parser function.
     """
     with open(output_file_path, "w", encoding="utf-8") as output_file:
         output_file.write(header)
         for line in lines:
             try:
-                parsed_line = _parse_cpptraj_electrostatics_line(line)
+                parsed_line = parser(line)
             except Exception as e:
                 raise ValueError(f"Error while parsing cpptraj files, wrong line format: {e}")
             output_file.write(parsed_line)
 
-def append_csv_from_cpptraj_electrostatics(lines: List[str], output_file_path: str) -> None:
+def append_csv_from_cpptraj(parser: Callable[[str], str], lines: List[str], output_file_path: str) -> None:
     """
-    Appends parsed interaction data to an existing CSV file.
+    Parses interaction data from each line in 'lines' using the provided 'parser' function and appends the result to an existing CSV file.
+    The CSV file at 'output_file_path' will be updated by adding the parsed data lines.
 
     Args:
-        lines (List[str]): A list of lines containing raw interaction data.
-        output_file_path (str): The path to the CSV file to which data will be appended.
+        parser (Callable[[str], str]): A function that takes a raw string line as input and returns a parsed CSV-formatted string.
+        lines (List[str]): A list of raw data lines to be parsed and appended to the CSV file.
+        output_file_path (str): The path of the CSV file where the parsed data is to be appended.
+
+    Raises:
+        ValueError: If the parser function fails to process a line, indicating that the line has an incorrect format.
     """
     with open(output_file_path, "a", encoding="utf-8") as output_file:
         for line in lines:
             try:
-                parsed_line = _parse_cpptraj_electrostatics_line(line)
+                parsed_line = parser(line)
             except Exception as e:
                 raise ValueError(f"Error while parsing cpptraj files, wrong line format: {e}")
             output_file.write(parsed_line)
+
 
 #########################
 # to_matrices_converter #
@@ -409,7 +491,7 @@ def frames_from_name(file_name: str) -> Tuple[int, int]:
     Extracts the start and end frame numbers from a file name.
 
     Args:
-        file_name (str): File name containing frame information in the format "start-end".
+        file_name (str): File name containing frame information in the format "[int]-[int]".
 
     Returns:
         Tuple[int, int]: The start and end frame numbers as integers.
@@ -422,29 +504,34 @@ def frames_from_name(file_name: str) -> Tuple[int, int]:
         start_frame = matched.group(1)
         end_frame = matched.group(2)
     except AttributeError:
-        raise ValueError(f"Cannot decompose the {file_name} string due to a wrong format; Expected: int-int")
+        raise ValueError(f"Cannot decompose the {file_name} string due to a wrong format; Expected: [int]-[int]")
     return int(start_frame), int(end_frame)
 
-###########
-# protein #
-###########
-
-def _retrieve_matrices(matrices_directory_path: str, config: Dict[str, str]) -> Tuple[np.ndarray, np.ndarray]:
+def residue_id_from_name(file_name: str) -> int:
     """
-    Retrieve the interaction and probability matrices stored as .npy files in a specified directory.
-
-    This function uses the configuration employed during the network construction to determine the file names
-    for the interactions and probabilities matrices. It scans the provided directory and loads the matrices
-    using NumPy. If a matrix file is not found, the corresponding return value is None.
+    Extracts the residue id from a file name.
 
     Args:
-        matrices_directory_path (str): The path to the directory containing the .npy matrix files.
-        config (Dict[str, str]): A configuration file employed during the network construction.
+        file_name (str): File name containing residue id information in the format "res_[int]".
 
     Returns:
-        Tuple[np.ndarray, np.ndarray]: A tuple where the first element is the interaction matrix
-        and the second element is the probability matrix.
+        int: The corresponding residue id as an integer.
+
+    Raises:
+        ValueError: If the file name does not contain "res_" string followed by an integer.
     """
+    matched = re.search(r"res_(\d+)", file_name)
+    try:
+        residue_id = matched.group(1)
+    except AttributeError:
+        raise ValueError(f"Cannot extract the residue id from {file_name} string due to a wrong format; Expected: res_[int]")
+    return int(residue_id)
+
+################################
+# protein and network_analyzer #
+################################
+
+def _retrieve_matrices_from_container(matrices_directory_path: str, config: Dict[str, str]):
     config = config["ToMatricesConverter"]
     interaction_matrix = None
     probability_matrix = None
@@ -456,56 +543,44 @@ def _retrieve_matrices(matrices_directory_path: str, config: Dict[str, str]) -> 
             probability_matrix = np.load(np_matrix_path)
     return interaction_matrix, probability_matrix
 
-def _retrieve_res_map(id_to_res_map_path: str) -> Tuple[str, ...]:
-    """
-    Retrieve the residue mapping from a file.
-
-    The file is expected to contain a single tuple of residue names located at the first line.
-    This function reads the file content and uses literal_eval to safely evaluate the string into a Python object.
-
-    Args:
-        id_to_res_map_path (str): The path to the file containing the residue mapping.
-
-    Returns:
-        Tuple[str, ...]: The residue mapping as a tuple.
-    """
+def _retrieve_res_map(id_to_res_map_path: str):
     with open(id_to_res_map_path, 'r') as file:
         id_to_res_string = file.read()
     # Note: literal_eval is safer than eval() because it only parses literals.
     id_to_res_map = literal_eval(id_to_res_string)
     return id_to_res_map
 
-def import_network_components(directory_path: str, config: Dict[str, str]) -> Tuple[Tuple[str, ...], list[np.ndarray], list[np.ndarray]]:
-    """
-    Import network components from a directory based on the provided configuration.
+def _process_containers(containers_path: str, config: Dict[str, str]):
+    interaction_matrices = []
+    probability_matrices = []
+    for container_path in [os.path.join(containers_path, name) for name in sorted(os.listdir(containers_path))]:
+        interaction_matrix, probability_matrix = _retrieve_matrices_from_container(container_path, config)
+        interaction_matrices.append(interaction_matrix)
+        probability_matrices.append(probability_matrix)
+    return interaction_matrices, probability_matrices
 
-    This function scans the specified directory for subdirectories and files. For each subdirectory, it retrieves the 
-    interaction and probability matrices. If a file matching the residue mapping name (as specified 
-    in the configuration) is found, it retrieves the residue mapping.
-    
-    Args:
-        directory_path (str): The path to the directory containing the network component files.
-        config (Dict[str, str]): The configuration file used for the network construction. Required for the directory scanning.
+def _retrieve_coordinate_matrices(directory_path: str):
+    coord_matrices = []
+    for matrix_path in [os.path.join(directory_path, name) for name in sorted(os.listdir(directory_path))]:
+        coord_matrices.append(np.load(matrix_path))
+    return coord_matrices
 
-    Returns:
-        Tuple[Tuple[str, ...], list[np.ndarray], list[np.ndarray]]:
-            - The first element is the residue mapping (or None if not found).
-            - The second element is a list of interaction matrices.
-            - The third element is a list of probability matrices.
-    """
+def import_network_components(directory_path: str, config: Dict[str, str]):
     id_to_res_map: Tuple[str, ...] = None
-    interaction_matrices: list = []
-    probability_matrices: list = []
-    sorted_paths = [os.path.join(directory_path, file) for file in sorted(os.listdir(directory_path))]
-    for path_ in sorted_paths:
-        if os.path.isdir(path_):
-            interaction_matrix, probability_matrix = _retrieve_matrices(path_, config)
-            interaction_matrices.append(interaction_matrix)
-            probability_matrices.append(probability_matrix)
-        elif os.path.basename(path_) == config["ToMatricesConverter"]["id_to_res_map_name"]:
-            id_to_res_map = _retrieve_res_map(path_)
-    
-    return id_to_res_map, interaction_matrices, probability_matrices
+    analyses_associated_data = {}
+    for path_ in [os.path.join(directory_path, name) for name in os.listdir(directory_path)]:
+        if not os.path.isdir(path_):
+            if os.path.basename(path_) == config["FramesAnalyzer"]["id_to_res_map_name"]:
+                id_to_res_map = _retrieve_res_map(path_)
+            continue
+        if os.path.basename(path_) == config["ToMatricesConverter"]["coordinates_directory_name"]:
+            analysis_type = os.path.basename(path_)
+            analyses_associated_data[analysis_type] = _retrieve_coordinate_matrices(path_)
+        else:
+            analysis_type = os.path.basename(path_)
+            analyses_associated_data[analysis_type] = _process_containers(path_, config)
+    return id_to_res_map, analyses_associated_data
+
 
 
 if __name__ == "__main__":

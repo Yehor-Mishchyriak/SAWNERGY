@@ -3,6 +3,7 @@ import os
 from subprocess import run, SubprocessError
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
+from datetime import datetime
 
 # local imports
 from . import pkg_globals
@@ -10,164 +11,186 @@ from . import _util
 
 
 class FramesAnalyzer:
-    """
-    A class for analyzing MD trajectory frames using the cpptraj command line tool.
 
-    This class encapsulates configuration management and the execution of cpptraj commands
-    on specified frame batches, optionally in parallel.
-    """
+    # * PROTECTED CLASS FIELDS *
 
-    def __init__(self, cpptraj_abs_path: Optional[str] = None) -> None:
-        """
-        Initialize a FramesAnalyzer instance.
+    # purpose: extract pairwise electrostatic interactions between residues from a specific range
+    # args: start residue, end residue, interaction energy cutoff value
+    #       (if less than that, the interaction won't be recorded), path to the output file
+    @staticmethod
+    def _elec_analysis(start_res_id: int, end_res_id: int, cutoff: float, output_file_path: str):
+        return f"pairwise :{start_res_id}-{end_res_id} :{start_res_id}-{end_res_id} cuteelec {cutoff} avgout {output_file_path}\nrun'"
+    
+    # purpose: extract pairwise van der Waals interactions between residues from a specific range
+    # args: start residue, end residue, interaction energy cutoff value
+    #       (if less than that, the interaction won't be recorded), path to the output file
+    @staticmethod
+    def _vdw_analysis(start_res_id: int, end_res_id: int, cutoff: float, output_file_path: str):
+        return f"pairwise :{start_res_id}-{end_res_id} :{start_res_id}-{end_res_id} cutevdw {cutoff} avgout {output_file_path}\nrun'"
 
-        Args:
-            cpptraj_abs_path (Optional[str], optional): Absolute path to the cpptraj executable.
-                If None, the system PATH is searched. Defaults to None.
+    # purpose: extract pairwise hydrogen bond interactions between residues from a specific range
+    # args: start residue, end residue, distance cutoff value, angle cutoff value
+    #       (if less than either of these, the interaction won't be recorded), path to the output file
+    @staticmethod
+    def _hbond_analysis(start_res_id: int, end_res_id: int, distance_cutoff: float, angle_cutoff: float, output_file_path: str):
+        return (f"hbond donormask :{start_res_id}-{end_res_id} acceptormask :{start_res_id}-{end_res_id} distance {distance_cutoff} angle {angle_cutoff} avgout {output_file_path}\nrun'")
+    
+    # purpose: extract the center of the mass of each individual residue from a specific residue range
+    # args: start residue, end residue, template for the path to the output file
+    @staticmethod
+    def _com_analysis(start_res_id: int, end_res_id: int, output_file_path_template: str):
+        s = ""
+        for res_id in range(start_res_id, end_res_id+1):
+            s += f"vector res_{res_id} center :{res_id} out {output_file_path_template.format(res_id=res_id)}\n"
+        return s[:-1] + "\nrun' "
 
-        Raises:
-            FileNotFoundError: If the cpptraj executable is not found or is inaccessible.
-        """
+    # purpose: convert md frames to a pdb file
+    # args: path to the output pdb file
+    @staticmethod
+    def _to_pdb(output_file_path):
+        return (f"trajout {output_file_path} pdb\nrun'")
+
+    # * PUBLIC CLASS FIELDS *
+
+    # purpose: load the molecular dynamics files
+    # args: topology file, trajectory file, start frame, end frame
+    @staticmethod
+    def load_data_from(topology_file: str, trajectory_file: str, start_frame: int, end_frame: int):
+        return (f"echo 'parm {topology_file}\ntrajin {trajectory_file} {start_frame} {end_frame}\n")
+    
+    # storing available analyses in the dict
+    available_analyses = {"elec": _elec_analysis, "vdw": _vdw_analysis, "hbond": _hbond_analysis, "com": _com_analysis, "2pdb": _to_pdb}
+
+    def __init__(self, cpptraj_abs_path: Optional[str] = None, config: Optional[dict] = None) -> None:
         self.global_config = None
         self.cls_config = None
-        self.set_config(pkg_globals.default_config)
+        
+        if config is None:
+            self.set_config(pkg_globals.default_config)
+        else:
+            self.set_config(config)
 
         self._cpptraj = _util.cpptraj_is_available_at(cpptraj_abs_path)
         if self._cpptraj is None:
             raise FileNotFoundError(f"cpptraj was not found or is inaccessible at {cpptraj_abs_path}")
+        
+        # just storing the piping operator and the cpptraj output suppresion so that
+        # its usage in the instance methods does not make the code verbose
+        self._through_cpptraj = f" | {self._cpptraj} > /dev/null 2>&1"
 
     @property
     def which_cpptraj(self) -> Optional[str]:
-        """
-        Get the path to the cpptraj executable.
-
-        Returns:
-            Optional[str]: The absolute path to cpptraj if available; otherwise, None.
-        """
         return self._cpptraj
 
     def __repr__(self) -> str:
-        """
-        Return a string representation of the FramesAnalyzer instance.
-
-        Returns:
-            str: A string representation including the configuration and cpptraj path.
-        """
-        return f"{self.__class__.__name__}(config={self.cls_config}, _cpptraj={self._cpptraj})"
+        return f"{self.__class__.__name__}(cls_config={self.cls_config}, _cpptraj={self._cpptraj})"
 
     def set_config(self, config: dict) -> None:
-        """
-        Set the global and FramesAnalyzer-specific configuration.
-
-        The configuration must include:
-            - FramesAnalyzer
-                - 'output_directory_name'
-                - 'cpptraj_file_name'
-        
-        Args:
-            config (dict): A configuration dictionary
-        
-        Raises:
-            ValueError: If the required configuration keys are missing
-        """
-        if self.__class__.__name__ not in config:
-            raise ValueError(f"Invalid config: missing {self.__class__.__name__} sub-config")
-        
-        sub_config = config[self.__class__.__name__]
-        if "output_directory_name" not in sub_config:
-            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing output_directory_name field")
-        if "cpptraj_file_name" not in sub_config:
-            raise ValueError(f"Invalid {self.__class__.__name__} sub-config: missing cpptraj_file_name field")
-        
         self.global_config = config
         self.cls_config = config[self.__class__.__name__]
 
-    def run_cpptraj(self, start_end: Tuple[int, int], topology_file: str, trajectory_file: str,
-                     cpptraj_analysis_command: str, cpptraj_output_type: str, output_directory: str) -> None:
-        """
-        Execute the cpptraj command for a given frame range.
+    def extract_residue_interactions(self, start_end_frames: Tuple[int, int], topology_file: str, trajectory_file: str,
+                                     interaction_type: str, analysis_kwargs: dict, output_directory: str) -> None:
+        # create intermediate dir name
+        interaction_type_output_directory_path = os.path.join(output_directory, self.cls_config[f"{interaction_type}_directory_name"])
+        
+        # create file name
+        start_frame, end_frame = start_end_frames
+        output_file_name = self.cls_config["interactions_file_name_template"].format(start_frame=start_frame, end_frame=end_frame)
 
-        This method builds and runs a command that pipes a series of cpptraj instructions
-        (including the topology, trajectory, analysis command, and output configuration)
-        to the cpptraj executable.
+        # create the path for the new file, and create the intermediate dir on that path using _util.new_dir_at(...)
+        output_file_path = os.path.join(_util.new_dir_at(interaction_type_output_directory_path), output_file_name)
 
-        Args:
-            start_end (Tuple[int, int]): A tuple (start_frame, end_frame) specifying the frame range.
-            topology_file (str): Path to the topology file.
-            trajectory_file (str): Path to the trajectory file.
-            cpptraj_analysis_command (str): The analysis command to run in cpptraj.
-            cpptraj_output_type (str): The output type parameter for cpptraj.
-            output_directory (str): Directory where the cpptraj output file will be saved.
+        # put the cpptraj command together
+        command = "".join([self.load_data_from(topology_file, trajectory_file, start_frame, end_frame),
+                          self.available_analyses[interaction_type](**analysis_kwargs, output_file_path=output_file_path),
+                          self._through_cpptraj])
 
-        Raises:
-            RuntimeError: If execution of the cpptraj command fails.
-            KeyError: If a wrong 'cpptraj_file_name' format is passed.
-        """
-        start_frame, end_frame = start_end
-        try:
-            output_file_name = self.cls_config["cpptraj_file_name"].format(start=start_frame, end=end_frame)
-        except KeyError:
-            raise KeyError(f"Wrong 'cpptraj_file_name' format. Expected a string containing {{\"start\"}}-{{\"end\"}}, instead got: {self.cls_config["cpptraj_file_name"]}")
-        output_file_path = os.path.join(output_directory, output_file_name)
-
-        command = (
-            f'echo "parm {topology_file}\n'
-            f'trajin {trajectory_file} {start_frame} {end_frame}\n'
-            f'{cpptraj_analysis_command} {cpptraj_output_type} {output_file_path} run" | '
-            f'{self._cpptraj} > /dev/null 2>&1'
-        )
-        try:
+        try: # try executing the command
             run(command, check=True, shell=True)
         except SubprocessError as e:
             raise RuntimeError(f"An exception occurred while executing the '{command}' command: {e}")
 
-    def analyse_frames(self, topology_file: str, trajectory_file: str,
-                       cpptraj_analysis_command: str, cpptraj_output_type: str,
-                       number_frames: int, in_parallel: bool, batch_size: Optional[int] = 1,
-                       in_one_batch: Optional[bool] = False, output_directory_path: Optional[str] = None) -> str:
-        """
-        Analyze frames by dividing them into batches and processing each batch with cpptraj.
+    def extract_residue_coordinates(self, start_end_residues: Tuple[int, int], start_end_frames: Tuple[int, int],
+                                    topology_file: str, trajectory_file: str, output_directory: str):
+        # create intermediate dir name
+        com_output_directory_path = os.path.join(output_directory, self.cls_config["com_directory_name"])
 
-        The method creates an output directory (if not provided), divides the total frames
-        into batches (or uses a single batch if in_one_batch is True), and executes the cpptraj
-        command on each batch. Batches can be processed sequentially or in parallel.
+        # create file name (template in this case)
+        start_residue, end_residue = start_end_residues
+        start_frame, end_frame = start_end_frames
+        output_file_name_template = self.cls_config["coordinates_file_name_template"]
 
-        Args:
-            topology_file (str): Path to the topology file.
-            trajectory_file (str): Path to the trajectory file.
-            cpptraj_analysis_command (str): The analysis command for cpptraj.
-            cpptraj_output_type (str): The output type parameter for cpptraj.
-            number_frames (int): Total number of frames to process.
-            in_parallel (bool): If True, process batches in parallel using ThreadPoolExecutor.
-            batch_size (Optional[int], optional): Number of frames per batch. Defaults to 1.
-            in_one_batch (Optional[bool], optional): If True, process all frames as a single batch. Defaults to False.
-            output_directory_path (Optional[str], optional): Path to the output directory. If None, a new directory is created.
+        # create the path (template) for the new file, and create the intermediate dir on that path using _util.new_dir_at(...)
+        output_file_path_template = os.path.join(_util.new_dir_at(com_output_directory_path), output_file_name_template)
 
-        Returns:
-            str: The path to the output directory where results are stored.
-        """
-        output_directory = (
-            output_directory_path if output_directory_path
-            else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name"])
-        )
+        # put the cpptraj command together
+        command = "".join([self.load_data_from(topology_file, trajectory_file, start_frame, end_frame),
+                          self.available_analyses["com"](start_residue, end_residue, output_file_path_template=output_file_path_template),
+                          self._through_cpptraj])
+
+        try: # try executing the command
+            run(command, check=True, shell=True)
+        except SubprocessError as e:
+            raise RuntimeError(f"An exception occurred while executing the '{command}' command: {e}")
+
+    def create_id_to_res_map(self, topology_file: str, trajectory_file: str, start_end_residues: Tuple[int, int], output_directory: str):
+        current_time = datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
+
+        output_file_path = os.path.join(output_directory, f"data{hash(current_time)}.pdb")
+        command = "".join([self.load_data_from(topology_file, trajectory_file, 1, 1),
+                           self.available_analyses["2pdb"](output_file_path),
+                           self._through_cpptraj])
+
+        try: # try executing the command
+            run(command, check=True, shell=True)
+        except SubprocessError as e:
+            raise RuntimeError(f"An exception occurred while executing the '{command}' command: {e}")
+        
+        start, end = start_end_residues
+        id_to_res_map = _util.id_to_res_map_from_pdb(output_file_path)[start-1, end]
+        
+        try: # try deleting the pdb
+            os.remove(output_file_path)
+        except OSError as e:
+            raise OSError(f"Could not clean up the temporarily created pdb file: {e}")
+        
+        id_to_res_map_path = os.path.join(output_directory, self.cls_config["id_to_res_map_name"])
+        with open(id_to_res_map_path, "w") as f:
+            f.write(str(id_to_res_map))
+        
+
+    def process_trajectory(self, topology_file: str, trajectory_file: str,
+                       interaction_types_and_kwargs: dict, number_frames: int,
+                       in_parallel: bool, batch_size: Optional[int] = 1,
+                       in_one_batch: Optional[bool] = False, plotable: Optional[bool] = False, 
+                       start_end_residues: Optional[Tuple[int, int]] = None, output_directory_path: Optional[str] = None) -> str:
+        output_directory = output_directory_path if output_directory_path else _util.create_output_dir(os.getcwd(), self.cls_config["output_directory_name_template"])
+        
+        extract_interactions_from = _util.process_elementwise(in_parallel=in_parallel, Executor=ThreadPoolExecutor, capture_output=False)
 
         # If in_one_batch is True, treat all frames as one batch.
-        effective_batch_size = number_frames if in_one_batch else batch_size
-        batches = _util.construct_batch_sequence(number_frames, effective_batch_size)
-        
-        _util.process_elementwise(
-            in_parallel=in_parallel,
-            Executor=ThreadPoolExecutor,
-            capture_output=False
-        )(
-            batches,
-            self.run_cpptraj,
-            topology_file,
-            trajectory_file,
-            cpptraj_analysis_command,
-            cpptraj_output_type,
-            output_directory
-        )
+        batch_size = number_frames if in_one_batch else batch_size
+        batches = _util.construct_batch_sequence(number_frames, batch_size)
+
+        # extract interactions
+        for interaction_type, analysis_kwargs in interaction_types_and_kwargs.items():
+            extract_interactions_from(batches,
+                            self.extract_residue_interactions,
+                            topology_file, trajectory_file,
+                            interaction_type, analysis_kwargs,
+                            output_directory)
+
+        if plotable:
+            if start_end_residues is None:
+                raise ValueError("If plotable=True, start_end_residues parameter must be provided")
+            self.extract_residue_coordinates(start_end_residues=start_end_residues,
+                                             start_end_frames=(1, number_frames),
+                                             topology_file=topology_file,
+                                             trajectory_file=trajectory_file,
+                                             output_directory=output_directory)
+            
+        self.create_id_to_res_map(topology_file, trajectory_file, start_end_residues, output_directory)
         
         return output_directory
 

@@ -2,6 +2,7 @@ from .frames_analyzer import FramesAnalyzer
 from .analyses_processor import AnalysesProcessor
 from .to_matrices_converter import ToMatricesConverter
 from .protein import Protein
+from .network_analyzer import NetworkAnalyzer
 import shutil
 
 def construct_network(fa: FramesAnalyzer, ap: AnalysesProcessor, tmc: ToMatricesConverter,
@@ -45,4 +46,4 @@ def construct_network(fa: FramesAnalyzer, ap: AnalysesProcessor, tmc: ToMatrices
     return output_dir
 
 
-__all__ = ["FramesAnalyzer", "AnalysesProcessor", "ToMatricesConverter", "Protein", "construct_network"]
+__all__ = ["FramesAnalyzer", "AnalysesProcessor", "ToMatricesConverter", "Protein", "construct_network", "NetworkAnalyzer"]
