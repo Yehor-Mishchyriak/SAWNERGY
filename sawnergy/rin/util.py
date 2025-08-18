@@ -78,6 +78,7 @@ def locate_cpptraj(explicit: Path | None = None, verify: bool = True) -> str:
 
             _logger.info("Attempting to verify that it works")
             try:
+                # cpptraj -h prints a help message
                 proc = subprocess.run([str(p), "-h"], capture_output=True, text=True, timeout=15) # 15 sec timeout
             except subprocess.TimeoutExpired:
                 _logger.warning(f"The instance at {p} hung during verification (timeout). Skipping.")

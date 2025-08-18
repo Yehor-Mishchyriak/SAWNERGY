@@ -3,6 +3,7 @@
 
 # except for
 !sawnergy/
+!sawnergy/*.py
 !sawnergy/config.json
 # ----------------------------
 !sawnergy/_cython/
