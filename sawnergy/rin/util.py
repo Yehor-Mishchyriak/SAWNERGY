@@ -1,10 +1,19 @@
+from __future__ import annotations
+
 import logging
+from dataclasses import dataclass, field
 import os, shutil, subprocess
 from pathlib import Path
 
+# *----------------------------------------------------*
+#                        GLOBALS
+# *----------------------------------------------------*
 
 _logger = logging.getLogger(__name__)
 
+# *----------------------------------------------------*
+#                        CLASSES
+# *----------------------------------------------------*
 
 class CpptrajNotFound(RuntimeError):
     def __init__(self, candidates: list[Path]) -> None:
@@ -17,6 +26,45 @@ class CpptrajNotFound(RuntimeError):
         )
         super().__init__(msg)
 
+
+@dataclass(frozen=True)
+class CpptrajScript:
+    commands: tuple[str] = field(default_factory=tuple)
+
+    @classmethod
+    def from_cmd(cls, cmd: str) -> CpptrajScript:
+        return cls((cmd,))
+
+    def __add__(self, other: str | CpptrajScript) -> CpptrajScript:
+        if isinstance(other, str):
+            return CpptrajScript(self.commands + (other,))
+        elif isinstance(other, CpptrajScript):
+            return CpptrajScript(self.commands + other.commands)
+        else:
+            return NotImplemented
+
+    def __or__(self, file_name: str) -> CpptrajScript: # |
+        save_to = (self.commands[-1] + f" out {file_name}",)
+        return CpptrajScript(self.commands[:-1] + save_to)
+
+    def __ge__(self, file_name: str) -> CpptrajScript: # >=
+        save_to = (self.commands[-1] + f" avgout {file_name}",)
+        return CpptrajScript(self.commands[:-1] + save_to)
+    
+    def __rshift__(self, file_name: str) -> CpptrajScript: # >>
+        save_to = (self.commands[-1] + f" emapout elec_{file_name} vmapout vdw_{file_name}",)
+        return CpptrajScript(self.commands[:-1] + save_to)
+
+    def __gt__(self, file_name: str) -> CpptrajScript: # >
+        save_to = (self.commands[-1] + f" eout {file_name}",)
+        return CpptrajScript(self.commands[:-1] + save_to)
+
+    def render(self) -> str:
+        return "\n".join(self.commands + ("run", "quit", ""))
+
+# *----------------------------------------------------*
+#                       FUNCTIONS
+# *----------------------------------------------------*
 
 def locate_cpptraj(explicit: Path | None = None, verify: bool = True) -> str:
     """Locate a working `cpptraj` executable.
@@ -94,30 +142,25 @@ def locate_cpptraj(explicit: Path | None = None, verify: bool = True) -> str:
     raise CpptrajNotFound(candidates)
 
 
-def run_cpptraj(cpptraj: Path, script: str):
-    """Run a cpptraj script with the specified executable.
-
-    This function executes the `cpptraj` binary with the given script
-    content passed via standard input. It enforces error checking, so
-    non-zero return codes from `cpptraj` raise an exception.
-
-    Args:
-        cpptraj (Path): Path to the `cpptraj` executable.
-        script (str): The cpptraj script to execute, passed as input.
-
-    Raises:
-        subprocess.SubprocessError: If the subprocess fails due to a 
-            `cpptraj`-related error (e.g., non-zero exit status).
-        Exception: If any other unexpected error occurs during execution.
-
-    Returns:
-        None
-    """
+def run_cpptraj(cpptraj: str,
+                script: str,
+                flags: list[str] | None = None,
+                timeout: int = 30):
+    args = [cpptraj] + (flags or [])
     try:
-        subprocess.run([str(cpptraj)], input=script, text=True, check=True)
-    except subprocess.SubprocessError as e:
-        _logger.error(f"Cpptraj execution failed: {e}")
-        raise # raises the last caught exception
+        proc = subprocess.run(
+            args,
+            input=script,
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=timeout
+        )
+        return proc.stdout
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()
+        _logger.error(f"Cpptraj execution failed (code {e.returncode}). Stderr:\n{stderr}")
+        raise
     except Exception as e:
         _logger.error(f"Unexpected error while running cpptraj: {e}")
         raise
