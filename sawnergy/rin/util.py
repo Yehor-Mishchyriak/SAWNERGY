@@ -26,7 +26,6 @@ class CpptrajNotFound(RuntimeError):
         )
         super().__init__(msg)
 
-
 @dataclass(frozen=True)
 class CpptrajScript:
     commands: tuple[str] = field(default_factory=tuple)
@@ -65,6 +64,10 @@ class CpptrajScript:
 # *----------------------------------------------------*
 #                       FUNCTIONS
 # *----------------------------------------------------*
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
+#  WRAPPERS AND HELPERS FOR THE CPPTRAJ EXECUTABLE
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
 
 def locate_cpptraj(explicit: Path | None = None, verify: bool = True) -> str:
     """Locate a working `cpptraj` executable.
@@ -141,12 +144,11 @@ def locate_cpptraj(explicit: Path | None = None, verify: bool = True) -> str:
     _logger.error(f"No functional `cpptraj` instance was found")
     raise CpptrajNotFound(candidates)
 
-
 def run_cpptraj(cpptraj: str,
-                script: str,
-                flags: list[str] | None = None,
+                script: str | None = None,
+                argv: list[str] | None = None,
                 timeout: int = 30):
-    args = [cpptraj] + (flags or [])
+    args = [cpptraj] + (argv or [])
     try:
         proc = subprocess.run(
             args,
@@ -164,7 +166,15 @@ def run_cpptraj(cpptraj: str,
     except Exception as e:
         _logger.error(f"Unexpected error while running cpptraj: {e}")
         raise
-        
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
+#  CPPTRAJ OUTPUT PARSERS
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
+
+def com_parser(line: str) -> str:
+    frame, x, y, z, _, _, _= line.split()
+    return f"{frame},{x},{y},{z}\n"
+
 
 if __name__ == "__main__":
     pass
