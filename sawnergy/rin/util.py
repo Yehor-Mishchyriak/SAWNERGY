@@ -232,7 +232,9 @@ def locate_cpptraj(explicit: Path | None = None, verify: bool = True) -> str:
 def run_cpptraj(cpptraj: str,
                 script: str | None = None,
                 argv: list[str] | None = None,
-                timeout: int = 30):
+                timeout: int = 30,
+                *,
+                env: dict | None = None):
     """Run the `cpptraj` executable with an optional inline script.
 
     This wrapper executes `cpptraj` either with command-line arguments only
@@ -246,6 +248,8 @@ def run_cpptraj(cpptraj: str,
         argv: Additional command-line arguments to pass to `cpptraj`
             (e.g., topology/trajectory flags).
         timeout: Maximum wall time (seconds) allowed for the process.
+        env: Optional dictionary of environment variables to override or extend
+            the current process environment when invoking `cpptraj`.
 
     Returns:
         str: Captured standard output from the `cpptraj` process.
@@ -263,7 +267,8 @@ def run_cpptraj(cpptraj: str,
             text=True,
             capture_output=True,
             check=True,
-            timeout=timeout
+            timeout=timeout,
+            env=env
         )
         return proc.stdout
     except subprocess.CalledProcessError as e:
