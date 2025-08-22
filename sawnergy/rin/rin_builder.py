@@ -36,14 +36,10 @@ class RINBuilder:
             return int(out)
         except ValueError:
             raise RuntimeError(f"Could not retrieve the number of frames from '{trajectory_file}' trajectory")
-    
-    @staticmethod
-    def _selection_mask(atom_ids: Iterable[int]) -> str:
-        return f"@{','.join(map(str, atom_ids))}"
 
     @staticmethod
     def _hierarchize_molecular_composition(mol_compositions_file: str) -> dict:
-        pass
+        return util.CpptrajMaskParser.hierarchize_molecular_composition(mol_compositions_file)
 
     # ---------------------------------------------------------------------------------------------- #
     #                                       CPPTRAJ COMMANDS
@@ -57,8 +53,8 @@ class RINBuilder:
         return util.CpptrajScript((f"parm {topology_file}", f"trajin {trajectory_file} {start_frame} {end_frame}"))
 
     @staticmethod
-    def _calc_pairwise_nonbonded_energies(atom_ids: Iterable[int]) -> util.CpptrajScript:
-        return util.CpptrajScript.from_cmd(f"pairwise {RINBuilder._selection_mask(atom_ids)} cuteelec 0.0 cutevdw 0.0")
+    def _calc_nonbonded_energies_in_molecule(molecule_id: int) -> util.CpptrajScript:
+        return util.CpptrajScript.from_cmd(f"pairwise ^{molecule_id} cuteelec 0.0 cutevdw 0.0")
     
     @staticmethod
     def _extract_molecule_compositions() -> util.CpptrajScript:
@@ -67,6 +63,10 @@ class RINBuilder:
     # ---------------------------------------------------------------------------------------------- #
     #                                          POST-CPPTRAJ
     # ---------------------------------------------------------------------------------------------- #
+
+    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
+    #  CONVERSION OF ATOMIC LEVEL INTERACTIONS INTO RESIDUE LEVEL
+    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
 
     # ---------------------------------------------------------------------------------------------- #
     #                                           PUBLIC API
@@ -77,8 +77,8 @@ class RINBuilder:
                  trajectory_file: str,
                  frame_range: tuple[int, int] | None = None,
                  batch_size: int = 1) -> str:
-        # script = (self._load_data_from(topology_file, trajectory_file, 1, 2) + self._calc_pairwise_nonbonded_energies(1, 5)) >> "example1.dat"
-        script = (self._load_data_from(topology_file, trajectory_file, 1, 1) + self._map_atoms_to_residues()) | "mapping.dat"
+        
+        script = (self._load_data_from(topology_file, trajectory_file, 1, 1) + self._calc_pairwise_nonbonded_energies(1)) >> "example1.dat"
         util.run_cpptraj(self.cpptraj, script.render())
 
 
