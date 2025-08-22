@@ -3,7 +3,7 @@ import logging
 from math import ceil
 from concurrent.futures import as_completed, ThreadPoolExecutor, ProcessPoolExecutor
 from typing import Callable, Iterable, Any
-import os, psutil
+import os, psutil, tempfile
 from pathlib import Path
 
 # *----------------------------------------------------*
@@ -347,6 +347,30 @@ def read_lines(file_path: str, skip_header: bool = True) -> list[str]:
         lines = file.readlines()
         _logger.debug("read_lines: read %d lines from %s", len(lines), file_path)
         return lines[1:] if (skip_header and lines) else lines
+
+def temporary_file(prefix: str, suffix: str) -> Path:
+    ntf = tempfile.NamedTemporaryFile(prefix=prefix, suffix=suffix, delete="False")
+    ntf.close()
+    return Path(ntf.name)
+
+def batches_of(iterable: Iterable,
+               batch_size: int = -1,
+               *,
+               out_as: type = list,
+               ranges: bool = False,
+               inclusive_end: bool = False):
+    n = len(iterable)
+    if batch_size <= 0:
+        batch_size = n
+    for start in range(0, n, batch_size):
+        end_excl = min(start + batch_size, n)
+        if ranges:
+            if inclusive_end:
+                yield out_as((start, end_excl - 1))
+            else:
+                yield out_as((start, end_excl))
+        else:
+            yield out_as(iterable[start:end_excl])
 
 
 if __name__ == "__main__":
