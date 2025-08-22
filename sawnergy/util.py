@@ -19,7 +19,7 @@ _logger = logging.getLogger(__name__)
 def _apply(f: Callable, x: Any, extra_args: tuple, extra_kwargs: dict) -> Any:
     return f(x, *extra_args, **extra_kwargs)
 
-def process_elementwise(
+def elementwise_processor(
     in_parallel: bool = False,
     Executor: type[ThreadPoolExecutor] | type[ProcessPoolExecutor] | None = None,
     max_workers: int | None = None,
@@ -52,7 +52,7 @@ def process_elementwise(
         - In non-capturing modes, tasks are still awaited so exceptions surface.
 
     Example:
-        >>> runner = process_elementwise(in_parallel=True, Executor=ThreadPoolExecutor, max_workers=4)
+        >>> runner = elementwise_processor(in_parallel=True, Executor=ThreadPoolExecutor, max_workers=4)
         >>> out = runner(range(5), lambda x: x * 2)
         >>> out
         [0, 2, 4, 6, 8]
@@ -74,32 +74,32 @@ def process_elementwise(
             Exception: Any exception raised by `function` is propagated.
         """
         _logger.debug(
-            "process_elementwise: in_parallel=%s, Executor=%s, max_workers=%s, capture_output=%s, func=%s",
+            "elementwise_processor: in_parallel=%s, Executor=%s, max_workers=%s, capture_output=%s, func=%s",
             in_parallel, getattr(Executor, "__name__", None), max_workers, capture_output, getattr(function, "__name__", repr(function))
         )
 
         if not in_parallel:
-            _logger.info("process_elementwise: running sequentially")
+            _logger.info("elementwise_processor: running sequentially")
             if capture_output:
                 result = [function(x, *extra_args, **extra_kwargs) for x in iterable]
-                _logger.info("process_elementwise: sequential completed with %d results", len(result))
+                _logger.info("elementwise_processor: sequential completed with %d results", len(result))
                 return result
             else:
                 for x in iterable:
                     function(x, *extra_args, **extra_kwargs)
-                _logger.info("process_elementwise: sequential completed (no capture)")
+                _logger.info("elementwise_processor: sequential completed (no capture)")
                 return None
 
         if Executor is None:
-            _logger.error("process_elementwise: Executor is required when in_parallel=True")
+            _logger.error("elementwise_processor: Executor is required when in_parallel=True")
             raise ValueError("An 'Executor' argument must be provided if 'in_parallel' is True.")
 
         local_max_workers = max_workers or (os.cpu_count() or 1)
-        _logger.info("process_elementwise: starting parallel with %d workers via %s", local_max_workers, Executor.__name__)
+        _logger.info("elementwise_processor: starting parallel with %d workers via %s", local_max_workers, Executor.__name__)
         with Executor(max_workers=local_max_workers) as executor:
             futures = {executor.submit(_apply, function, x, extra_args, extra_kwargs): i
                        for i, x in enumerate(iterable)}
-            _logger.info("process_elementwise: submitted %d tasks", len(futures))
+            _logger.info("elementwise_processor: submitted %d tasks", len(futures))
             if capture_output:
                 results: list[Any] = [None] * len(futures)
                 for fut in as_completed(futures):
@@ -107,18 +107,18 @@ def process_elementwise(
                     try:
                         results[idx] = fut.result()
                     except Exception:
-                        _logger.exception("process_elementwise: task %d raised", idx)
+                        _logger.exception("elementwise_processor: task %d raised", idx)
                         raise
-                _logger.info("process_elementwise: parallel completed with %d results", len(results))
+                _logger.info("elementwise_processor: parallel completed with %d results", len(results))
                 return results
             else:
                 for fut in as_completed(futures):
                     try:
                         fut.result()
                     except Exception:
-                        _logger.exception("process_elementwise: task %d raised", futures[fut])
+                        _logger.exception("elementwise_processor: task %d raised", futures[fut])
                         raise
-                _logger.info("process_elementwise: parallel completed (no capture)")
+                _logger.info("elementwise_processor: parallel completed (no capture)")
                 return None
 
     return inner
@@ -349,6 +349,23 @@ def read_lines(file_path: str, skip_header: bool = True) -> list[str]:
         return lines[1:] if (skip_header and lines) else lines
 
 def temporary_file(prefix: str, suffix: str) -> Path:
+    """Create a named temporary file and return its path.
+
+    This helper creates a `NamedTemporaryFile`, closes it immediately, and
+    returns its filesystem path so other processes can open/write it later.
+    The caller is responsible for deleting the file when finished.
+
+    Args:
+      prefix: Filename prefix used when creating the temporary file.
+      suffix: Filename suffix (e.g., extension) used when creating the file.
+
+    Returns:
+      Path: Filesystem path to the created temporary file.
+
+    Notes:
+      The file is created on the default temporary directory for the system.
+      The file handle is closed before returning, so only the path is kept.
+    """
     ntf = tempfile.NamedTemporaryFile(prefix=prefix, suffix=suffix, delete="False")
     ntf.close()
     return Path(ntf.name)
@@ -359,6 +376,43 @@ def batches_of(iterable: Iterable,
                out_as: type = list,
                ranges: bool = False,
                inclusive_end: bool = False):
+    """Yield elements of `iterable` in fixed-size batches or index ranges.
+
+    This function requires that `iterable` supports `len()` and slicing.
+    When `ranges=True`, yields index pairs instead of slices.
+
+    Args:
+      iterable: A sequence-like object supporting `len()` and slicing.
+      batch_size: Number of items per batch. If <= 0, the entire iterable is
+        yielded in a single batch. Defaults to -1.
+      out_as: Constructor used to wrap each yielded batch (e.g., `list`, `tuple`)
+        or to wrap the index pair when `ranges=True`. Defaults to `list`.
+      ranges: If True, yield index ranges instead of actual data slices.
+        Each yielded item is `(start, end)` (exclusive) unless `inclusive_end`
+        is True. Defaults to False.
+      inclusive_end: If `ranges=True`, control whether the returned range end
+        index is inclusive (`(start, end_inclusive)`) or exclusive
+        (`(start, end_exclusive)`). Ignored when `ranges=False`. Defaults to False.
+
+    Yields:
+      Any: For `ranges=False`, a batch containing up to `batch_size` elements,
+      wrapped with `out_as`. For `ranges=True`, an index pair `(start, end)` (or
+      `(start, end_inclusive)` if `inclusive_end=True`) wrapped with `out_as`.
+
+    Raises:
+      TypeError: If `iterable` does not support `len()` or slicing.
+
+    Examples:
+      Yield data batches:
+
+      >>> list(batches_of([1,2,3,4,5], batch_size=2))
+      [[1, 2], [3, 4], [5]]
+
+      Yield index ranges (exclusive end):
+
+      >>> list(batches_of(range(10), batch_size=4, ranges=True))
+      [[0, 4], [4, 8], [8, 10]]
+    """
     n = len(iterable)
     if batch_size <= 0:
         batch_size = n
@@ -371,6 +425,40 @@ def batches_of(iterable: Iterable,
                 yield out_as((start, end_excl))
         else:
             yield out_as(iterable[start:end_excl])
+
+def create_updated_subprocess_env(**var_vals: Any) -> dict[str, str]:
+    """Return a copy of the current environment with specified overrides.
+
+    Convenience helper for preparing an `env` dict to pass to `subprocess.run`.
+    Values are converted to strings; booleans map to ``"TRUE"``/``"FALSE"``.
+    If a value is `None`, the variable is removed from the child environment.
+    Path-like values are converted via `os.fspath`.
+
+    Args:
+      **var_vals: Mapping of environment variable names to desired values.
+        - `None`: remove the variable from the environment.
+        - `bool`: stored as `"TRUE"` or `"FALSE"`.
+        - `int`, `str`, path-like: converted to `str` (path-like via `os.fspath`).
+
+    Returns:
+      dict[str, str]: A new environment dictionary suitable for `subprocess.run`.
+
+    Examples:
+      >>> env = create_updated_subprocess_env(OMP_NUM_THREADS=1, MKL_DYNAMIC=False)
+      >>> env["OMP_NUM_THREADS"]
+      '1'
+      >>> env["MKL_DYNAMIC"]
+      'FALSE'
+    """
+    env: dict[str, str] = os.environ.copy()
+    for var, val in var_vals.items():
+        if val is None:
+            env.pop(var, None)
+        elif isinstance(val, bool):
+            env[var] = "TRUE" if val else "FALSE"
+        else:
+            env[var] = os.fspath(val) if hasattr(val, "__fspath__") else str(val)
+    return env
 
 
 if __name__ == "__main__":
