@@ -102,18 +102,25 @@ class CpptrajScript:
         save_to = (self.commands[-1] + f" avgout {file_name}",)
         return CpptrajScript(self.commands[:-1] + save_to)
     
-    def __rshift__(self, file_name: str) -> CpptrajScript: # >>
-        """Add `emapout elec_<file> vmapout vdw_<file>` to the last command via `>>`.
+    def __rshift__(self, file_names: tuple[str]) -> CpptrajScript: # >>
+        """Append energy and van der Waals map outputs to the last command via ``>>``.
 
-        This is a convenience for energy/van der Waals map outputs commonly used in cpptraj.
+        This operator is shorthand for appending the cpptraj arguments
+        ``emapout <elec_file> vmapout <vdw_file>`` to the most recent command
+        in the script.
 
         Args:
-            file_name: Base file name used to derive both `elec_...` and `vdw_...` outputs.
+            file_names: A 2-tuple of output file names ``(elec_file, vdw_file)``, where
+                the first element is used with ``emapout`` and the second with ``vmapout``.
 
         Returns:
             CpptrajScript: A new script with the modified last command.
+
+        Example:
+            >>> script = CpptrajScript.from_cmd(...)
+            >>> script = script >> ("elec.dat", "vdw.dat")  # adds: emapout elec.dat vmapout vdw.dat
         """
-        save_to = (self.commands[-1] + f" emapout elec_{file_name} vmapout vdw_{file_name}",)
+        save_to = (self.commands[-1] + f" emapout {file_names[0]} vmapout {file_names[1]}",)
         return CpptrajScript(self.commands[:-1] + save_to)
 
     def __gt__(self, file_name: str) -> CpptrajScript: # >
