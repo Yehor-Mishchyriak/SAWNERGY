@@ -12,13 +12,26 @@ import re
 # *----------------------------------------------------*
 
 _logger = logging.getLogger(__name__)
+PAIRWISE_STDOUT: CpptrajScript
 
 # *----------------------------------------------------*
 #                        CLASSES
 # *----------------------------------------------------*
 
 class CpptrajNotFound(RuntimeError):
+    """Error raised when a functional `cpptraj` executable cannot be found.
+
+    The exception message lists the candidate paths that were tried and gives a
+    brief hint on how to make `cpptraj` discoverable (install AmberTools, add
+    to PATH, or set the CPPTRAJ environment variable).
+    """
     def __init__(self, candidates: list[Path]) -> None:
+        """Initialize the exception with the candidate paths.
+
+        Args:
+            candidates: Ordered list of filesystem paths that were checked for a
+                working `cpptraj` executable.
+        """
         msg = (
             "Could not locate a working `cpptraj` executable.\n"
             f"Tried the following locations:\n" +
@@ -30,44 +43,45 @@ class CpptrajNotFound(RuntimeError):
 
 @dataclass(frozen=True)
 class CpptrajScript:
-    """Immutable container for building cpptraj scripts from composable commands.
+    """Immutable builder for composing cpptraj input scripts.
 
-    This class supports operator-based composition to make script authoring concise.
-    Commands are kept in order and `render()` produces a full cpptraj input, ending
-    with `run` and `quit`.
+    Instances hold a tuple of command strings. You can:
+    - Append a command with `+ "cmd"`.
+    - Concatenate two scripts with `+ other_script`.
+    - Redirect the last command to a file with the overloaded `>` operator.
+    - Render the final script text with `render()`, which ensures a trailing
+      newline and injects a `run` command if one is not already present.
 
     Attributes:
-        commands: Ordered tuple of cpptraj command strings.
+        commands: Ordered tuple of cpptraj command lines (without trailing
+            newlines).
     """
     commands: tuple[str] = field(default_factory=tuple)
 
     @classmethod
     def from_cmd(cls, cmd: str) -> CpptrajScript:
-        """Create a script from a single cpptraj command.
+        """Create a script containing a single command.
 
         Args:
-            cmd: A single cpptraj command line (without trailing newline).
+            cmd: A single cpptraj command line (no trailing newline required).
 
         Returns:
-            CpptrajScript: A new script containing exactly this command.
+            CpptrajScript: A new script with exactly one command.
         """
         return cls((cmd,))
 
     def __add__(self, other: str | CpptrajScript) -> CpptrajScript:
-        """Append a command or concatenate another script.
-
-        Using `+` with a string appends that command as the next line.
-        Using `+` with another `CpptrajScript` concatenates their commands.
+        """Concatenate a command or another script.
 
         Args:
-            other: A command string to append, or another script to concatenate.
+            other: Either a command string to append as a new line, or another
+                `CpptrajScript` whose commands will be appended in order.
 
         Returns:
-            CpptrajScript: A new script with commands combined.
+            CpptrajScript: A new script with `other` appended.
 
         Raises:
-            NotImplementedError: Returned implicitly as `NotImplemented` if `other`
-                is of an unsupported type (lets Python try reversed operation).
+            TypeError: If `other` is not a `str` or `CpptrajScript`.
         """
         if isinstance(other, str):
             return CpptrajScript(self.commands + (other,))
@@ -76,75 +90,41 @@ class CpptrajScript:
         else:
             return NotImplemented
 
-    def __or__(self, file_name: str) -> CpptrajScript: # |
-        """Add an `out <file>` redirection to the last command via `|`.
+    def __gt__(self, file_name: str | CpptrajScript) -> CpptrajScript: # >
+        """Overload `>` to add an `out <file>` target to the last command.
 
-        This is syntactic sugar for appending `out <file>` to the most recent command.
-
-        Args:
-            file_name: Output file name to use with `out`.
-
-        Returns:
-            CpptrajScript: A new script with the modified last command.
-        """
-        save_to = (self.commands[-1] + f" out {file_name}",)
-        return CpptrajScript(self.commands[:-1] + save_to)
-
-    def __ge__(self, file_name: str) -> CpptrajScript: # >=
-        """Add an `avgout <file>` redirection to the last command via `>=`.
+        If `file_name` is a string, append `out <file_name>` to the last command.
+        If `file_name` is a `CpptrajScript`, treat this as concatenation (same
+        effect as `self + file_name`).
 
         Args:
-            file_name: Output file name to use with `avgout`.
+            file_name: Output filename to attach to the last command, or another
+                script to concatenate.
 
         Returns:
-            CpptrajScript: A new script with the modified last command.
+            CpptrajScript: A new script with modified/concatenated commands.
         """
-        save_to = (self.commands[-1] + f" avgout {file_name}",)
-        return CpptrajScript(self.commands[:-1] + save_to)
-    
-    def __rshift__(self, file_names: tuple[str]) -> CpptrajScript: # >>
-        """Append energy and van der Waals map outputs to the last command via ``>>``.
-
-        This operator is shorthand for appending the cpptraj arguments
-        ``emapout <elec_file> vmapout <vdw_file>`` to the most recent command
-        in the script.
-
-        Args:
-            file_names: A 2-tuple of output file names ``(elec_file, vdw_file)``, where
-                the first element is used with ``emapout`` and the second with ``vmapout``.
-
-        Returns:
-            CpptrajScript: A new script with the modified last command.
-
-        Example:
-            >>> script = CpptrajScript.from_cmd(...)
-            >>> script = script >> ("elec.dat", "vdw.dat")  # adds: emapout elec.dat vmapout vdw.dat
-        """
-        save_to = (self.commands[-1] + f" emapout {file_names[0]} vmapout {file_names[1]}",)
-        return CpptrajScript(self.commands[:-1] + save_to)
-
-    def __gt__(self, file_name: str) -> CpptrajScript: # >
-        """Add an `eout <file>` redirection to the last command via `>`.
-
-        Args:
-            file_name: Output file name to use with `eout`.
-
-        Returns:
-            CpptrajScript: A new script with the modified last command.
-        """
-        save_to = (self.commands[-1] + f" eout {file_name}",)
-        return CpptrajScript(self.commands[:-1] + save_to)
+        if isinstance(file_name, CpptrajScript):
+            return self + file_name
+        else:
+            save_to = (self.commands[-1] + f" out {file_name}",)
+            return CpptrajScript(self.commands[:-1] + save_to)
 
     def render(self) -> str:
-        """Render the script into a cpptraj input string.
-
-        The output includes all commands in order, followed by `run` and `quit`,
-        and ends with a trailing newline.
+        """Render the script to text, auto-inserting `run` if missing.
 
         Returns:
-            str: The complete cpptraj input text.
+            str: The full script text joined by newlines. If no `run` appears in
+            `commands`, a `run` line (plus a trailing blank line) is added.
         """
-        return "\n".join(self.commands + ("run", "quit", ""))
+        commands = self.commands + ("",) if "run" in self.commands else self.commands + ("run", "")
+        return "\n".join(commands)
+
+PAIRWISE_STDOUT = CpptrajScript((
+                  "run",
+                  "printdata PW[EMAP] square2d noheader",
+                  "printdata PW[VMAP] square2d noheader"
+                ))
 
 # *----------------------------------------------------*
 #                       FUNCTIONS
@@ -185,7 +165,6 @@ def locate_cpptraj(explicit: Path | None = None, verify: bool = True) -> str:
         subprocess.TimeoutExpired: If the `cpptraj -h` verification command
             exceeds the timeout limit.
     """
-
     _logger.info("Attempting to locate a `cpptraj` executable")
 
     if explicit is not None: _logger.info(f"An explicit path was provided: {explicit.resolve()}")
@@ -235,32 +214,35 @@ def run_cpptraj(cpptraj: str,
                 timeout: int = 30,
                 *,
                 env: dict | None = None):
-    """Run the `cpptraj` executable with an optional inline script.
+    """Run `cpptraj` and return its standard output.
 
-    This wrapper executes `cpptraj` either with command-line arguments only
-    or with an input script provided via stdin. Standard output is returned on
-    success; any non-zero exit code raises `subprocess.CalledProcessError`.
+    If `script` text is provided, it is sent to cpptraj via STDIN. A trailing
+    `quit` line is appended automatically if the script does not already end
+    with one. Alternatively, you can pass command-line arguments via `argv`
+    (e.g., `["-i", "script.in"]`) and leave `script=None`.
 
     Args:
         cpptraj: Path to the `cpptraj` executable.
-        script: Complete cpptraj input (string) to feed via stdin. If None,
-            no stdin is provided.
-        argv: Additional command-line arguments to pass to `cpptraj`
-            (e.g., topology/trajectory flags).
-        timeout: Maximum wall time (seconds) allowed for the process.
-        env: Optional dictionary of environment variables to override or extend
-            the current process environment when invoking `cpptraj`.
+        script: Complete cpptraj script to feed on STDIN. If not `None` and not
+            already terminated by `quit`, the function appends `quit\\n`.
+        argv: Additional command-line arguments to pass to `cpptraj`.
+        timeout: Maximum wall time in seconds for the subprocess.
+        env: Environment variables for the child process. Values must be strings.
 
     Returns:
-        str: Captured standard output from the `cpptraj` process.
+        str: Captured `stdout` produced by `cpptraj`.
 
     Raises:
-        subprocess.CalledProcessError: If `cpptraj` exits with a non-zero code.
-        subprocess.TimeoutExpired: If execution exceeds `timeout`.
-        Exception: For unexpected I/O or process invocation errors.
+        subprocess.CalledProcessError: If cpptraj exits with a non-zero status.
+        Exception: For unexpected errors during subprocess execution.
     """
+    if script is not None:
+        if not script.rstrip().lower().endswith("quit"):
+            script = script + "quit\n"
+
     args = [cpptraj] + (argv or [])
     try:
+        print(script)
         proc = subprocess.run(
             args,
             input=script,
@@ -326,6 +308,19 @@ class CpptrajMaskParser:
         Build {molecule_id: {residue_id: {atom_id, ...}, ...}} from a cpptraj mask table.
 
         Assumes the file's header line contains bracketed column labels (e.g., [AtNum], [Rnum], [Mnum]).
+
+        Args:
+            mol_compositions_file: Path to a text file produced by cpptraj that
+                lists atoms with bracketed header tokens identifying molecule,
+                residue, and atom indices.
+
+        Returns:
+            dict[str, dict[str, set[str]]]: Nested mapping from molecule ID to
+            residue ID to the set of atom IDs.
+
+        Raises:
+            RuntimeError: If the input file is empty.
+            ValueError: If required columns are missing or a row is malformed.
         """
         lines = read_lines(mol_compositions_file, skip_header=False)
         if not lines:
