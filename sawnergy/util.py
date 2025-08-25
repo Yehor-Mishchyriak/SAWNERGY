@@ -1,3 +1,10 @@
+from __future__ import annotations
+
+# third-pary
+import zarr
+from zarr.storage import LocalStore, ZipStore
+import numpy as np
+# built-in
 import re
 import logging
 from math import ceil
@@ -5,12 +12,109 @@ from concurrent.futures import as_completed, ThreadPoolExecutor, ProcessPoolExec
 from typing import Callable, Iterable, Any
 import os, psutil, tempfile
 from pathlib import Path
+import warnings
+
 
 # *----------------------------------------------------*
 #                        GLOBALS
 # *----------------------------------------------------*
 
 _logger = logging.getLogger(__name__)
+
+# *----------------------------------------------------*
+#                        CLASSES
+# *----------------------------------------------------*
+
+class ArrayStorage:
+    def __init__(self, pth: Path | str) -> ArrayStorage:
+        if isinstance(pth, str, Path): self.pth = Path(pth).resolve()
+        else: raise ValueError(f"Expected 'str' or 'Path' input for 'pth' parameter; "
+                               f"instead gotten: {type(pth)}")
+
+        self.store = LocalStore(pth.with_suffix(".zarr"))
+        self.root = zarr.group(store=self.store)
+
+        self.arrays_per_chunk_in_block: dict[str, int] = dict()
+        self.array_shape_in_block: dict[str, tuple[int, ...]] = dict()
+        self.array_dtype_in_block: dict[str, np.dtype] = dict()
+
+    # TO BE PROOFREAD AND DTYPE TO BE CACHED ALONG WITH LOGGING AND POTENTIAL WARNING
+    def _setdefault(self,
+                   named: str,
+                   shape: tuple[int, ...],
+                   dtype: np.dtype,
+                   arrays_per_chunk: int | None = None):
+
+        cached_shape = self.array_shape_in_block.get(named, None)
+        if cached_shape is None:
+            self.array_shape_in_block[named] = shape
+        else:
+            if not (cached_shape == shape):
+                raise ValueError(f"Attempted to write an array of shape {shape} to the block of shape {cached_shape}")
+        
+        if arrays_per_chunk is None:
+            arrays_per_chunk = self.arrays_per_chunk_in_block.get(named, None)
+            if arrays_per_chunk is None:
+                arrays_per_chunk = 10
+                warnings.warn(f"You never set 'arrays_per_chunk' value for the block named {named}. "
+                              f"So the default value of '10' was used, which may be suboptimal "
+                              f"in your situation and cause worse performance. "
+                              f"Considering array sizes in the block, choose a value "
+                              f"given the amount of available RAM on your computer", RuntimeWarning)
+                _logger.warning(f"'arrays_per_chunk' was never provided for the {named} block")
+        else:
+            self.arrays_per_chunk_in_block[named] = arrays_per_chunk
+        
+        return self.root.require_array(
+            name=named,
+            shape=(0,) + shape, # grow along axis 0
+            chunks=(arrays_per_chunk,) + shape, # store as chunks of 'arrays_per_chunk' along axis 0
+            dtype=dtype
+        )
+
+    # TO BE PROOFREAD
+    def write(self, *,
+              these_arrays: list[np.ndarray],
+              to_block_named: str,
+              arrays_per_chunk: int | None = None) -> None:
+        if not these_arrays:
+            return
+        arr_example = these_arrays[0]
+        block = self._setdefault(to_block_named, arr_example.shape, arr_example.dtype, arrays_per_chunk)
+        data = np.asarray(these_arrays, dtype=arr_example.dtype); k = len(these_arrays)
+        start = block.shape[0] # shape along the growable axis
+        block.resize((start + k,) + arr_example.shape)
+        block[start:start + k, ...] = data
+
+    # TO BE COMPLETED
+    def delete_block(self, named):
+        pass
+
+    # TO BE COMPLETED
+    def compress(self) -> str:
+        zip_path = self.pth.with_suffix(".zip")
+        with ZipStore(zip_path, mode="w") as z:
+            src_root = self.root
+            dst_root = zarr.group(store=z)
+            for key in src_root.keys():
+                ...
+                
+                
+                
+                src = src_root[key]
+                if isinstance(src, zarr.Array):
+                    dst = dst_root.create_array(
+                        name=key, shape=src.shape, chunks=src.chunks, dtype=src.dtype
+                    )
+                    # stream copy by chunks along axis 0
+                    step = src.chunks[0] or max(1, src.shape[0])
+                    for i in range(0, src.shape[0], step):
+                        j = min(i + step, src.shape[0])
+                        dst[i:j, ...] = src[i:j, ...]
+                else:
+                    # if you nest groups, add a small recursive copier
+                    dst_root.create_group(key)
+        return zip_path
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
 #  PARALLEL PROCESSING AND EFFICIENT MEMORY USAGE RELATED FUNCTIONS

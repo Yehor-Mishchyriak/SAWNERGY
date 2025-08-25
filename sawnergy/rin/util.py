@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+# built-in
 import logging
 from dataclasses import dataclass, field
 import os, shutil, subprocess
 from pathlib import Path
-from ..util import read_lines
 import re
+# local
+from ..util import read_lines
 
 # *----------------------------------------------------*
 #                        GLOBALS
@@ -25,7 +27,7 @@ class CpptrajNotFound(RuntimeError):
     brief hint on how to make `cpptraj` discoverable (install AmberTools, add
     to PATH, or set the CPPTRAJ environment variable).
     """
-    def __init__(self, candidates: list[Path]) -> None:
+    def __init__(self, candidates: list[Path]) -> CpptrajNotFound:
         """Initialize the exception with the candidate paths.
 
         Args:
@@ -242,7 +244,7 @@ def run_cpptraj(cpptraj: str,
 
     args = [cpptraj] + (argv or [])
     try:
-        print(script)
+        _logger.debug(f"Running cpptraj command: {script} with args: {args}")
         proc = subprocess.run(
             args,
             input=script,
@@ -287,7 +289,7 @@ class CpptrajMaskParser:
         return CpptrajMaskParser._spaces_pattern.sub(" ", s).strip()
 
     @staticmethod
-    def _get_row_items(row: str, header_map: dict[str, int]) -> tuple[str, str, str]:
+    def _get_row_items(row: str, header_map: dict[str, int]) -> tuple[int, int, int]:
         """Extract molecule/residue/atom IDs from a data row using the header map."""
         items = CpptrajMaskParser._collapse_spaces(row).split()
         try:
@@ -303,7 +305,7 @@ class CpptrajMaskParser:
 
     # --------- PUBLIC ----------
     @staticmethod
-    def hierarchize_molecular_composition(mol_compositions_file: str) -> dict[str, dict[str, set[str]]]:
+    def hierarchize_molecular_composition(mol_compositions_file: str) -> dict[int, dict[int, set[int]]]:
         """
         Build {molecule_id: {residue_id: {atom_id, ...}, ...}} from a cpptraj mask table.
 
@@ -315,7 +317,7 @@ class CpptrajMaskParser:
                 residue, and atom indices.
 
         Returns:
-            dict[str, dict[str, set[str]]]: Nested mapping from molecule ID to
+            dict[int, dict[int, set[int]]]: Nested mapping from molecule ID to
             residue ID to the set of atom IDs.
 
         Raises:
@@ -334,7 +336,7 @@ class CpptrajMaskParser:
         if missing:
             raise ValueError(f"Missing required columns in header: {sorted(missing)}")
 
-        hierarchy: dict[str, dict[str, set[str]]] = {}
+        hierarchy: dict[int, dict[int, set[int]]] = {}
 
         for line in lines[1:]:
             if not line.strip():
