@@ -27,7 +27,7 @@ class CpptrajNotFound(RuntimeError):
     brief hint on how to make `cpptraj` discoverable (install AmberTools, add
     to PATH, or set the CPPTRAJ environment variable).
     """
-    def __init__(self, candidates: list[Path]) -> CpptrajNotFound:
+    def __init__(self, candidates: list[Path]):
         """Initialize the exception with the candidate paths.
 
         Args:

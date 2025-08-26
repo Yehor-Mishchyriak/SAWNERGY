@@ -29,7 +29,7 @@ class RINBuilder:
     (averaging interaction energies across each batch).
     """
 
-    def __init__(self, cpptraj_path: Path | str | None = None) -> RINBuilder:
+    def __init__(self, cpptraj_path: Path | str | None = None):
         if isinstance(cpptraj_path, str):
             cpptraj_path = Path(cpptraj_path)
 

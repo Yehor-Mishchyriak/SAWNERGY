@@ -14,7 +14,6 @@ import os, psutil, tempfile
 from pathlib import Path
 import warnings
 
-
 # *----------------------------------------------------*
 #                        GLOBALS
 # *----------------------------------------------------*
@@ -26,95 +25,353 @@ _logger = logging.getLogger(__name__)
 # *----------------------------------------------------*
 
 class ArrayStorage:
-    def __init__(self, pth: Path | str) -> ArrayStorage:
-        if isinstance(pth, str, Path): self.pth = Path(pth).resolve()
-        else: raise ValueError(f"Expected 'str' or 'Path' input for 'pth' parameter; "
-                               f"instead gotten: {type(pth)}")
+    """A single-root-group Zarr v3 container with multiple arrays and metadata.
 
-        self.store = LocalStore(pth.with_suffix(".zarr"))
-        self.root = zarr.group(store=self.store)
+    This wraps a root Zarr **group** (backed by a LocalStore `<name>.zarr`
+    or a read-only ZipStore `<name>.zip`). Each logical "block" is a Zarr
+    array with shape ``(N, *item_shape)`` where axis 0 is append-only.
+    Per-block metadata (chunk length, item shape, dtype) is kept in group attrs.
+    """
+    def __init__(self, pth: Path | str, mode: str) -> None:
+        """Initialize the storage and ensure a root group exists.
 
-        self.arrays_per_chunk_in_block: dict[str, int] = dict()
-        self.array_shape_in_block: dict[str, tuple[int, ...]] = dict()
-        self.array_dtype_in_block: dict[str, np.dtype] = dict()
+        Args:
+          pth: Base path. If it ends with ``.zip`` a read-only ZipStore is used;
+            otherwise a LocalStore at ``<pth>.zarr`` is used.
+          mode: Zarr open mode. For ZipStore this must be ``"r"``.
+            For LocalStore, an existing store is opened with this mode; if
+            missing, a new root group is created.
 
-    # TO BE PROOFREAD AND DTYPE TO BE CACHED ALONG WITH LOGGING AND POTENTIAL WARNING
-    def _setdefault(self,
-                   named: str,
-                   shape: tuple[int, ...],
-                   dtype: np.dtype,
-                   arrays_per_chunk: int | None = None):
+        Raises:
+          ValueError: If `pth` type is invalid or ZipStore mode is not ``"r"``.
+          FileNotFoundError: If a ZipStore was requested but the file is missing.
+          TypeError: If the root object is an array instead of a group.
+        """
+        if not isinstance(pth, (str, Path)):
+            raise ValueError(f"Expected 'str' or 'Path' for 'pth'; got: {type(pth)}")
 
-        cached_shape = self.array_shape_in_block.get(named, None)
-        if cached_shape is None:
-            self.array_shape_in_block[named] = shape
+        p = Path(pth)
+        self.mode = mode
+
+        # store backend
+        if p.suffix == ".zip":
+            # ZipStore is read-only for safety (no overwrite semantics)
+            self.store_path = p.resolve()
+            if mode != "r":
+                raise ValueError("ZipStore must be opened read-only (mode='r').")
+            if not self.store_path.exists():
+                raise FileNotFoundError(f"No ZipStore at: {self.store_path}")
+            self.store = ZipStore(self.store_path, mode="r")
         else:
-            if not (cached_shape == shape):
-                raise ValueError(f"Attempted to write an array of shape {shape} to the block of shape {cached_shape}")
+            # local directory store at <pth>.zarr
+            self.store_path = p.with_suffix(".zarr").resolve()
+            self.store = LocalStore(self.store_path)
+
+        # open existing or create new root group
+        try:
+            # try to open the store
+            self.root = zarr.open(self.store, mode=mode)
+            # the root must be a group. if it's not -- schema error then
+            if not isinstance(self.root, zarr.Group):
+                raise TypeError(f"Root at {self.store_path} must be a group.")
+        except Exception:
+            # if we can't open:
+            # for ZipStore or read-only modes, we must not create, so re-raise
+            if isinstance(self.store, ZipStore) or mode == "r":
+                raise
+            # otherwise, create a new group
+            self.root = zarr.group(store=self.store, mode="a")
+
+        # metadata attrs (JSON-safe)
+        self._attrs = self.root.attrs
+        self._attrs.setdefault("array_chunk_size_in_block", {})
+        self._attrs.setdefault("array_shape_in_block", {})
+        self._attrs.setdefault("array_dtype_in_block", {})
+
+    # --------- PRIVATE ----------
         
-        if arrays_per_chunk is None:
-            arrays_per_chunk = self.arrays_per_chunk_in_block.get(named, None)
-            if arrays_per_chunk is None:
-                arrays_per_chunk = 10
-                warnings.warn(f"You never set 'arrays_per_chunk' value for the block named {named}. "
-                              f"So the default value of '10' was used, which may be suboptimal "
-                              f"in your situation and cause worse performance. "
-                              f"Considering array sizes in the block, choose a value "
-                              f"given the amount of available RAM on your computer", RuntimeWarning)
-                _logger.warning(f"'arrays_per_chunk' was never provided for the {named} block")
-        else:
-            self.arrays_per_chunk_in_block[named] = arrays_per_chunk
-        
+    def _array_chunk_size_in_block(self, named: str, *, given: int | None) -> int:
+        """Resolve per-block chunk length along axis 0; set default if unset."""
+        apc = self._attrs["array_chunk_size_in_block"]
+        cached = apc.get(named)
+        if cached is None:
+            if given is None:
+                apc[named] = 10
+                _logger.warning(
+                    "array_chunk_size_in_block not provided for '%s'; defaulting to 10", named
+                )
+                warnings.warn(
+                    f"You never set 'array_chunk_size_in_block' for block '{named}'. "
+                    f"Defaulting to 10 — may be suboptimal for your RAM and array size.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            else:
+                if given <= 0:
+                    raise ValueError("'array_chunk_size_in_block' must be positive")
+                apc[named] = int(given)
+            self._attrs["array_chunk_size_in_block"] = apc
+            return apc[named]
+
+        if given is None:
+            return int(cached)
+
+        if int(cached) != int(given):
+            _logger.error(
+                "array_chunk_size_in_block mismatch for '%s': cached=%s, given=%s",
+                named, cached, given
+            )
+            raise RuntimeError(
+                "The specified 'array_chunk_size_in_block' does not match the value used "
+                f"when the block was initialized: {named}.array_chunk_size_in_block is {cached}, "
+                f"but {given} was provided."
+            )
+        return int(cached)
+
+    def _array_shape_in_block(self, named: str, *, given: tuple[int, ...]) -> tuple[int, ...]:
+        """Resolve per-item shape for a block; enforce consistency if already set."""
+        shp = self._attrs["array_shape_in_block"]
+        cached = shp.get(named)
+        if cached is None:
+            shp[named] = list(map(int, given))
+            self._attrs["array_shape_in_block"] = shp
+            return tuple(given)
+
+        cached_t = tuple(int(x) for x in cached)
+        if cached_t != tuple(given):
+            raise RuntimeError(
+                "The specified 'array_shape_in_block' does not match the value used "
+                f"when the block was initialized: {named}.array_shape_in_block is {cached_t}, "
+                f"but {given} was provided."
+            )
+        return cached_t
+
+    def _array_dtype_in_block(self, named: str, *, given: np.dtype) -> np.dtype:
+        """Resolve dtype for a block; store/recover via dtype.str."""
+        dty = self._attrs["array_dtype_in_block"]
+        given = np.dtype(given)
+        cached = dty.get(named)
+        if cached is None:
+            dty[named] = given.str
+            self._attrs["array_dtype_in_block"] = dty
+            return given
+
+        cached_dt = np.dtype(cached)
+        if cached_dt != given:
+            raise RuntimeError(
+                "The specified 'array_dtype_in_block' does not match the value used "
+                f"when the block was initialized: {named}.array_dtype_in_block is {cached_dt}, "
+                f"but {given} was provided."
+            )
+        return cached_dt
+
+    def _setdefault(
+        self,
+        named: str,
+        shape: tuple[int, ...],
+        dtype: np.dtype,
+        arrays_per_chunk: int | None = None,
+    ) -> zarr.Array:
+        """Create or open the block array with the resolved metadata."""
+        shape = self._array_shape_in_block(named, given=shape)
+        dtype = self._array_dtype_in_block(named, given=dtype)
+        apc = self._array_chunk_size_in_block(named, given=arrays_per_chunk)
+
         return self.root.require_array(
             name=named,
-            shape=(0,) + shape, # grow along axis 0
-            chunks=(arrays_per_chunk,) + shape, # store as chunks of 'arrays_per_chunk' along axis 0
-            dtype=dtype
+            shape=(0,) + shape,
+            chunks=(int(apc),) + shape,
+            dtype=dtype,
         )
 
-    # TO BE PROOFREAD
-    def write(self, *,
-              these_arrays: list[np.ndarray],
-              to_block_named: str,
-              arrays_per_chunk: int | None = None) -> None:
+    # --------- PUBLIC ----------
+
+    def write(
+        self,
+        these_arrays: list[np.ndarray],
+        to_block_named: str,
+        *,
+        arrays_per_chunk: int | None = None,
+    ) -> None:
+        """Append arrays to a block.
+
+        Appends a batch of arrays (all the same shape and dtype) to the Zarr array
+        named `to_block_named`. The array grows along axis 0; chunk length is
+        resolved per-block and stored in group attrs.
+
+        Args:
+          these_arrays: List of NumPy arrays to append; all must share
+            `these_arrays[0].shape` and `these_arrays[0].dtype`.
+          to_block_named: Name of the target block (array) inside the root group.
+          arrays_per_chunk: Optional chunk length along axis 0. If unset and the
+            block is new, defaults to 10 with a warning.
+
+        Raises:
+          RuntimeError: If the storage is opened read-only.
+          ValueError: If any array's shape or dtype differs from the first element.
+        """
+        if self.mode == "r":
+            raise RuntimeError("Cannot write to a read-only ArrayStorage")
+
         if not these_arrays:
             return
-        arr_example = these_arrays[0]
-        block = self._setdefault(to_block_named, arr_example.shape, arr_example.dtype, arrays_per_chunk)
-        data = np.asarray(these_arrays, dtype=arr_example.dtype); k = len(these_arrays)
-        start = block.shape[0] # shape along the growable axis
-        block.resize((start + k,) + arr_example.shape)
+
+        arr0 = np.asarray(these_arrays[0])
+        block = self._setdefault(
+            to_block_named, tuple(arr0.shape), arr0.dtype, arrays_per_chunk
+        )
+
+        # quick validation
+        for i, a in enumerate(these_arrays[1:], start=1):
+            a = np.asarray(a)
+            if a.shape != arr0.shape:
+                raise ValueError(f"these_arrays[{i}] shape {a.shape} != {arr0.shape}")
+            if np.dtype(a.dtype) != np.dtype(arr0.dtype):
+                raise ValueError(f"these_arrays[{i}] dtype {a.dtype} != {arr0.dtype}")
+
+        data = np.asarray(these_arrays, dtype=block.dtype)
+        k = data.shape[0]
+        start = block.shape[0]
+        block.resize((start + k,) + arr0.shape)
         block[start:start + k, ...] = data
 
-    # TO BE COMPLETED
-    def delete_block(self, named):
-        pass
+    def read(
+        self,
+        from_block_named: str,
+        ids: int | slice | tuple[int] = None):
+        """Read rows from a block and return a NumPy array.
 
-    # TO BE COMPLETED
+        Args:
+          from_block_named: Name of the block (array) to read from.
+          ids: Row indices to select along axis 0. May be one of:
+            - ``None``: read the entire array;
+            - ``int``: a single row;
+            - ``slice``: a range of rows;
+            - ``tuple[int]``: explicit row indices (order preserved).
+
+        Returns:
+          A NumPy array containing the selected data (a copy).
+
+        Raises:
+          KeyError: If the named block does not exist.
+          TypeError: If the named member is not a Zarr array.
+        """
+        if from_block_named not in self.root:
+            raise KeyError(f"Block '{from_block_named}' does not exist")
+
+        block = self.root[from_block_named]
+        if not isinstance(block, zarr.Array):
+            raise TypeError(f"Member '{from_block_named}' is not a Zarr array")
+
+        if ids is None:
+            out = block[:]
+        elif isinstance(ids, (int, slice)):
+            out = block[ids, ...]
+        else:
+            idx = np.asarray(ids, dtype=np.intp)
+            out = block.get_orthogonal_selection((idx,) + (slice(None),) * (block.ndim - 1))
+
+        return np.asarray(out, copy=True)
+
+    def block_iter(
+        self,
+        from_block_named: str,
+        *,
+        step: int = 1):
+        """Iterate over a block in chunks along axis 0.
+
+        Args:
+          from_block_named: Name of the block (array) to iterate over.
+          step: Number of rows per yielded chunk along axis 0.
+
+        Yields:
+          NumPy arrays of shape ``(m, *item_shape)`` where ``m <= step`` for the
+          last chunk.
+
+        Raises:
+          KeyError: If the named block does not exist.
+          TypeError: If the named member is not a Zarr array.
+        """
+        if from_block_named not in self.root:
+            raise KeyError(f"Block '{from_block_named}' does not exist")
+
+        block = self.root[from_block_named]
+        if not isinstance(block, zarr.Array):
+            raise TypeError(f"Member '{from_block_named}' is not a Zarr array")
+
+        if block.ndim == 0:
+            # scalar array
+            yield np.asarray(block[...], copy=True)
+            return
+
+        for i in range(0, block.shape[0], step):
+            j = min(i + step, block.shape[0])
+            out = block[i:j, ...]
+            yield np.asarray(out, copy=True)
+
+    def delete_block(self, named: str) -> None:
+        """Delete a block and remove its metadata entries.
+
+        Args:
+          named: Block (array) name to delete.
+
+        Raises:
+          RuntimeError: If the storage is opened read-only.
+          KeyError: If the block does not exist.
+        """
+        if self.mode == "r":
+            raise RuntimeError("Cannot delete blocks from a read-only ArrayStorage")
+
+        if named not in self.root:
+            raise KeyError(f"Block '{named}' does not exist")
+
+        del self.root[named]
+        
+        for key in ("array_chunk_size_in_block", "array_shape_in_block", "array_dtype_in_block"):
+            d = dict(self._attrs.get(key, {}))
+            d.pop(named, None)
+            self._attrs[key] = d
+
     def compress(self) -> str:
-        zip_path = self.pth.with_suffix(".zip")
+        """Write a read-only ZipStore clone of the current store.
+
+        Copies the single root group (its attrs and all child arrays with their
+        attrs) into a new ``.zip`` file next to the local store.
+
+        Returns:
+          Path to the created ZipStore as a string.
+
+        Notes:
+          If the current backend is already a ZipStore, this is a no-op and the
+          current path is returned.
+        """
+        if isinstance(self.store, ZipStore):
+            return str(self.store_path)
+
+        zip_path = self.store_path.with_suffix(".zip")
+
+        def _attrs_dict(attrs):
+            try:
+                return attrs.asdict()
+            except Exception:
+                return dict(attrs)
+
         with ZipStore(zip_path, mode="w") as z:
-            src_root = self.root
             dst_root = zarr.group(store=z)
-            for key in src_root.keys():
-                ...
-                
-                
-                
-                src = src_root[key]
-                if isinstance(src, zarr.Array):
-                    dst = dst_root.create_array(
-                        name=key, shape=src.shape, chunks=src.chunks, dtype=src.dtype
-                    )
-                    # stream copy by chunks along axis 0
-                    step = src.chunks[0] or max(1, src.shape[0])
-                    for i in range(0, src.shape[0], step):
-                        j = min(i + step, src.shape[0])
-                        dst[i:j, ...] = src[i:j, ...]
-                else:
-                    # if you nest groups, add a small recursive copier
-                    dst_root.create_group(key)
-        return zip_path
+
+            dst_root.attrs.update(_attrs_dict(self.root.attrs))
+
+            for key, src in self.root.arrays():
+                dst = dst_root.create_array(
+                    name=key,
+                    shape=src.shape,
+                    chunks=src.chunks,
+                    dtype=src.dtype,
+                )
+                dst.attrs.update(_attrs_dict(src.attrs))
+                dst[...] = src[...]
+
+        return str(zip_path)
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
 #  PARALLEL PROCESSING AND EFFICIENT MEMORY USAGE RELATED FUNCTIONS
