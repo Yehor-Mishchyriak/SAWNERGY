@@ -3,14 +3,16 @@ from __future__ import annotations
 # third-pary
 import zarr
 from zarr.storage import LocalStore, ZipStore
+from zarr.codecs import BloscCodec, BloscShuffle, BloscCname
 import numpy as np
 # built-in
 import re
 import logging
 from math import ceil
 from concurrent.futures import as_completed, ThreadPoolExecutor, ProcessPoolExecutor
-from typing import Callable, Iterable, Any
+from typing import Callable, Iterable, Iterator, Any
 import os, psutil, tempfile
+from contextlib import contextmanager
 from pathlib import Path
 import warnings
 
@@ -314,7 +316,7 @@ class ArrayStorage:
         self,
         from_block_named: str,
         *,
-        step: int = 1):
+        step: int = 1) -> Iterator:
         """Iterate over a block in chunks along axis 0.
 
         Args:
@@ -377,30 +379,40 @@ class ArrayStorage:
             self._attrs[key] = d
         _logger.debug("Removed metadata entries for '%s'", named)
 
-    def compress(self, into: str | Path | None = None) -> str:
+    def compress(
+        self,
+        into: str | Path | None = None,
+        *,
+        compression_level: int,
+    ) -> str:
         """Write a read-only ZipStore clone of the current store.
 
         Copies the single root group (its attrs and all child arrays with their
-        attrs) into a new ``.zip`` file next to the local store.
+        attrs) into a new ``.zip`` file.
 
         Args:
         into: Optional destination. If a path ending with ``.zip``, that exact
-            file path is used. If a directory path, the zip is created there with
-            the default name. If ``None``, uses ``<store>.zip`` next to the local
-            store.
+            file is created/overwritten. If a directory, the zip is created there
+            with ``<store>.zip``. If ``None``, uses ``<store>.zip`` next to the
+            local store.
+        compression_level: Blosc compression level to use for data chunks
+            (integer, 0-9). ``0`` disables compression (still writes with a Blosc
+            container); higher = more compression, slower writes.
 
         Returns:
         Path to the created ZipStore as a string.
 
         Notes:
-        If the current backend is already a ZipStore, this is a no-op and the
-        current path is returned.
+        * If the backend is already a ZipStore, this is a no-op (path returned).
+        * For Zarr v3, compressors are part of the *codecs pipeline*. Here we set
+            a single compressor (Blosc with Zstd) and rely on defaults for the
+            serializer; that's valid and interoperable. 
         """
         if isinstance(self.store, ZipStore):
             _logger.info("compress(): already a ZipStore; returning current path")
             return str(self.store_path)
 
-        # --- NEW: resolve destination path from `into` ---
+        # --- destination path resolution ---
         if into is None:
             zip_path = self.store_path.with_suffix(".zip")
         else:
@@ -409,11 +421,24 @@ class ArrayStorage:
                 zip_path = into.resolve()
             else:
                 zip_path = (into / self.store_path.with_suffix(".zip").name).resolve()
-            # ensure parent directory exists
             zip_path.parent.mkdir(parents=True, exist_ok=True)
-        # -------------------------------------------------
 
-        _logger.info("Compressing store to ZipStore at %s", zip_path)
+        # --- compression level checks & logs ---
+        try:
+            clevel = int(compression_level)
+        except Exception as e:
+            _logger.error("Invalid compression_level=%r (%s)", compression_level, e)
+            raise
+
+        if not (0 <= clevel <= 9):
+            _logger.error("compression_level out of range: %r (expected 0..9)", clevel)
+            raise ValueError("compression_level must be in the range [0, 9]")
+
+        if clevel == 0:
+            _logger.warning("Compression disabled: compression_level=0")
+
+        _logger.info("Compressing store to ZipStore at %s with Blosc(zstd, clevel=%d, shuffle=shuffle)",
+                    zip_path, clevel)
 
         def _attrs_dict(attrs):
             try:
@@ -428,12 +453,19 @@ class ArrayStorage:
 
             copied = 0
             for key, src in self.root.arrays():
+
                 dst = dst_root.create_array(
                     name=key,
                     shape=src.shape,
                     chunks=src.chunks,
                     dtype=src.dtype,
+                    compressors=BloscCodec(
+                        cname=BloscCname.zstd,
+                        clevel=clevel,
+                        shuffle=BloscShuffle.shuffle,
+                    )
                 )
+
                 dst.attrs.update(_attrs_dict(src.attrs))
                 dst[...] = src[...]
                 copied += 1
@@ -441,6 +473,27 @@ class ArrayStorage:
 
         _logger.info("Compression complete: %d arrays -> %s", copied, zip_path)
         return str(zip_path)
+    
+    @classmethod
+    @contextmanager
+    def compress_and_cleanup(cls, output_pth: str | Path) -> Iterator["ArrayStorage"]:
+        """
+        Create a temporary ArrayStorage, yield it for writes, then compress it into `output_pth`.
+        The temporary local store is deleted after compression.
+
+        Args:
+            output_pth: Destination .zip file or directory (delegated to `compress(into=...)`).
+        """
+        output_pth = Path(output_pth)
+        _logger.info("compress_and_cleanup: creating temp store (suffix .zarr)")
+        with tempfile.TemporaryDirectory(suffix=".zarr") as tmp_dir:
+            arr_storage = cls(tmp_dir, mode="w")
+            try:
+                yield arr_storage
+            finally:
+                _logger.info("compress_and_cleanup: compressing to %s", output_pth)
+                arr_storage.compress(output_pth)
+        _logger.info("compress_and_cleanup: temp store cleaned up")
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
 #  PARALLEL PROCESSING AND EFFICIENT MEMORY USAGE RELATED FUNCTIONS

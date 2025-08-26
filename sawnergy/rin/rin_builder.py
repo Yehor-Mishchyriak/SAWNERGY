@@ -8,6 +8,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import re
 import math
+import tempfile
 # local
 from . import util as rin_util
 from .. import util as sawnergy_util
@@ -225,7 +226,7 @@ class RINBuilder:
                                     molecule_of_interest,
                                     subprocess_env=subprocess_env)
             residue_matrices = matrix_processor(atomic_matrices, self._convert_atomic_to_residue_interactions, membership_matrix)
-            
+
             
 
 
