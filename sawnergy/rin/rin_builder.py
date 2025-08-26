@@ -226,6 +226,7 @@ class RINBuilder:
                                     subprocess_env=subprocess_env)
             residue_matrices = matrix_processor(atomic_matrices, self._convert_atomic_to_residue_interactions, membership_matrix)
             
+            
 
 
         # ---- INTERACTION DATA POST-PROCESSING ----

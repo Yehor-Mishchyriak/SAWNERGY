@@ -377,24 +377,42 @@ class ArrayStorage:
             self._attrs[key] = d
         _logger.debug("Removed metadata entries for '%s'", named)
 
-    def compress(self) -> str:
+    def compress(self, into: str | Path | None = None) -> str:
         """Write a read-only ZipStore clone of the current store.
 
         Copies the single root group (its attrs and all child arrays with their
         attrs) into a new ``.zip`` file next to the local store.
 
+        Args:
+        into: Optional destination. If a path ending with ``.zip``, that exact
+            file path is used. If a directory path, the zip is created there with
+            the default name. If ``None``, uses ``<store>.zip`` next to the local
+            store.
+
         Returns:
-          Path to the created ZipStore as a string.
+        Path to the created ZipStore as a string.
 
         Notes:
-          If the current backend is already a ZipStore, this is a no-op and the
-          current path is returned.
+        If the current backend is already a ZipStore, this is a no-op and the
+        current path is returned.
         """
         if isinstance(self.store, ZipStore):
             _logger.info("compress(): already a ZipStore; returning current path")
             return str(self.store_path)
 
-        zip_path = self.store_path.with_suffix(".zip")
+        # --- NEW: resolve destination path from `into` ---
+        if into is None:
+            zip_path = self.store_path.with_suffix(".zip")
+        else:
+            into = Path(into)
+            if into.suffix.lower() == ".zip":
+                zip_path = into.resolve()
+            else:
+                zip_path = (into / self.store_path.with_suffix(".zip").name).resolve()
+            # ensure parent directory exists
+            zip_path.parent.mkdir(parents=True, exist_ok=True)
+        # -------------------------------------------------
+
         _logger.info("Compressing store to ZipStore at %s", zip_path)
 
         def _attrs_dict(attrs):
