@@ -47,7 +47,10 @@ class ArrayStorage:
           FileNotFoundError: If a ZipStore was requested but the file is missing.
           TypeError: If the root object is an array instead of a group.
         """
+        _logger.info("ArrayStorage init: pth=%s mode=%s", pth, mode)
+
         if not isinstance(pth, (str, Path)):
+            _logger.error("Invalid 'pth' type: %s", type(pth))
             raise ValueError(f"Expected 'str' or 'Path' for 'pth'; got: {type(pth)}")
 
         p = Path(pth)
@@ -57,29 +60,37 @@ class ArrayStorage:
         if p.suffix == ".zip":
             # ZipStore is read-only for safety (no overwrite semantics)
             self.store_path = p.resolve()
+            _logger.info("Using ZipStore backend at %s", self.store_path)
             if mode != "r":
+                _logger.error("Attempted to open ZipStore with non-read mode: %s", mode)
                 raise ValueError("ZipStore must be opened read-only (mode='r').")
             if not self.store_path.exists():
+                _logger.error("ZipStore path does not exist: %s", self.store_path)
                 raise FileNotFoundError(f"No ZipStore at: {self.store_path}")
             self.store = ZipStore(self.store_path, mode="r")
         else:
             # local directory store at <pth>.zarr
             self.store_path = p.with_suffix(".zarr").resolve()
+            _logger.info("Using LocalStore backend at %s", self.store_path)
             self.store = LocalStore(self.store_path)
 
         # open existing or create new root group
         try:
             # try to open the store
+            _logger.info("Opening store at %s with mode=%s", self.store_path, mode)
             self.root = zarr.open(self.store, mode=mode)
             # the root must be a group. if it's not -- schema error then
             if not isinstance(self.root, zarr.Group):
+                _logger.error("Root is not a group at %s", self.store_path)
                 raise TypeError(f"Root at {self.store_path} must be a group.")
         except Exception:
             # if we can't open:
             # for ZipStore or read-only modes, we must not create, so re-raise
             if isinstance(self.store, ZipStore) or mode == "r":
+                _logger.exception("Failed to open store in read-only context; re-raising")
                 raise
             # otherwise, create a new group
+            _logger.info("Creating new root group at %s", self.store_path)
             self.root = zarr.group(store=self.store, mode="a")
 
         # metadata attrs (JSON-safe)
@@ -87,6 +98,7 @@ class ArrayStorage:
         self._attrs.setdefault("array_chunk_size_in_block", {})
         self._attrs.setdefault("array_shape_in_block", {})
         self._attrs.setdefault("array_dtype_in_block", {})
+        _logger.debug("Metadata attrs initialized: keys=%s", list(self._attrs.keys()))
 
     # --------- PRIVATE ----------
         
@@ -108,9 +120,11 @@ class ArrayStorage:
                 )
             else:
                 if given <= 0:
+                    _logger.error("Non-positive arrays_per_chunk for block '%s': %s", named, given)
                     raise ValueError("'array_chunk_size_in_block' must be positive")
                 apc[named] = int(given)
             self._attrs["array_chunk_size_in_block"] = apc
+            _logger.debug("Set arrays_per_chunk for '%s' to %s", named, apc[named])
             return apc[named]
 
         if given is None:
@@ -135,10 +149,14 @@ class ArrayStorage:
         if cached is None:
             shp[named] = list(map(int, given))
             self._attrs["array_shape_in_block"] = shp
+            _logger.debug("Set shape for '%s' to %s", named, shp[named])
             return tuple(given)
 
         cached_t = tuple(int(x) for x in cached)
         if cached_t != tuple(given):
+            _logger.error(
+                "Shape mismatch for '%s': cached=%s, given=%s", named, cached_t, given
+            )
             raise RuntimeError(
                 "The specified 'array_shape_in_block' does not match the value used "
                 f"when the block was initialized: {named}.array_shape_in_block is {cached_t}, "
@@ -154,10 +172,14 @@ class ArrayStorage:
         if cached is None:
             dty[named] = given.str
             self._attrs["array_dtype_in_block"] = dty
+            _logger.debug("Set dtype for '%s' to %s", named, dty[named])
             return given
 
         cached_dt = np.dtype(cached)
         if cached_dt != given:
+            _logger.error(
+                "Dtype mismatch for '%s': cached=%s, given=%s", named, cached_dt, given
+            )
             raise RuntimeError(
                 "The specified 'array_dtype_in_block' does not match the value used "
                 f"when the block was initialized: {named}.array_dtype_in_block is {cached_dt}, "
@@ -176,6 +198,8 @@ class ArrayStorage:
         shape = self._array_shape_in_block(named, given=shape)
         dtype = self._array_dtype_in_block(named, given=dtype)
         apc = self._array_chunk_size_in_block(named, given=arrays_per_chunk)
+        _logger.debug("Requiring array '%s' with shape=(0,%s), chunks=(%s,%s), dtype=%s",
+                      named, shape, apc, shape, dtype)
 
         return self.root.require_array(
             name=named,
@@ -211,12 +235,16 @@ class ArrayStorage:
           ValueError: If any array's shape or dtype differs from the first element.
         """
         if self.mode == "r":
+            _logger.error("Write attempted in read-only mode")
             raise RuntimeError("Cannot write to a read-only ArrayStorage")
 
         if not these_arrays:
+            _logger.info("write() called with empty input for block '%s'; no-op", to_block_named)
             return
 
         arr0 = np.asarray(these_arrays[0])
+        _logger.info("Appending %d arrays to block '%s' (item_shape=%s, dtype=%s)",
+                     len(these_arrays), to_block_named, arr0.shape, arr0.dtype)
         block = self._setdefault(
             to_block_named, tuple(arr0.shape), arr0.dtype, arrays_per_chunk
         )
@@ -225,8 +253,10 @@ class ArrayStorage:
         for i, a in enumerate(these_arrays[1:], start=1):
             a = np.asarray(a)
             if a.shape != arr0.shape:
+                _logger.error("Shape mismatch at index %d: %s != %s", i, a.shape, arr0.shape)
                 raise ValueError(f"these_arrays[{i}] shape {a.shape} != {arr0.shape}")
             if np.dtype(a.dtype) != np.dtype(arr0.dtype):
+                _logger.error("Dtype mismatch at index %d: %s != %s", i, a.dtype, arr0.dtype)
                 raise ValueError(f"these_arrays[{i}] dtype {a.dtype} != {arr0.dtype}")
 
         data = np.asarray(these_arrays, dtype=block.dtype)
@@ -234,6 +264,7 @@ class ArrayStorage:
         start = block.shape[0]
         block.resize((start + k,) + arr0.shape)
         block[start:start + k, ...] = data
+        _logger.info("Appended %d rows to '%s'; new length=%d", k, to_block_named, block.shape[0])
 
     def read(
         self,
@@ -257,11 +288,17 @@ class ArrayStorage:
           TypeError: If the named member is not a Zarr array.
         """
         if from_block_named not in self.root:
+            _logger.error("read(): block '%s' does not exist", from_block_named)
             raise KeyError(f"Block '{from_block_named}' does not exist")
 
         block = self.root[from_block_named]
         if not isinstance(block, zarr.Array):
+            _logger.error("read(): member '%s' is not a Zarr array", from_block_named)
             raise TypeError(f"Member '{from_block_named}' is not a Zarr array")
+
+        # log selection summary (type only to avoid huge logs)
+        sel_type = type(ids).__name__ if ids is not None else "all"
+        _logger.debug("Reading from '%s' with selection=%s", from_block_named, sel_type)
 
         if ids is None:
             out = block[:]
@@ -293,11 +330,15 @@ class ArrayStorage:
           TypeError: If the named member is not a Zarr array.
         """
         if from_block_named not in self.root:
+            _logger.error("block_iter(): block '%s' does not exist", from_block_named)
             raise KeyError(f"Block '{from_block_named}' does not exist")
 
         block = self.root[from_block_named]
         if not isinstance(block, zarr.Array):
+            _logger.error("block_iter(): member '%s' is not a Zarr array", from_block_named)
             raise TypeError(f"Member '{from_block_named}' is not a Zarr array")
+
+        _logger.info("Iterating block '%s' with step=%d", from_block_named, step)
 
         if block.ndim == 0:
             # scalar array
@@ -320,17 +361,21 @@ class ArrayStorage:
           KeyError: If the block does not exist.
         """
         if self.mode == "r":
+            _logger.error("delete_block() attempted in read-only mode")
             raise RuntimeError("Cannot delete blocks from a read-only ArrayStorage")
 
         if named not in self.root:
+            _logger.error("delete_block(): block '%s' does not exist", named)
             raise KeyError(f"Block '{named}' does not exist")
 
+        _logger.info("Deleting block '%s'", named)
         del self.root[named]
         
         for key in ("array_chunk_size_in_block", "array_shape_in_block", "array_dtype_in_block"):
             d = dict(self._attrs.get(key, {}))
             d.pop(named, None)
             self._attrs[key] = d
+        _logger.debug("Removed metadata entries for '%s'", named)
 
     def compress(self) -> str:
         """Write a read-only ZipStore clone of the current store.
@@ -346,9 +391,11 @@ class ArrayStorage:
           current path is returned.
         """
         if isinstance(self.store, ZipStore):
+            _logger.info("compress(): already a ZipStore; returning current path")
             return str(self.store_path)
 
         zip_path = self.store_path.with_suffix(".zip")
+        _logger.info("Compressing store to ZipStore at %s", zip_path)
 
         def _attrs_dict(attrs):
             try:
@@ -361,6 +408,7 @@ class ArrayStorage:
 
             dst_root.attrs.update(_attrs_dict(self.root.attrs))
 
+            copied = 0
             for key, src in self.root.arrays():
                 dst = dst_root.create_array(
                     name=key,
@@ -370,7 +418,10 @@ class ArrayStorage:
                 )
                 dst.attrs.update(_attrs_dict(src.attrs))
                 dst[...] = src[...]
+                copied += 1
+                _logger.debug("Compressed array '%s' shape=%s dtype=%s", key, src.shape, src.dtype)
 
+        _logger.info("Compression complete: %d arrays -> %s", copied, zip_path)
         return str(zip_path)
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
