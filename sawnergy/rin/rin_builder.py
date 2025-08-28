@@ -8,7 +8,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import re
 import math
-import tempfile
+import os
 # local
 from . import rin_util
 from .. import sawnergy_util
@@ -169,6 +169,34 @@ class RINBuilder:
                                             membership_matrix: np.ndarray) -> np.ndarray:
         return (membership_matrix.T @ atomic_matrix @ membership_matrix).astype(dtype=np.float32)
 
+    def _split_into_attractive_repulsive(self, residue_matrix: np.ndarray) -> np.ndarray:
+        is_attractive = residue_matrix <= 0
+        is_repulsive = residue_matrix > 0
+        return np.vstack([abs(residue_matrix[is_attractive]), abs(residue_matrix[is_repulsive])])
+
+    def _prune_low_energies(self, two_channel_residue_matrix: np.ndarray, q: float) -> np.ndarray:
+        if not (0.0 < q <= 1.0):
+            raise ValueError(f"Invalid 'q' value. Expected a value between 0 and 1; received: {q}")
+        attr = two_channel_residue_matrix[0, ...]; repuls = two_channel_residue_matrix[1, ...]
+        attr_cutoff = np.quantile(attr, q); repuls_cutoff = np.quantile(repuls, q)
+        return np.vstack([np.where(attr < attr_cutoff, 0.0, attr),
+                          np.where(repuls < repuls_cutoff, 0.0, repuls)])
+
+    def _remove_self_interactions(self, two_channel_residue_matrix: np.ndarray) -> np.ndarray:
+        attr = two_channel_residue_matrix[0, ...]; repuls = two_channel_residue_matrix[1, ...]
+        np.fill_diagonal(attr, 0.0); np.fill_diagonal(repuls, 0.0)
+        return two_channel_residue_matrix
+
+    def _symmetrize(self, two_channel_residue_matrix: np.ndarray) -> np.ndarray:
+        attr = two_channel_residue_matrix[0, ...]; repuls = two_channel_residue_matrix[1, ...]
+        attr = (attr + attr.T) / 2; repuls = (repuls + repuls.T) / 2
+        return two_channel_residue_matrix
+
+    def _L1_normalize(self, two_channel_residue_matrix: np.ndarray) -> np.ndarray:
+        attr = two_channel_residue_matrix[0, ...]; repuls = two_channel_residue_matrix[1, ...]
+        attr = attr / np.sum(attr, axis=1); repuls = repuls / np.sum(repuls, axis=1) # reduce rows
+        return two_channel_residue_matrix
+
     # ---------------------------------------------------------------------------------------------- #
     #                                           PUBLIC API
     # ---------------------------------------------------------------------------------------------- #
@@ -181,13 +209,18 @@ class RINBuilder:
                  frame_batch_size: int = -1,
                  *,
                  in_parallel: bool = False,
-                 max_workers: int = 2) -> str:
-        
-        # --------------------- MD META DATA ----------------------
+                 max_workers: int = 2,
+                 output_path: str | Path | None = None,
+                 num_matrices_in_compressed_blocks: int = 10,
+                 pruned_low_energies_frac: float = 0.1) -> str:
+
+        # ------------------------- MD META DATA --------------------------
         total_frames = self._get_number_frames(topology_file, trajectory_file)
         molecule_composition = self._get_atomic_composition_of_molecule(topology_file, trajectory_file, molecule_of_interest)
 
-        # ----------- AUXILIARY VARIABLES' PREPARATION ------------
+        # ----------- AUXILIARY VARIABLES' / TOOLS PREPARATION ------------
+        output_path = Path((output_path or (Path(os.getcwd()) / f"RIN_{sawnergy_util.current_time()}"))).with_suffix(".zip")
+  
         if frame_batch_size <= 0:
             frame_batch_size = total_frames
         
@@ -196,7 +229,6 @@ class RINBuilder:
         else:
             start_frame, end_frame = frame_range
 
-        # ------ INTERACTION DATA EXTRACTION AND PROCESSING -------
         frames = sawnergy_util.batches_of(range(start_frame, end_frame+1), batch_size=frame_batch_size, out_as=tuple, inclusive_end=True)
 
         # initialize the frame processor
@@ -205,7 +237,7 @@ class RINBuilder:
                                                       max_workers=max_workers,
                                                       capture_output=True)
         # initialize the matrix processor
-        matrix_processor = sawnergy_util.elementwise_processor(in_parallel=False, capture_output=True)
+        matrix_processor = sawnergy_util.elementwise_processor(in_parallel=False, capture_output=False)
 
         # limit cpptraj parallelism
         subprocess_env = sawnergy_util.create_updated_subprocess_env(
@@ -218,27 +250,46 @@ class RINBuilder:
         # create a membership matrix for atoms in residues
         membership_matrix = self._compute_residue_membership_matrix(molecule_composition)
 
-        for frame_batch in sawnergy_util.batches_of(frames, batch_size=max_workers):
-            atomic_matrices = frame_processor(frame_batch,
-                                    self._calc_avg_atomic_interactions_in_frames,
-                                    topology_file,
-                                    trajectory_file,
-                                    molecule_of_interest,
-                                    subprocess_env=subprocess_env)
-            residue_matrices = matrix_processor(atomic_matrices, self._convert_atomic_to_residue_interactions, membership_matrix)
+        # ---------- INTERACTION DATA EXTRACTION AND PROCESSING -----------
+        with sawnergy_util.ArrayStorage.compress_and_cleanup(output_path) as storage:
+            for frame_batch in sawnergy_util.batches_of(frames, batch_size=max_workers):
+                atomic_matrices = frame_processor(frame_batch,
+                                        self._calc_avg_atomic_interactions_in_frames,
+                                        topology_file,
+                                        trajectory_file,
+                                        molecule_of_interest,
+                                        subprocess_env=subprocess_env)
+                
+                residue_matrices = \
+                    matrix_processor(
+                        atomic_matrices,
+                        sawnergy_util.compose_steps({
+                            self._convert_atomic_to_residue_interactions:{"membership_matrix": membership_matrix},
+                            self._split_into_attractive_repulsive:{},
+                            self._prune_low_energies:{"q": pruned_low_energies_frac},
+                            self._remove_self_interactions:{},
+                            self._symmetrize:{},
+                            self._L1_normalize:{}
+                            })
+                        )
 
-            
+            for matrix in residue_matrices:
+                residue_attractive_matrices, residue_repulsive_matrices = matrix[0, ...], matrix[1, ...]
 
+                storage.write(these_arrays=residue_attractive_matrices,
+                              to_block_named="ATTRACTIVE",
+                              arrays_per_chunk=num_matrices_in_compressed_blocks)
+                
+                storage.write(these_arrays=residue_repulsive_matrices,
+                              to_block_named="REPULSIVE",
+                              arrays_per_chunk=num_matrices_in_compressed_blocks)
 
-        # ---- INTERACTION DATA POST-PROCESSING ----
-        ...
+        return output_path
 
-        # ----- INTERACTION DATA NORMALIZATION -----
-        ...
-
-        # -------- INTERACTION DATA STORAGE --------
-        
 
 __all__ = [
     "RINBuilder"
 ]
+
+if __name__ == "__main__":
+    pass
