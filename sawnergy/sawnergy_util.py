@@ -476,7 +476,7 @@ class ArrayStorage:
     
     @classmethod
     @contextmanager
-    def compress_and_cleanup(cls, output_pth: str | Path) -> Iterator["ArrayStorage"]:
+    def compress_and_cleanup(cls, output_pth: str | Path) -> Iterator[ArrayStorage]:
         """
         Create a temporary ArrayStorage, yield it for writes, then compress it into `output_pth`.
         The temporary local store is deleted after compression.
@@ -943,6 +943,15 @@ def create_updated_subprocess_env(**var_vals: Any) -> dict[str, str]:
             env[var] = os.fspath(val) if hasattr(val, "__fspath__") else str(val)
     return env
 
+
+__all__ = [
+    "ArrayStorage",
+    "elementwise_processor",
+    "files_from",
+    "chunked_file",
+    "chunked_dir",
+    "batches_of"
+]
 
 if __name__ == "__main__":
     pass

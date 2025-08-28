@@ -7,7 +7,7 @@ import os, shutil, subprocess
 from pathlib import Path
 import re
 # local
-from ..util import read_lines
+from ..sawnergy_util import read_lines
 
 # *----------------------------------------------------*
 #                        GLOBALS

@@ -10,8 +10,8 @@ import re
 import math
 import tempfile
 # local
-from . import util as rin_util
-from .. import util as sawnergy_util
+from . import rin_util
+from .. import sawnergy_util
 
 # *----------------------------------------------------*
 #                        GLOBALS
