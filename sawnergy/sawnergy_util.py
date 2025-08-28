@@ -9,6 +9,7 @@ import numpy as np
 import re
 import logging
 from math import ceil
+from datetime import datetime
 from concurrent.futures import as_completed, ThreadPoolExecutor, ProcessPoolExecutor
 from typing import Callable, Iterable, Iterator, Any
 import os, psutil, tempfile
@@ -943,6 +944,10 @@ def create_updated_subprocess_env(**var_vals: Any) -> dict[str, str]:
             env[var] = os.fspath(val) if hasattr(val, "__fspath__") else str(val)
     return env
 
+def current_time() -> str:
+    """Returns the current time in the Y-%m-%d_%H%M%S format"""
+    return datetime.now().strftime("%Y-%m-%d_%H%M%S")
+
 
 __all__ = [
     "ArrayStorage",
@@ -952,6 +957,7 @@ __all__ = [
     "chunked_dir",
     "batches_of"
 ]
+
 
 if __name__ == "__main__":
     pass
