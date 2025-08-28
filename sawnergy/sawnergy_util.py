@@ -948,6 +948,50 @@ def current_time() -> str:
     """Returns the current time in the Y-%m-%d_%H%M%S format"""
     return datetime.now().strftime("%Y-%m-%d_%H%M%S")
 
+def compose_steps(steps: dict[Callable[..., Any], dict[str, Any]]):
+    """Compose a pipeline from functions with per-step keyword arguments.
+
+    Builds and returns a unary function that feeds an input value through each
+    step in the provided mapping, **in insertion order**. For every entry
+    ``func -> kwargs`` the composed function calls ``func(current, **kwargs)``,
+    passing the current value as the first positional argument and the
+    associated keyword arguments, then uses the return value as the next
+    current value.
+
+    Args:
+        steps: Mapping from callables to dictionaries of keyword arguments.
+            Each callable must accept at least one positional argument (the
+            current value) plus the specified keyword arguments. The iteration
+            order of the mapping (insertion order for ``dict`` on Python ≥3.7)
+            determines execution order.
+
+    Returns:
+        Callable[[Any], Any]: A function ``g(x)`` that applies the composed
+        steps to ``x`` and returns the final result.
+
+    Raises:
+        Any exception raised by an individual step is propagated unchanged.
+
+    Notes:
+        - If a step mutates its input and returns ``None``, the next step will
+          receive ``None``. Ensure each step returns the value you want to pass
+          onward.
+        - If execution order is critical and the mapping may be rebuilt, use
+          an ``OrderedDict`` or a sequence of ``(func, kwargs)`` pairs.
+
+    Examples:
+        >>> def scale(a, *, c): return a * c
+        >>> def shift(a, *, b): return a + b
+        >>> pipeline = compose_steps({scale: {'c': 2}, shift: {'b': 3}})
+        >>> pipeline(10)
+        23
+    """
+    def inner(x: Any) -> Any:
+        for f, kw in steps.items():
+            x = f(x, **kw)
+        return x
+    return inner
+
 
 __all__ = [
     "ArrayStorage",
@@ -955,9 +999,9 @@ __all__ = [
     "files_from",
     "chunked_file",
     "chunked_dir",
-    "batches_of"
+    "batches_of",
+    "compose_steps"
 ]
-
 
 if __name__ == "__main__":
     pass
