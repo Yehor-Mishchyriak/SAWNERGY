@@ -15,6 +15,7 @@ from ..sawnergy_util import read_lines
 
 _logger = logging.getLogger(__name__)
 PAIRWISE_STDOUT: CpptrajScript
+COM_STDOUT: CpptrajScript
 
 # *----------------------------------------------------*
 #                        CLASSES
@@ -128,6 +129,17 @@ PAIRWISE_STDOUT = CpptrajScript((
                   "printdata PW[VMAP] square2d noheader"
                 ))
 
+COM_STDOUT = lambda mol_id: CpptrajScript((
+            "run",
+            f"for residues R inmask ^{mol_id}  i=1;i++",
+            "dataset legend $R COM$i",
+            "dataset vectorcoord X COM$i name COMX$i",
+            "dataset vectorcoord Y COM$i name COMY$i",
+            "dataset vectorcoord Z COM$i name COMZ$i",
+            "done",
+            "printdata COMX* COMY* COMZ*"
+           ))
+
 # *----------------------------------------------------*
 #                       FUNCTIONS
 # *----------------------------------------------------*
@@ -213,7 +225,7 @@ def locate_cpptraj(explicit: Path | None = None, verify: bool = True) -> str:
 def run_cpptraj(cpptraj: str,
                 script: str | None = None,
                 argv: list[str] | None = None,
-                timeout: int = 30,
+                timeout: float | None = None,
                 *,
                 env: dict | None = None):
     """Run `cpptraj` and return its standard output.

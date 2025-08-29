@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # third-pary
 import numpy as np
+import threadpoolctl
 # built-in
 from pathlib import Path
 import logging
@@ -36,26 +37,36 @@ class RINBuilder:
 
         self.cpptraj = rin_util.locate_cpptraj(explicit=cpptraj_path, verify=True)
 
-    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
-    #  CPPTRAJ HELPERS
-    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
+    # ---------------------------------------------------------------------------------------------- #
+    #                                         CPPTRAJ HELPERS
+    # ---------------------------------------------------------------------------------------------- #
         
     _elec_vdw_pattern = re.compile(r"""
         ^\s*\[printdata\s+PW\[EMAP\]\s+square2d\s+noheader\]\s*\r?\n
-        (.*?)   
+        ([0-9.eE+\-\s]+?)
         ^\s*\[printdata\s+PW\[VMAP\]\s+square2d\s+noheader\]\s*\r?\n
-        (.*?)                                               
-        (?=^\s*TIME:|\Z)
+        ([0-9.eE+\-\s]+?)
+        (?=^\s*\[|^\s*TIME:|\Z)
     """, re.MULTILINE | re.DOTALL | re.VERBOSE)
+
+    _com_block_pattern = lambda _, N: re.compile(rf"""
+        ^[^\n]*\bCOMZ{N}\b[^\n]*\n
+        ([0-9.eE+\-\s]+?)
+        (?=^\s*\[quit\]\s*$)
+    """, re.MULTILINE | re.DOTALL | re.VERBOSE)
+
+    _com_row_pattern = re.compile(r'^\s*\d+\s+(.+?)\s*$', re.MULTILINE)
 
     def _get_number_frames(self,
                         topology_file: str,
                         trajectory_file: str,
                         *,
-                        subprocess_env: dict | None = None) -> int:
+                        subprocess_env: dict | None = None,
+                        timeout: float | None = None) -> int:
         out = rin_util.run_cpptraj(self.cpptraj,
                                 argv=["-p", topology_file, "-y", trajectory_file, "-tl"],
-                                env=subprocess_env).replace("Frames: ", "")
+                                env=subprocess_env,
+                                timeout=timeout).replace("Frames: ", "")
         try:
             return int(out)
         except ValueError:
@@ -66,13 +77,14 @@ class RINBuilder:
                                         trajectory_file: str,
                                         molecule_id: int,
                                         *,
-                                        subprocess_env: dict | None = None) -> dict:
+                                        subprocess_env: dict | None = None,
+                                        timeout: float | None = None) -> dict:
         tmp_file: Path = sawnergy_util.temporary_file(prefix="mol_comp", suffix=".dat")
         try:
             molecule_compositions_script = (self._load_data_from(topology_file, trajectory_file, 1, 1) + \
                                        self._extract_molecule_compositions()) > str(tmp_file)
             script = molecule_compositions_script.render()
-            rin_util.run_cpptraj(self.cpptraj, script=script, env=subprocess_env)
+            rin_util.run_cpptraj(self.cpptraj, script=script, env=subprocess_env, timeout=timeout)
             hierarchy = rin_util.CpptrajMaskParser.hierarchize_molecular_composition(tmp_file)
             return hierarchy[molecule_id]
         finally:
@@ -87,14 +99,15 @@ class RINBuilder:
                                         trajectory_file: str,
                                         molecule_id: int,
                                         *,
-                                        subprocess_env: dict | None = None) -> np.ndarray:
+                                        subprocess_env: dict | None = None,
+                                        timeout: float | None = None) -> np.ndarray:
         start_frame, end_frame = frame_range
         interaction_calc_script = (
             self._load_data_from(topology_file, trajectory_file, start_frame, end_frame)
             + self._calc_nonbonded_energies_in_molecule(molecule_id)
         ) > rin_util.PAIRWISE_STDOUT
         script = interaction_calc_script.render()
-        output = rin_util.run_cpptraj(self.cpptraj, script=script, env=subprocess_env)
+        output = rin_util.run_cpptraj(self.cpptraj, script=script, env=subprocess_env, timeout=timeout)
 
         m = self._elec_vdw_pattern.search(output)
         if not m:
@@ -118,6 +131,53 @@ class RINBuilder:
         interaction_matrix = (elec_matrix + vdw_matrix).astype(np.float32)
         return interaction_matrix
 
+    def _get_residue_COMs_per_frame(
+        self,
+        frame_range: tuple[int, int],
+        topology_file: str,
+        trajectory_file: str,
+        molecule_id: int,
+        number_residues: int,
+        *,
+        subprocess_env: dict | None = None,
+        timeout: float | None = None,
+    ) -> np.ndarray:
+        start_frame, end_frame = frame_range
+        if end_frame < start_frame:
+            raise ValueError(f"Bad frame_range {frame_range}: end < start")
+        number_frames = end_frame - start_frame + 1
+
+        # build and run script
+        COM_script = (
+            self._load_data_from(topology_file, trajectory_file, start_frame, end_frame)
+            + self._compute_residue_COMs_in_molecule(molecule_id)
+        ) > rin_util.COM_STDOUT(molecule_id)
+        output = rin_util.run_cpptraj(self.cpptraj, script=COM_script.render(),
+                                    env=subprocess_env, timeout=timeout)
+
+        # extract the block and the per-frame coord lines
+        m = self._com_block_pattern(number_residues).search(output)
+        if not m:
+            raise RuntimeError("Could not find COM print block in cpptraj output.")
+        block = m.group(1)
+        lines = self._com_row_pattern.findall(block) # list[str], coords only (no frame #)
+
+        # sanity checks
+        if len(lines) != number_frames:
+            raise RuntimeError(f"Expected {number_frames} frame rows, got {len(lines)}.")
+
+        # parse, validate, reshape
+        rows = [np.fromstring(line, dtype=np.float32, sep=' ') for line in lines]
+        bad = [i for i, arr in enumerate(rows) if arr.size != number_residues * 3]
+        if bad:
+            raise RuntimeError(
+                f"Row(s) {bad[:5]} have wrong length; expected {number_residues*3} floats."
+            )
+
+        coords = np.stack(rows, axis=0)  # (n_frames, n_res*3)
+        coords = coords.reshape(number_frames, number_residues, 3)  # (n_frames, n_res, 3); 3 is the X, Y, Z
+        return coords
+
     # ---------------------------------------------------------------------------------------------- #
     #                                       CPPTRAJ COMMANDS
     # ---------------------------------------------------------------------------------------------- #
@@ -139,6 +199,16 @@ class RINBuilder:
     def _extract_molecule_compositions() -> rin_util.CpptrajScript:
         return rin_util.CpptrajScript.from_cmd(f"mask :*")
 
+    @staticmethod
+    def _compute_residue_COMs_in_molecule(molecule_id: int):
+        return rin_util.CpptrajScript((
+            "autoimage",
+            "unwrap byres",
+            f"for residues R inmask ^{molecule_id}  i=1;i++",
+            "vector COM$i center $R",
+            "done"
+        ))
+
     # ---------------------------------------------------------------------------------------------- #
     #                                          POST-CPPTRAJ
     # ---------------------------------------------------------------------------------------------- #
@@ -146,56 +216,120 @@ class RINBuilder:
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
     #  CONVERSION OF ATOMIC LEVEL INTERACTIONS INTO RESIDUE LEVEL
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
-    def _compute_residue_membership_matrix(res_to_atoms: dict[int, set[int]],
-                                        *,
-                                        dtype=np.float32) -> np.ndarray:
-        pairs = [(a, r) for r, atoms in res_to_atoms.items() for a in atoms]
-        if not pairs:
+    @staticmethod
+    def _compute_residue_membership_matrix(
+        res_to_atoms: dict[int, set[int]],
+        *,
+        dtype=np.float32
+    ) -> np.ndarray:
+        """
+        Build an (n_atoms x n_residues) membership matrix P where P[a_idx, r_idx] = 1
+        iff atom with original ID 'a' belongs to residue with original ID 'r'.
+        Both residues and atoms are renumbered to contiguous 0..N-1 indices.
+
+        Parameters
+        ----------
+        res_to_atoms : dict[int, set[int]]
+            Mapping from (possibly non-1-based, non-contiguous) residue IDs
+            to a set of (possibly non-1-based, non-contiguous) atom IDs.
+        dtype : np.dtype
+            Output dtype.
+
+        Returns
+        -------
+        P : np.ndarray, shape (n_atoms, n_residues)
+            Binary membership matrix.
+        """
+        if not res_to_atoms:
             return np.zeros((0, 0), dtype=dtype)
 
-        # aligned index arrays
-        rows = np.fromiter((a for a, _ in pairs), dtype=np.int64) - 1 # -1 because Python is 0-based
-        cols = np.fromiter((r for _, r in pairs), dtype=np.int64) - 1
+        # ----- Build contiguous indices for residues (columns) -----
+        # Use numeric sort so indices are stable and predictable.
+        res_ids = sorted(res_to_atoms.keys())
+        res_to_col = {r: i for i, r in enumerate(res_ids)}
+        n_res = len(res_ids)
 
-        n_res = int(cols.max()) + 1
-        n_atoms = int(rows.max()) + 1
+        # ----- Build contiguous indices for atoms (rows) -----
+        # Union all atom IDs, then sort numerically.
+        atom_ids_set = set()
+        for r in res_ids:
+            atom_ids_set.update(res_to_atoms[r])
+        atom_ids = sorted(atom_ids_set)
+        atom_to_row = {a: i for i, a in enumerate(atom_ids)}
+        n_atoms = len(atom_ids)
 
-        # vectorized membership assignment
+        # ----- Fill membership matrix -----
         P = np.zeros((n_atoms, n_res), dtype=dtype)
-        P[rows, cols] = 1.0
+        for r in res_ids:
+            c = res_to_col[r]
+            for a in res_to_atoms[r]:
+                P[atom_to_row[a], c] = 1.0
+
         return P
 
+    @staticmethod
     def _convert_atomic_to_residue_interactions(atomic_matrix: np.ndarray,
-                                            membership_matrix: np.ndarray) -> np.ndarray:
-        return (membership_matrix.T @ atomic_matrix @ membership_matrix).astype(dtype=np.float32)
+                                                membership_matrix: np.ndarray) -> np.ndarray:
+        thread_count = os.cpu_count() or 1 
+        with threadpoolctl.threadpool_limits(limits=thread_count):
+            result = (membership_matrix.T @ atomic_matrix @ membership_matrix).astype(dtype=np.float32)
+        return result
+
+    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
+    #  POST-PROCESSING OF RESIDUE LEVEL INTERACTIONS
+    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
 
     def _split_into_attractive_repulsive(self, residue_matrix: np.ndarray) -> np.ndarray:
-        is_attractive = residue_matrix <= 0
-        is_repulsive = residue_matrix > 0
-        return np.vstack([abs(residue_matrix[is_attractive]), abs(residue_matrix[is_repulsive])])
+        attr = np.where(residue_matrix <= 0, -residue_matrix, 0.0).astype(np.float32, copy=False)
+        rep  = np.where(residue_matrix >  0, residue_matrix, 0.0).astype(np.float32, copy=False)
+        return np.stack([attr, rep], axis=0) # (2, N, N)
 
     def _prune_low_energies(self, two_channel_residue_matrix: np.ndarray, q: float) -> np.ndarray:
         if not (0.0 < q <= 1.0):
             raise ValueError(f"Invalid 'q' value. Expected a value between 0 and 1; received: {q}")
-        attr = two_channel_residue_matrix[0, ...]; repuls = two_channel_residue_matrix[1, ...]
-        attr_cutoff = np.quantile(attr, q); repuls_cutoff = np.quantile(repuls, q)
-        return np.vstack([np.where(attr < attr_cutoff, 0.0, attr),
-                          np.where(repuls < repuls_cutoff, 0.0, repuls)])
-
-    def _remove_self_interactions(self, two_channel_residue_matrix: np.ndarray) -> np.ndarray:
-        attr = two_channel_residue_matrix[0, ...]; repuls = two_channel_residue_matrix[1, ...]
-        np.fill_diagonal(attr, 0.0); np.fill_diagonal(repuls, 0.0)
+        A = two_channel_residue_matrix[0]
+        R = two_channel_residue_matrix[1]
+        Ath = np.quantile(A, q, axis=1, keepdims=True)
+        Rth = np.quantile(R, q, axis=1, keepdims=True)
+        two_channel_residue_matrix[0] = np.where(A < Ath, 0.0, A)
+        two_channel_residue_matrix[1] = np.where(R < Rth, 0.0, R)
         return two_channel_residue_matrix
 
+    def _remove_self_interactions(self, two_channel_residue_matrix: np.ndarray) -> np.ndarray:
+        np.fill_diagonal(two_channel_residue_matrix[0], 0.0); np.fill_diagonal(two_channel_residue_matrix[1], 0.0)
+        return two_channel_residue_matrix
+   
     def _symmetrize(self, two_channel_residue_matrix: np.ndarray) -> np.ndarray:
-        attr = two_channel_residue_matrix[0, ...]; repuls = two_channel_residue_matrix[1, ...]
-        attr = (attr + attr.T) / 2; repuls = (repuls + repuls.T) / 2
+        A = two_channel_residue_matrix[0]
+        R = two_channel_residue_matrix[1]
+        two_channel_residue_matrix[0] = (A + A.T) * 0.5
+        two_channel_residue_matrix[1] = (R + R.T) * 0.5
         return two_channel_residue_matrix
 
     def _L1_normalize(self, two_channel_residue_matrix: np.ndarray) -> np.ndarray:
-        attr = two_channel_residue_matrix[0, ...]; repuls = two_channel_residue_matrix[1, ...]
-        attr = attr / np.sum(attr, axis=1); repuls = repuls / np.sum(repuls, axis=1) # reduce rows
+        A = two_channel_residue_matrix[0]
+        R = two_channel_residue_matrix[1]
+        eps = 1e-12
+        Asum = A.sum(axis=1, keepdims=True)
+        Rsum = R.sum(axis=1, keepdims=True)
+        two_channel_residue_matrix[0] = np.divide(A, np.clip(Asum, eps, None),
+                                                out=np.zeros_like(A), where=Asum > 0)
+        two_channel_residue_matrix[1] = np.divide(R, np.clip(Rsum, eps, None),
+                                                out=np.zeros_like(R), where=Rsum > 0)
         return two_channel_residue_matrix
+
+    def _store_interactions_array(self,
+               arr: np.ndarray,
+               storage: sawnergy_util.ArrayStorage,
+               arrays_per_chunk: int,
+               attractive_interactions_dataset_name: str,
+               repulsive_interactions_dataset_name: str) -> None:
+        storage.write(these_arrays=[arr[0]],
+                        to_block_named=attractive_interactions_dataset_name,
+                        arrays_per_chunk=arrays_per_chunk)
+        storage.write(these_arrays=[arr[1]],
+                        to_block_named=repulsive_interactions_dataset_name,
+                        arrays_per_chunk=arrays_per_chunk)
 
     # ---------------------------------------------------------------------------------------------- #
     #                                           PUBLIC API
@@ -212,20 +346,27 @@ class RINBuilder:
                  max_workers: int = 2,
                  output_path: str | Path | None = None,
                  num_matrices_in_compressed_blocks: int = 10,
-                 pruned_low_energies_frac: float = 0.1) -> str:
+                 prune_low_energies_frac: float = 0.1,
+                 cpptraj_run_time_limit: float | None = None,
+                 COM_dataset_name="COM",
+                 attractive_interactions_dataset_name="ATTRACTIVE",
+                 repulsive_interactions_dataset_name="REPULSIVE") -> str:
 
         # ------------------------- MD META DATA --------------------------
-        total_frames = self._get_number_frames(topology_file, trajectory_file)
-        molecule_composition = self._get_atomic_composition_of_molecule(topology_file, trajectory_file, molecule_of_interest)
+        total_frames = self._get_number_frames(topology_file, trajectory_file, timeout=cpptraj_run_time_limit)
+        molecule_composition = self._get_atomic_composition_of_molecule(topology_file, trajectory_file,
+                                                                    molecule_of_interest, timeout=cpptraj_run_time_limit)
+        number_residues = len(molecule_composition)
 
         # ----------- AUXILIARY VARIABLES' / TOOLS PREPARATION ------------
+        number_processors = os.cpu_count() or 1
         output_path = Path((output_path or (Path(os.getcwd()) / f"RIN_{sawnergy_util.current_time()}"))).with_suffix(".zip")
   
         if frame_batch_size <= 0:
             frame_batch_size = total_frames
         
         if frame_range is None:
-            start_frame, end_frame = 0, total_frames
+            start_frame, end_frame = 1, total_frames
         else:
             start_frame, end_frame = frame_range
 
@@ -239,13 +380,24 @@ class RINBuilder:
         # initialize the matrix processor
         matrix_processor = sawnergy_util.elementwise_processor(in_parallel=False, capture_output=False)
 
-        # limit cpptraj parallelism
-        subprocess_env = sawnergy_util.create_updated_subprocess_env(
-            OMP_NUM_THREADS=1,
-            MKL_NUM_THREADS=1,
-            OPENBLAS_NUM_THREADS=1,
-            MKL_DYNAMIC=False
-        ) if in_parallel else None
+        # limit cpptraj parallelism if running pairwise commands in parallel in Python
+        non_bonded_energies_subprocess_env = \
+            sawnergy_util.create_updated_subprocess_env(
+                OMP_NUM_THREADS=1,
+                MKL_NUM_THREADS=1,
+                OPENBLAS_NUM_THREADS=1,
+                MKL_DYNAMIC=False
+            ) if in_parallel else None
+
+        # allow cpptraj parallelism for COM coordinates calculation
+        COM_subprocess_env = \
+            sawnergy_util.create_updated_subprocess_env(
+                OMP_NUM_THREADS=number_processors,
+                MKL_NUM_THREADS=number_processors,
+                OPENBLAS_NUM_THREADS=number_processors,
+                MKL_DYNAMIC=True
+            ) if in_parallel else None
+
 
         # create a membership matrix for atoms in residues
         membership_matrix = self._compute_residue_membership_matrix(molecule_composition)
@@ -258,33 +410,39 @@ class RINBuilder:
                                         topology_file,
                                         trajectory_file,
                                         molecule_of_interest,
-                                        subprocess_env=subprocess_env)
-                
-                residue_matrices = \
-                    matrix_processor(
-                        atomic_matrices,
-                        sawnergy_util.compose_steps({
-                            self._convert_atomic_to_residue_interactions:{"membership_matrix": membership_matrix},
-                            self._split_into_attractive_repulsive:{},
-                            self._prune_low_energies:{"q": pruned_low_energies_frac},
-                            self._remove_self_interactions:{},
-                            self._symmetrize:{},
-                            self._L1_normalize:{}
-                            })
-                        )
+                                        subprocess_env=non_bonded_energies_subprocess_env,
+                                        timeout=cpptraj_run_time_limit)
+  
+                matrix_processor(
+                    atomic_matrices,
+                    sawnergy_util.compose_steps({
+                        self._convert_atomic_to_residue_interactions:{"membership_matrix": membership_matrix},
+                        self._split_into_attractive_repulsive:{},
+                        self._prune_low_energies:{"q": prune_low_energies_frac},
+                        self._remove_self_interactions:{},
+                        self._symmetrize:{},
+                        self._L1_normalize:{},
+                        self._store_interactions_array:{
+                            "storage": storage,
+                            "arrays_per_chunk": num_matrices_in_compressed_blocks,
+                            "attractive_interactions_dataset_name": attractive_interactions_dataset_name,
+                            "repulsive_interactions_dataset_name": repulsive_interactions_dataset_name}
+                    })
+                )
 
-            for matrix in residue_matrices:
-                residue_attractive_matrices, residue_repulsive_matrices = matrix[0, ...], matrix[1, ...]
+            COMs = self._get_residue_COMs_per_frame(
+                frame_range=(start_frame, end_frame),
+                topology_file=topology_file,
+                trajectory_file=trajectory_file,
+                molecule_id=molecule_of_interest,
+                number_residues=number_residues,
+                subprocess_env=COM_subprocess_env,
+                timeout=cpptraj_run_time_limit
+            )
 
-                storage.write(these_arrays=residue_attractive_matrices,
-                              to_block_named="ATTRACTIVE",
-                              arrays_per_chunk=num_matrices_in_compressed_blocks)
-                
-                storage.write(these_arrays=residue_repulsive_matrices,
-                              to_block_named="REPULSIVE",
-                              arrays_per_chunk=num_matrices_in_compressed_blocks)
+            storage.write([COMs], to_block_named=COM_dataset_name, arrays_per_chunk=1)
 
-        return output_path
+        return str(output_path)
 
 
 __all__ = [
