@@ -25,10 +25,22 @@ _logger = logging.getLogger(__name__)
 # *----------------------------------------------------*
 
 class RINBuilder:
-    """
-    Class responsible for building Residue Interaction Networks
-    from MD simulations by individual frames or batches of frames
-    (averaging interaction energies across each batch).
+    """Builds Residue Interaction Networks (RINs) from MD trajectories.
+
+    This class orchestrates running cpptraj to:
+      * compute per-frame, per-residue centers of mass (COMs),
+      * compute pairwise atomic non-bonded energies (electrostatics + van der Waals),
+      * project atomic interactions to residue-level interactions,
+      * post-process residue matrices (split, prune, symmetrize, normalize),
+      * package outputs into a compressed archive.
+
+    Args:
+        cpptraj_path (Path | str | None): Optional explicit path to the `cpptraj`
+            executable. If not provided, an attempt is made to locate it via
+            `rin_util.locate_cpptraj`.
+
+    Attributes:
+        cpptraj (Path): Resolved path to the `cpptraj` executable.
     """
 
     def __init__(self, cpptraj_path: Path | str | None = None):
@@ -65,6 +77,21 @@ class RINBuilder:
                         *,
                         subprocess_env: dict | None = None,
                         timeout: float | None = None) -> int:
+        """Return total number of frames in a trajectory.
+
+        Args:
+            topology_file (str): Path to topology (parm/prmtop) file.
+            trajectory_file (str): Path to trajectory file readable by cpptraj.
+            subprocess_env (dict | None): Optional environment overrides for the
+                cpptraj subprocess (e.g., thread settings).
+            timeout (float | None): Optional time limit (seconds) for the cpptraj call.
+
+        Returns:
+            int: Total number of frames.
+
+        Raises:
+            RuntimeError: If cpptraj output cannot be parsed into an integer.
+        """
         _logger.debug("Requesting number of frames (topology=%s, trajectory=%s, timeout=%s)",
                       topology_file, trajectory_file, timeout)
         raw_out = rin_util.run_cpptraj(self.cpptraj,
@@ -88,6 +115,24 @@ class RINBuilder:
                                         *,
                                         subprocess_env: dict | None = None,
                                         timeout: float | None = None) -> dict:
+        """Extract per-residue atomic composition for a molecule.
+
+        Runs a small cpptraj script that prints residue/atom membership and parses
+        it into a dictionary mapping residue IDs to sets of atom IDs.
+
+        Args:
+            topology_file (str): Path to topology (parm/prmtop) file.
+            trajectory_file (str): Path to trajectory file.
+            molecule_id (int): Molecule selector/ID used by cpptraj (e.g., `^1`).
+            subprocess_env (dict | None): Optional environment overrides for cpptraj.
+            timeout (float | None): Optional time limit (seconds).
+
+        Returns:
+            dict: Mapping ``{residue_id: set(atom_ids)}``.
+
+        Raises:
+            KeyError: If the requested `molecule_id` is not present in parsed output.
+        """
         _logger.debug("Extracting atomic composition (molecule_id=%s)", molecule_id)
         tmp_file: Path = sawnergy_util.temporary_file(prefix="mol_comp", suffix=".dat")
         _logger.debug("Temporary composition file: %s", tmp_file)
@@ -119,6 +164,26 @@ class RINBuilder:
                                         *,
                                         subprocess_env: dict | None = None,
                                         timeout: float | None = None) -> np.ndarray:
+        """Compute average atomic interaction matrix over a frame range.
+
+        Uses cpptraj `pairwise` to compute electrostatic (EMAP) and van der Waals
+        (VMAP) atomic interaction matrices, sums them, and returns the result.
+
+        Args:
+            frame_range (tuple[int, int]): Inclusive (start_frame, end_frame).
+            topology_file (str): Path to topology file.
+            trajectory_file (str): Path to trajectory file.
+            molecule_id (int): Molecule selector/ID for restricting computation.
+            subprocess_env (dict | None): Optional environment for cpptraj.
+            timeout (float | None): Optional time limit (seconds).
+
+        Returns:
+            np.ndarray: 2D array (n_atoms, n_atoms) of summed interactions.
+
+        Raises:
+            ValueError: If EMAP/VMAP blocks are not found, sizes mismatch, or the
+                block cannot be reshaped into a square matrix.
+        """
         start_frame, end_frame = frame_range
         _logger.debug("Calculating avg atomic interactions (frames=%s..%s, molecule_id=%s)",
                       start_frame, end_frame, molecule_id)
@@ -170,6 +235,27 @@ class RINBuilder:
         subprocess_env: dict | None = None,
         timeout: float | None = None,
     ) -> np.ndarray:
+        """Compute per-residue COM coordinates for each frame.
+
+        Runs a cpptraj loop to compute `vector COM<i>` per residue and parses the
+        printed data into an array of shape (n_frames, n_residues, 3).
+
+        Args:
+            frame_range (tuple[int, int]): Inclusive (start_frame, end_frame).
+            topology_file (str): Path to topology file.
+            trajectory_file (str): Path to trajectory file.
+            molecule_id (int): Molecule selector/ID for residue iteration.
+            number_residues (int): Expected residue count (used for validation).
+            subprocess_env (dict | None): Optional environment for cpptraj.
+            timeout (float | None): Optional time limit (seconds).
+
+        Returns:
+            np.ndarray: COM array with shape (n_frames, n_residues, 3).
+
+        Raises:
+            ValueError: If `frame_range` is invalid.
+            RuntimeError: If expected COM blocks/rows are missing or malformed.
+        """
         start_frame, end_frame = frame_range
         _logger.debug("Getting COMs per frame (frames=%s..%s, residues=%d, molecule_id=%s)",
                       start_frame, end_frame, number_residues, molecule_id)
@@ -227,6 +313,17 @@ class RINBuilder:
                        trajectory_file: str,
                        start_frame: int,
                        end_frame: int) -> rin_util.CpptrajScript:
+        """Create a cpptraj script that loads topology/trajectory and selects frames.
+
+        Args:
+            topology_file (str): Path to topology file.
+            trajectory_file (str): Path to trajectory file.
+            start_frame (int): First frame (1-based inclusive).
+            end_frame (int): Last frame (1-based inclusive).
+
+        Returns:
+            rin_util.CpptrajScript: Composable script object.
+        """
         _logger.debug("Preparing data load (parm=%s, trajin=%s %s %s)",
                       topology_file, trajectory_file, start_frame, end_frame)
         return rin_util.CpptrajScript((f"parm {topology_file}",
@@ -235,16 +332,37 @@ class RINBuilder:
 
     @staticmethod
     def _calc_nonbonded_energies_in_molecule(molecule_id: int) -> rin_util.CpptrajScript:
+        """Create a cpptraj command to compute pairwise non-bonded energies.
+
+        Args:
+            molecule_id (int): Molecule selector/ID for pairwise computation.
+
+        Returns:
+            rin_util.CpptrajScript: Script with `pairwise PW` command.
+        """
         _logger.debug("Preparing pairwise command for molecule_id=%s", molecule_id)
         return rin_util.CpptrajScript.from_cmd(f"pairwise PW ^{molecule_id} cuteelec 0.0 cutevdw 0.0")
     
     @staticmethod
     def _extract_molecule_compositions() -> rin_util.CpptrajScript:
+        """Create a cpptraj command that emits residue/atom masks.
+
+        Returns:
+            rin_util.CpptrajScript: Script with `mask :*` command.
+        """
         _logger.debug("Preparing mask extraction command")
         return rin_util.CpptrajScript.from_cmd(f"mask :*")
 
     @staticmethod
     def _compute_residue_COMs_in_molecule(molecule_id: int):
+        """Create a cpptraj loop to compute per-residue COM vectors.
+
+        Args:
+            molecule_id (int): Molecule selector/ID whose residues are iterated.
+
+        Returns:
+            rin_util.CpptrajScript: Script that defines COM vectors (COM1, COM2, ...).
+        """
         _logger.debug("Preparing COM vectors loop for molecule_id=%s", molecule_id)
         return rin_util.CpptrajScript((
             "autoimage",
@@ -267,23 +385,17 @@ class RINBuilder:
         *,
         dtype=np.float32
     ) -> np.ndarray:
-        """
-        Build an (n_atoms x n_residues) membership matrix P where P[a_idx, r_idx] = 1
-        iff atom with original ID 'a' belongs to residue with original ID 'r'.
-        Both residues and atoms are renumbered to contiguous 0..N-1 indices.
+        """Build a binary (n_atoms x n_residues) membership matrix.
 
-        Parameters
-        ----------
-        res_to_atoms : dict[int, set[int]]
-            Mapping from (possibly non-1-based, non-contiguous) residue IDs
-            to a set of (possibly non-1-based, non-contiguous) atom IDs.
-        dtype : np.dtype
-            Output dtype.
+        Contiguously re-indexes arbitrary atom/residue IDs to 0..N-1 and sets
+        ``P[row(atom), col(residue)] = 1`` when the atom belongs to the residue.
 
-        Returns
-        -------
-        P : np.ndarray, shape (n_atoms, n_residues)
-            Binary membership matrix.
+        Args:
+            res_to_atoms (dict[int, set[int]]): Mapping of residue IDs to sets of atom IDs.
+            dtype (np.dtype): Output dtype.
+
+        Returns:
+            np.ndarray: Membership matrix of shape (n_atoms, n_residues).
         """
         if not res_to_atoms:
             _logger.info("Empty residue->atoms mapping; returning (0,0) matrix.")
@@ -320,6 +432,18 @@ class RINBuilder:
     @staticmethod
     def _convert_atomic_to_residue_interactions(atomic_matrix: np.ndarray,
                                                 membership_matrix: np.ndarray) -> np.ndarray:
+        """Project atomic interaction matrix to residue space.
+
+        Computes ``R = Pᵀ @ A @ P`` where `A` is atomic (n_atoms x n_atoms) and
+        `P` is membership (n_atoms x n_residues).
+
+        Args:
+            atomic_matrix (np.ndarray): Atomic interaction matrix (n_atoms, n_atoms).
+            membership_matrix (np.ndarray): Membership matrix (n_atoms, n_residues).
+
+        Returns:
+            np.ndarray: Residue interaction matrix (n_residues, n_residues).
+        """
         _logger.debug("Converting atomic->residue: atomic_matrix=%s, membership=%s",
                       atomic_matrix.shape, membership_matrix.shape)
         thread_count = os.cpu_count() or 1 
@@ -333,6 +457,17 @@ class RINBuilder:
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
 
     def _split_into_attractive_repulsive(self, residue_matrix: np.ndarray) -> np.ndarray:
+        """Split residue interactions into attractive and repulsive channels.
+
+        Negative values go to the attractive channel (as positive magnitudes),
+        positive values go to the repulsive channel.
+
+        Args:
+            residue_matrix (np.ndarray): Residue interaction matrix (N, N).
+
+        Returns:
+            np.ndarray: Array of shape (2, N, N): [attractive, repulsive].
+        """
         _logger.debug("Splitting matrix into attractive/repulsive channels; input shape=%s",
                       residue_matrix.shape)
         attr = np.where(residue_matrix <= 0, -residue_matrix, 0.0).astype(np.float32, copy=False)
@@ -342,6 +477,20 @@ class RINBuilder:
         return out
 
     def _prune_low_energies(self, two_channel_residue_matrix: np.ndarray, q: float) -> np.ndarray:
+        """Zero out values below a per-row quantile threshold.
+
+        Applies independently to attractive and repulsive channels.
+
+        Args:
+            two_channel_residue_matrix (np.ndarray): Array (2, N, N).
+            q (float): Quantile in (0, 1] used as threshold.
+
+        Returns:
+            np.ndarray: Pruned two-channel matrix.
+
+        Raises:
+            ValueError: If `q` is not in (0, 1].
+        """
         _logger.debug("Pruning low energies with q=%s on matrix shape=%s", q, two_channel_residue_matrix.shape)
         if not (0.0 < q <= 1.0):
             _logger.error("Invalid pruning quantile q=%s", q)
@@ -356,11 +505,27 @@ class RINBuilder:
         return two_channel_residue_matrix
 
     def _remove_self_interactions(self, two_channel_residue_matrix: np.ndarray) -> np.ndarray:
+        """Zero the diagonal in both channels.
+
+        Args:
+            two_channel_residue_matrix (np.ndarray): Array (2, N, N).
+
+        Returns:
+            np.ndarray: Same array with zeroed diagonals.
+        """
         _logger.debug("Zeroing self-interactions on shape=%s", two_channel_residue_matrix.shape)
         np.fill_diagonal(two_channel_residue_matrix[0], 0.0); np.fill_diagonal(two_channel_residue_matrix[1], 0.0)
         return two_channel_residue_matrix
    
     def _symmetrize(self, two_channel_residue_matrix: np.ndarray) -> np.ndarray:
+        """Symmetrize both channels via (M + Mᵀ)/2.
+
+        Args:
+            two_channel_residue_matrix (np.ndarray): Array (2, N, N).
+
+        Returns:
+            np.ndarray: Symmetrized two-channel matrix.
+        """
         _logger.debug("Symmetrizing two-channel matrix shape=%s", two_channel_residue_matrix.shape)
         A = two_channel_residue_matrix[0]
         R = two_channel_residue_matrix[1]
@@ -370,6 +535,16 @@ class RINBuilder:
         return two_channel_residue_matrix
 
     def _L1_normalize(self, two_channel_residue_matrix: np.ndarray) -> np.ndarray:
+        """Row-wise L1-normalization of both channels.
+
+        Each row is divided by its sum; zero rows remain zero.
+
+        Args:
+            two_channel_residue_matrix (np.ndarray): Array (2, N, N).
+
+        Returns:
+            np.ndarray: L1-normalized two-channel matrix.
+        """
         _logger.debug("L1-normalizing two-channel matrix shape=%s", two_channel_residue_matrix.shape)
         A = two_channel_residue_matrix[0]
         R = two_channel_residue_matrix[1]
@@ -390,6 +565,15 @@ class RINBuilder:
                arrays_per_chunk: int,
                attractive_interactions_dataset_name: str,
                repulsive_interactions_dataset_name: str) -> None:
+        """Write attractive/repulsive channels to storage.
+
+        Args:
+            arr (np.ndarray): Two-channel array (2, N, N) to persist.
+            storage (sawnergy_util.ArrayStorage): Storage writer/manager.
+            arrays_per_chunk (int): Chunking parameter for compression.
+            attractive_interactions_dataset_name (str): Dataset name for attractive channel.
+            repulsive_interactions_dataset_name (str): Dataset name for repulsive channel.
+        """
         _logger.debug("Storing arrays: channels=%s, chunksize=%s, datasets=(%s,%s)",
                       arr.shape, arrays_per_chunk,
                       attractive_interactions_dataset_name, repulsive_interactions_dataset_name)
@@ -422,7 +606,49 @@ class RINBuilder:
                  COM_dataset_name="COM",
                  attractive_interactions_dataset_name="ATTRACTIVE",
                  repulsive_interactions_dataset_name="REPULSIVE") -> str:
+        """Build a Residue Interaction Network archive from an MD trajectory.
 
+        This pipeline:
+          1. Queries trajectory metadata and residue/atom composition for the selected molecule.
+          2. Processes frames (optionally in batches/parallel) to compute atomic non-bonded
+             interactions (EMAP + VMAP) via cpptraj `pairwise`.
+          3. Projects atomic interactions to residue-level using a membership matrix.
+          4. Post-processes residue matrices (split attractive/repulsive, prune, remove self,
+             symmetrize, L1-normalize) and writes them into a compressed archive.
+          5. Computes per-frame, per-residue COM coordinates and stores them in the same archive.
+
+        Args:
+            topology_file (str): Path to topology (parm/prmtop) file.
+            trajectory_file (str): Path to trajectory file readable by cpptraj.
+            molecule_of_interest (int): Molecule selector/ID used by cpptraj (e.g., `^1`).
+            frame_range (tuple[int, int] | None): Inclusive (start, end) frames (1-based).
+                If ``None``, defaults to the full trajectory.
+            frame_batch_size (int): Frames per batch for interaction computation.
+                If <= 0, uses the full trajectory.
+            in_parallel (bool): If True, computes per-batch interactions concurrently
+                using a thread pool (limits cpptraj threads per worker).
+            max_workers (int): Number of worker threads if `in_parallel` is True.
+            output_path (str | Path | None): Target .zip path for the RIN archive.
+                If ``None``, a timestamped path in CWD is used.
+            num_matrices_in_compressed_blocks (int): How many matrices to pack per
+                compressed block in storage.
+            prune_low_energies_frac (float): Row-wise quantile in (0,1] used to prune
+                both attractive and repulsive channels.
+            cpptraj_run_time_limit (float | None): Optional time limit (seconds) for
+                individual cpptraj invocations.
+            COM_dataset_name (str): Dataset name for the COM array in the archive.
+            attractive_interactions_dataset_name (str): Dataset name for attractive channel.
+            repulsive_interactions_dataset_name (str): Dataset name for repulsive channel.
+
+        Returns:
+            str: Path to the created RIN archive (.zip).
+
+        Raises:
+            RuntimeError: If cpptraj calls fail to produce parseable output (e.g., frame
+                count, COM block).
+            ValueError: If EMAP/VMAP blocks are invalid or have inconsistent sizes,
+                or if `frame_range` is invalid.
+        """
         _logger.info("Building RIN (mol=%s, traj=%s, frames=%s, parallel=%s, workers=%s)",
                      molecule_of_interest, trajectory_file, frame_range, in_parallel, max_workers)
 
