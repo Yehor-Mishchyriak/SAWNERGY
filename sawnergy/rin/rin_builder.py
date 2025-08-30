@@ -602,7 +602,7 @@ class RINBuilder:
                  output_path: str | Path | None = None,
                  num_matrices_in_compressed_blocks: int = 10,
                  compression_level: int = 3,
-                 prune_low_energies_frac: float = 0.1,
+                 prune_low_energies_frac: float = 0.3, # NOTE: very important value to make walks meaningful; sparsify
                  cpptraj_run_time_limit: float | None = None,
                  COM_dataset_name="COM",
                  attractive_interactions_dataset_name="ATTRACTIVE",
@@ -639,7 +639,8 @@ class RINBuilder:
                 no compression (fastest, largest files) and 9 means maximum compression
                 (slowest, smallest files). Default is 3.
             prune_low_energies_frac (float): Row-wise quantile in (0,1] used to prune
-                both attractive and repulsive channels.
+                both attractive and repulsive channels. It is important to sparcify the network
+                to make SAW/RW-powered embeddings capture meaningful signals between the nodes.
             cpptraj_run_time_limit (float | None): Optional time limit (seconds) for
                 individual cpptraj invocations.
             COM_dataset_name (str): Dataset name for the COM array in the archive.

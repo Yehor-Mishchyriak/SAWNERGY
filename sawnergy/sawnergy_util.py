@@ -103,6 +103,26 @@ class ArrayStorage:
         self._attrs.setdefault("array_dtype_in_block", {})
         _logger.debug("Metadata attrs initialized: keys=%s", list(self._attrs.keys()))
 
+    def close(self) -> None:
+        """Close the underlying store if it supports closing."""
+        try:
+            if hasattr(self, "store") and hasattr(self.store, "close"):
+                self.store.close()
+        except Exception as e:
+            _logger.warning("Ignoring error while closing store: %s", e)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
     # --------- PRIVATE ----------
         
     def _array_chunk_size_in_block(self, named: str, *, given: int | None) -> int:
@@ -509,6 +529,7 @@ class ArrayStorage:
             finally:
                 _logger.info("compress_and_cleanup: compressing to %s (compression level of %d)", output_pth, compression_level)
                 arr_storage.compress(output_pth, compression_level=compression_level)
+                arr_storage.close()
         _logger.info("compress_and_cleanup: temp store cleaned up")
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
