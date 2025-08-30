@@ -590,6 +590,8 @@ class RINBuilder:
     #                                           PUBLIC API
     # ---------------------------------------------------------------------------------------------- #
 
+    # transition probabilities for each residue i are the distributions in rows of the RIN matrices;
+    # so, RIN[i, :] is transition probabilities from residue i to it's other connections.
     def build_rin(self,
                  topology_file: str,
                  trajectory_file: str,
