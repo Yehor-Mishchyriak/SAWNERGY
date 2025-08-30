@@ -601,6 +601,7 @@ class RINBuilder:
                  max_workers: int = 2,
                  output_path: str | Path | None = None,
                  num_matrices_in_compressed_blocks: int = 10,
+                 compression_level: int = 3,
                  prune_low_energies_frac: float = 0.1,
                  cpptraj_run_time_limit: float | None = None,
                  COM_dataset_name="COM",
@@ -614,7 +615,8 @@ class RINBuilder:
              interactions (EMAP + VMAP) via cpptraj `pairwise`.
           3. Projects atomic interactions to residue-level using a membership matrix.
           4. Post-processes residue matrices (split attractive/repulsive, prune, remove self,
-             symmetrize, L1-normalize) and writes them into a compressed archive.
+             symmetrize, L1-normalize) and writes them into a compressed archive
+             (compression level configurable).
           5. Computes per-frame, per-residue COM coordinates and stores them in the same archive.
 
         Args:
@@ -632,6 +634,10 @@ class RINBuilder:
                 If ``None``, a timestamped path in CWD is used.
             num_matrices_in_compressed_blocks (int): How many matrices to pack per
                 compressed block in storage.
+            compression_level (int): Compression level for the output archive, passed to
+                ``ArrayStorage.compress_and_cleanup``. Typical range is 0-9 where 0 means
+                no compression (fastest, largest files) and 9 means maximum compression
+                (slowest, smallest files). Default is 3.
             prune_low_energies_frac (float): Row-wise quantile in (0,1] used to prune
                 both attractive and repulsive channels.
             cpptraj_run_time_limit (float | None): Optional time limit (seconds) for
@@ -674,7 +680,10 @@ class RINBuilder:
             start_frame, end_frame = frame_range
         _logger.debug("Processing frames [%d..%d]", start_frame, end_frame)
 
-        frames = sawnergy_util.batches_of(range(start_frame, end_frame+1), batch_size=frame_batch_size, out_as=tuple, inclusive_end=True)
+        frames = (
+            (s, min(s + frame_batch_size - 1, end_frame))
+            for s in range(start_frame, end_frame + 1, max(1, frame_batch_size))
+        )
 
         # initialize the frame processor
         frame_processor = sawnergy_util.elementwise_processor(in_parallel=in_parallel,
@@ -712,10 +721,10 @@ class RINBuilder:
                      membership_matrix.shape, int(membership_matrix.sum()))
 
         # ---------- INTERACTION DATA EXTRACTION AND PROCESSING -----------
-        with sawnergy_util.ArrayStorage.compress_and_cleanup(output_path) as storage:
+        with sawnergy_util.ArrayStorage.compress_and_cleanup(output_path, compression_level) as storage:
             _logger.debug("Opened storage at %s", output_path)
-            for frame_batch in sawnergy_util.batches_of(frames, batch_size=max_workers):
-                _logger.debug("Submitting frame batch of size %d", len(frame_batch))
+            for frame_batch in sawnergy_util.batches_of(frames, batch_size=max_workers if in_parallel else 1):
+                _logger.debug(f"Submitting the following frame batch: {frame_batch}")
                 atomic_matrices = frame_processor(frame_batch,
                                         self._calc_avg_atomic_interactions_in_frames,
                                         topology_file,
@@ -755,7 +764,7 @@ class RINBuilder:
             _logger.debug("Writing COMs with shape %s to storage", COMs.shape)
 
             storage.write([COMs], to_block_named=COM_dataset_name, arrays_per_chunk=1)
-            _logger.info("Finished writing COM dataset '%s'", COM_dataset_name)
+            _logger.info("Finished writing COM dataset named '%s'", COM_dataset_name)
 
         _logger.info("RIN build complete -> %s", output_path)
         return str(output_path)

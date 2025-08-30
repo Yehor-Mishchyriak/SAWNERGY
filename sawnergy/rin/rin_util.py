@@ -382,5 +382,10 @@ def com_parser(line: str) -> str:
     return f"{frame},{x},{y},{z}\n"
 
 
+__all__ = [
+    "run_cpptraj",
+    "CpptrajScript"
+]
+
 if __name__ == "__main__":
     pass

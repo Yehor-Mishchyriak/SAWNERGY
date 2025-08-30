@@ -191,20 +191,32 @@ class ArrayStorage:
         return cached_dt
 
     def _setdefault(
-        self,
-        named: str,
-        shape: tuple[int, ...],
-        dtype: np.dtype,
-        arrays_per_chunk: int | None = None,
-    ) -> zarr.Array:
+            self,
+            named: str,
+            shape: tuple[int, ...],
+            dtype: np.dtype,
+            arrays_per_chunk: int | None = None,
+        ) -> zarr.Array:
         """Create or open the block array with the resolved metadata."""
         shape = self._array_shape_in_block(named, given=shape)
         dtype = self._array_dtype_in_block(named, given=dtype)
-        apc = self._array_chunk_size_in_block(named, given=arrays_per_chunk)
-        _logger.debug("Requiring array '%s' with shape=(0,%s), chunks=(%s,%s), dtype=%s",
-                      named, shape, apc, shape, dtype)
+        apc   = self._array_chunk_size_in_block(named, given=arrays_per_chunk)
 
-        return self.root.require_array(
+        # if it already exists, validate and return it
+        if named in self.root:
+            block = self.root[named]
+            if not isinstance(block, zarr.Array):
+                raise TypeError(f"Member '{named}' is not a Zarr array")
+            if block.shape[1:] != shape:
+                raise TypeError(f"Incompatible existing shape {block.shape} vs (0,{shape})")
+            if np.dtype(block.dtype) != np.dtype(dtype):
+                raise TypeError(f"Incompatible dtype {block.dtype} vs {dtype}")
+            return block
+
+        # otherwise, create the appendable array (length 0 along axis 0)
+        _logger.debug("Creating array '%s' with shape=(0,%s), chunks=(%s,%s), dtype=%s",
+                    named, shape, apc, shape, dtype)
+        return self.root.create_array(
             name=named,
             shape=(0,) + shape,
             chunks=(int(apc),) + shape,
@@ -477,13 +489,16 @@ class ArrayStorage:
     
     @classmethod
     @contextmanager
-    def compress_and_cleanup(cls, output_pth: str | Path) -> Iterator[ArrayStorage]:
+    def compress_and_cleanup(cls, output_pth: str | Path, compression_level: int) -> Iterator[ArrayStorage]:
         """
         Create a temporary ArrayStorage, yield it for writes, then compress it into `output_pth`.
         The temporary local store is deleted after compression.
 
         Args:
             output_pth: Destination .zip file or directory (delegated to `compress(into=...)`).
+            compression_level: Blosc compression level to use for data chunks
+                (integer, 0-9). ``0`` disables compression (still writes with a Blosc
+                container); higher = more compression, slower writes.
         """
         output_pth = Path(output_pth)
         _logger.info("compress_and_cleanup: creating temp store (suffix .zarr)")
@@ -492,8 +507,8 @@ class ArrayStorage:
             try:
                 yield arr_storage
             finally:
-                _logger.info("compress_and_cleanup: compressing to %s", output_pth)
-                arr_storage.compress(output_pth)
+                _logger.info("compress_and_cleanup: compressing to %s (compression level of %d)", output_pth, compression_level)
+                arr_storage.compress(output_pth, compression_level=compression_level)
         _logger.info("compress_and_cleanup: temp store cleaned up")
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
@@ -862,53 +877,93 @@ def batches_of(iterable: Iterable,
                inclusive_end: bool = False):
     """Yield elements of `iterable` in fixed-size batches or index ranges.
 
-    This function requires that `iterable` supports `len()` and slicing.
-    When `ranges=True`, yields index pairs instead of slices.
+    Works with any iterable (lists, ranges, generators, file objects, etc.).
+    For sliceable sequences, a fast path uses len()+slicing; for general
+    iterables, items are accumulated into chunks.
+
+    When `ranges=True`, yields 0-based index ranges based on consumption
+    order: `(start, end_exclusive)` (or `(start, end_inclusive)` if
+    `inclusive_end=True`) without materializing the data.
 
     Args:
-      iterable: A sequence-like object supporting `len()` and slicing.
+      iterable: Any iterable to batch (sequence or generator).
       batch_size: Number of items per batch. If <= 0, the entire iterable is
-        yielded in a single batch. Defaults to -1.
-      out_as: Constructor used to wrap each yielded batch (e.g., `list`, `tuple`)
+        yielded as a single batch. Defaults to -1.
+      out_as: Constructor to wrap each yielded batch (e.g., `list`, `tuple`)
         or to wrap the index pair when `ranges=True`. Defaults to `list`.
-      ranges: If True, yield index ranges instead of actual data slices.
-        Each yielded item is `(start, end)` (exclusive) unless `inclusive_end`
-        is True. Defaults to False.
-      inclusive_end: If `ranges=True`, control whether the returned range end
-        index is inclusive (`(start, end_inclusive)`) or exclusive
-        (`(start, end_exclusive)`). Ignored when `ranges=False`. Defaults to False.
+      ranges: If True, yield index ranges instead of data batches. Defaults to False.
+      inclusive_end: If `ranges=True`, return an inclusive end index instead of
+        exclusive. Ignored when `ranges=False`. Defaults to False.
 
     Yields:
-      Any: For `ranges=False`, a batch containing up to `batch_size` elements,
-      wrapped with `out_as`. For `ranges=True`, an index pair `(start, end)` (or
-      `(start, end_inclusive)` if `inclusive_end=True`) wrapped with `out_as`.
-
-    Raises:
-      TypeError: If `iterable` does not support `len()` or slicing.
+      For `ranges=False`: a batch containing up to `batch_size` elements,
+        wrapped with `out_as`.
+      For `ranges=True`: an index pair `(start, end_exclusive)` (or inclusive)
+        wrapped with `out_as`.
 
     Examples:
-      Yield data batches:
-
       >>> list(batches_of([1,2,3,4,5], batch_size=2))
       [[1, 2], [3, 4], [5]]
 
-      Yield index ranges (exclusive end):
-
       >>> list(batches_of(range(10), batch_size=4, ranges=True))
-      [[0, 4], [4, 8], [8, 10]]
+      [(0, 4), (4, 8), (8, 10)]
+
+      >>> gen = (i*i for i in range(7))
+      >>> list(batches_of(gen, batch_size=3, out_as=tuple))
+      [(0, 1, 4), (9, 16, 25), (36,)]
     """
-    n = len(iterable)
-    if batch_size <= 0:
-        batch_size = n
-    for start in range(0, n, batch_size):
-        end_excl = min(start + batch_size, n)
-        if ranges:
-            if inclusive_end:
-                yield out_as((start, end_excl - 1))
+    # try fast path for sliceable sequences (len + slicing)
+    try:
+        n = len(iterable)  # may raise TypeError for generators
+        _ = iterable[0:0]  # cheap probe for slicing support
+        is_sliceable = True
+    except Exception:
+        n = None
+        is_sliceable = False
+
+    if is_sliceable:
+        if batch_size <= 0:
+            batch_size = n
+        for start in range(0, n, batch_size):
+            end_excl = min(start + batch_size, n)
+            if ranges:
+                yield out_as((start, end_excl - 1)) if inclusive_end else out_as((start, end_excl))
             else:
-                yield out_as((start, end_excl))
+                yield out_as(iterable[start:end_excl])
+        return
+
+    # generic-iterable path (generators, iterators, file objects, etc.)
+    it = iter(iterable)
+
+    if batch_size <= 0:
+        # consume everything into a single batch
+        chunk = list(it)
+        if ranges:
+            end_excl = len(chunk)
+            yield out_as((0, end_excl - 1)) if inclusive_end else out_as((0, end_excl))
         else:
-            yield out_as(iterable[start:end_excl])
+            yield out_as(chunk)
+        return
+
+    start_idx = 0
+    while True:
+        chunk = []
+        try:
+            for _ in range(batch_size):
+                chunk.append(next(it))
+        except StopIteration:
+            pass
+
+        if not chunk:
+            break
+
+        if ranges:
+            end_excl = start_idx + len(chunk)
+            yield out_as((start_idx, end_excl - 1)) if inclusive_end else out_as((start_idx, end_excl))
+        else:
+            yield out_as(chunk)
+
+        start_idx += len(chunk)
 
 def create_updated_subprocess_env(**var_vals: Any) -> dict[str, str]:
     """Return a copy of the current environment with specified overrides.

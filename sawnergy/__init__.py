@@ -1,5 +1,6 @@
 # sawnergy
 from .rin import *
-from . import sawnergy_util
+from .sawnergy_util import *
+from .logging_util import *
 
 __version__ = "1.0"
