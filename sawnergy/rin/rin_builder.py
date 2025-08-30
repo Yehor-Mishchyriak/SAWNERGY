@@ -234,37 +234,40 @@ class RINBuilder:
         *,
         subprocess_env: dict | None = None,
         timeout: float | None = None,
-    ) -> np.ndarray:
+    ) -> list[np.ndarray]:
         """Compute per-residue COM coordinates for each frame.
 
-        Runs a cpptraj loop to compute `vector COM<i>` per residue and parses the
-        printed data into an array of shape (n_frames, n_residues, 3).
+        Runs a cpptraj loop to compute ``vector COM<i>`` per residue and parses the
+        printed data.
 
         Args:
-            frame_range (tuple[int, int]): Inclusive (start_frame, end_frame).
+            frame_range (tuple[int, int]): Inclusive ``(start_frame, end_frame)`` (1-based).
             topology_file (str): Path to topology file.
             trajectory_file (str): Path to trajectory file.
-            molecule_id (int): Molecule selector/ID for residue iteration.
+            molecule_id (int): Molecule selector/ID used by cpptraj for residue iteration.
             number_residues (int): Expected residue count (used for validation).
-            subprocess_env (dict | None): Optional environment for cpptraj.
-            timeout (float | None): Optional time limit (seconds).
+            subprocess_env (dict | None): Optional environment overrides for cpptraj.
+            timeout (float | None): Optional time limit (seconds) for cpptraj.
 
         Returns:
-            np.ndarray: COM array with shape (n_frames, n_residues, 3).
+            list[np.ndarray]: A list of length ``n_frames`` where each element is a
+            ``(n_residues, 3)`` array of ``float32`` giving XYZ COM coordinates for that
+            frame. Element ``0`` corresponds to ``start_frame``, element ``-1`` to
+            ``end_frame``.
 
         Raises:
-            ValueError: If `frame_range` is invalid.
-            RuntimeError: If expected COM blocks/rows are missing or malformed.
+            ValueError: If ``frame_range`` is invalid (end < start).
+            RuntimeError: If the COM print block is missing/malformed or row sizes mismatch.
         """
         start_frame, end_frame = frame_range
         _logger.debug("Getting COMs per frame (frames=%s..%s, residues=%d, molecule_id=%s)",
-                      start_frame, end_frame, number_residues, molecule_id)
+                    start_frame, end_frame, number_residues, molecule_id)
         if end_frame < start_frame:
             _logger.error("Bad frame_range %s: end < start", frame_range)
             raise ValueError(f"Bad frame_range {frame_range}: end < start")
         number_frames = end_frame - start_frame + 1
 
-        # build and run script
+        # build and run cpptraj script
         COM_script = (
             self._load_data_from(topology_file, trajectory_file, start_frame, end_frame)
             + self._compute_residue_COMs_in_molecule(molecule_id)
@@ -275,22 +278,22 @@ class RINBuilder:
                                     env=subprocess_env, timeout=timeout)
         _logger.debug("cpptraj COM output length: %d", len(output))
 
-        # extract the block and the per-frame coord lines
+        # extract COM block and per-frame rows
         m = self._com_block_pattern(number_residues).search(output)
         if not m:
             _logger.error("COM print block not found in cpptraj output (expected COMZ%d header).",
-                          number_residues)
+                        number_residues)
             raise RuntimeError("Could not find COM print block in cpptraj output.")
         block = m.group(1)
-        lines = self._com_row_pattern.findall(block) # list[str], coords only (no frame #)
+        lines = self._com_row_pattern.findall(block)  # list[str], coords only (no frame #)
         _logger.debug("Extracted %d COM rows (expected %d)", len(lines), number_frames)
 
-        # sanity checks
         if len(lines) != number_frames:
-            _logger.error("Frame row count mismatch: expected %d, got %d", number_frames, len(lines))
+            _logger.error("Frame row count mismatch: expected %d, got %d",
+                        number_frames, len(lines))
             raise RuntimeError(f"Expected {number_frames} frame rows, got {len(lines)}.")
 
-        # parse, validate, reshape
+        # parse and reshape to (n_residues, 3) per frame
         rows = [np.fromstring(line, dtype=np.float32, sep=' ') for line in lines]
         bad = [i for i, arr in enumerate(rows) if arr.size != number_residues * 3]
         if bad:
@@ -299,9 +302,9 @@ class RINBuilder:
                 f"Row(s) {bad[:5]} have wrong length; expected {number_residues*3} floats."
             )
 
-        coords = np.stack(rows, axis=0)  # (n_frames, n_res*3)
-        coords = coords.reshape(number_frames, number_residues, 3)  # (n_frames, n_res, 3); 3 is the X, Y, Z
-        _logger.info("COM array shape: %s", coords.shape)
+        coords: list[np.ndarray] = [row.reshape(number_residues, 3) for row in rows]
+        _logger.info("Built %d COM arrays of shape %s (one per frame)",
+                    len(coords), coords[0].shape)
         return coords
 
     # ---------------------------------------------------------------------------------------------- #
@@ -590,8 +593,6 @@ class RINBuilder:
     #                                           PUBLIC API
     # ---------------------------------------------------------------------------------------------- #
 
-    # transition probabilities for each residue i are the distributions in rows of the RIN matrices;
-    # so, RIN[i, :] is transition probabilities from residue i to it's other connections.
     def build_rin(self,
                  topology_file: str,
                  trajectory_file: str,
@@ -606,9 +607,9 @@ class RINBuilder:
                  compression_level: int = 3,
                  prune_low_energies_frac: float = 0.3,
                  cpptraj_run_time_limit: float | None = None,
-                 COM_dataset_name="COM",
-                 attractive_interactions_dataset_name="ATTRACTIVE",
-                 repulsive_interactions_dataset_name="REPULSIVE") -> str:
+                 COM_dataset_name: str = "COM",
+                 attractive_interactions_dataset_name: str = "ATTRACTIVE",
+                 repulsive_interactions_dataset_name: str = "REPULSIVE") -> str:
         """Build a Residue Interaction Network archive from an MD trajectory.
 
         This pipeline:
@@ -766,7 +767,7 @@ class RINBuilder:
             )
             _logger.debug("Writing COMs with shape %s to storage", COMs.shape)
 
-            storage.write([COMs], to_block_named=COM_dataset_name, arrays_per_chunk=1)
+            storage.write(COMs, to_block_named=COM_dataset_name, arrays_per_chunk=num_matrices_in_compressed_blocks)
             _logger.info("Finished writing COM dataset named '%s'", COM_dataset_name)
 
         _logger.info("RIN build complete -> %s", output_path)
