@@ -10,6 +10,7 @@ import re
 import logging
 from math import ceil
 from datetime import datetime
+import multiprocessing as mp
 from concurrent.futures import as_completed, ThreadPoolExecutor, ProcessPoolExecutor
 from typing import Callable, Iterable, Iterator, Any
 import os, psutil, tempfile
@@ -536,6 +537,10 @@ class ArrayStorage:
 #  PARALLEL PROCESSING AND EFFICIENT MEMORY USAGE RELATED FUNCTIONS
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
 
+def is_main_process() -> bool:
+    p = mp.current_process()
+    return mp.parent_process() is None and p.name == "MainProcess"
+
 def _apply(f: Callable, x: Any, extra_args: tuple, extra_kwargs: dict) -> Any:
     return f(x, *extra_args, **extra_kwargs)
 
@@ -1024,48 +1029,60 @@ def current_time() -> str:
     """Returns the current time in the Y-%m-%d_%H%M%S format"""
     return datetime.now().strftime("%Y-%m-%d_%H%M%S")
 
-def compose_steps(steps: dict[Callable[..., Any], dict[str, Any]]):
-    """Compose a pipeline from functions with per-step keyword arguments.
+def compose_steps(
+    *steps: tuple[
+            Callable[..., Any], dict[str, Any] | None
+        ]
+) -> Callable[[Any], Any]:
+    """Compose a pipeline from an ordered sequence of (function, kwargs) pairs.
 
-    Builds and returns a unary function that feeds an input value through each
-    step in the provided mapping, **in insertion order**. For every entry
-    ``func -> kwargs`` the composed function calls ``func(current, **kwargs)``,
-    passing the current value as the first positional argument and the
-    associated keyword arguments, then uses the return value as the next
-    current value.
+    This helper returns a unary function that feeds an input value through each
+    step you provide, in the exact order the steps appear in the argument list.
+    Each step is a 2-tuple ``(func, kwargs)``; the composed function will call
+    ``func(current, **(kwargs or {}))``, where *current* is the running value,
+    and use the return value as the next *current*.
 
     Args:
-        steps: Mapping from callables to dictionaries of keyword arguments.
-            Each callable must accept at least one positional argument (the
-            current value) plus the specified keyword arguments. The iteration
-            order of the mapping (insertion order for ``dict`` on Python ≥3.7)
-            determines execution order.
+        *steps: Variable-length sequence of pairs ``(callable, kwargs_dict_or_None)``.
+            - Each callable must accept at least one positional argument
+              (the current value) plus any keyword arguments supplied.
+            - ``kwargs`` may be ``None`` to indicate no keyword arguments.
+            - The order of steps determines execution order.
 
     Returns:
-        Callable[[Any], Any]: A function ``g(x)`` that applies the composed
-        steps to ``x`` and returns the final result.
+        Callable[[Any], Any]: A function ``g(x)`` that applies all steps to ``x``
+        and returns the final result.
 
     Raises:
+        TypeError: If any element of ``steps`` is not a 2-tuple of
+            ``(callable, dict_or_None)``.
         Any exception raised by an individual step is propagated unchanged.
 
     Notes:
         - If a step mutates its input and returns ``None``, the next step will
-          receive ``None``. Ensure each step returns the value you want to pass
-          onward.
-        - If execution order is critical and the mapping may be rebuilt, use
-          an ``OrderedDict`` or a sequence of ``(func, kwargs)`` pairs.
+          receive ``None``. Ensure each step returns the value you want to pass on.
+        - ``kwargs`` is shallow-copied (via ``dict(kwargs)``) before each call so a
+          callee cannot mutate the original mapping.
 
     Examples:
         >>> def scale(a, *, c): return a * c
         >>> def shift(a, *, b): return a + b
-        >>> pipeline = compose_steps({scale: {'c': 2}, shift: {'b': 3}})
+        >>> pipeline = compose_steps((scale, {'c': 2}), (shift, {'b': 3}))
         >>> pipeline(10)
         23
     """
+    # validation
+    for i, pair in enumerate(steps):
+        if not (isinstance(pair, tuple) and len(pair) == 2 and callable(pair[0])):
+            raise TypeError(
+                f"steps[{i}] must be a (callable, kwargs_dict_or_None) pair; got: {pair!r}"
+            )
+
     def inner(x: Any) -> Any:
-        for f, kw in steps.items():
-            x = f(x, **kw)
+        for func, kwargs in steps:
+            x = func(x, **({} if kwargs is None else dict(kwargs)))
         return x
+
     return inner
 
 
@@ -1073,8 +1090,8 @@ __all__ = [
     "ArrayStorage",
     "elementwise_processor",
     "files_from",
-    "chunked_file",
-    "chunked_dir",
+    "chunked_file", # <-- legacy
+    "chunked_dir",  # <-- legacy
     "batches_of",
     "compose_steps"
 ]
