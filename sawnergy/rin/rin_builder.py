@@ -6,7 +6,7 @@ import threadpoolctl
 # built-in
 from pathlib import Path
 import logging
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import re
 import math
 import os
@@ -579,44 +579,38 @@ class RINBuilder:
         arrays_per_chunk: int,
         attractive_dataset_name: str,
         repulsive_dataset_name: str,
-        return_back: bool = True
-    ) -> np.ndarray | None:
-        """Persist a two-channel residue interaction array into storage.
+    ) -> None:
+        """Persist a two-channel residue interaction array to storage.
 
-        Writes the attractive channel to ``attractive_dataset_name`` and the
-        repulsive channel to ``repulsive_dataset_name`` as append-only rows
-        (axis 0) using the provided ``arrays_per_chunk`` for Zarr chunking.
+        This writes the two channels (index 0 → attractive, index 1 → repulsive)
+        into two separate dataset blocks inside the provided ``ArrayStorage``,
+        using the specified chunking policy.
 
-        Parameters
-        ----------
-        arr : np.ndarray
-            Two-channel array with shape ``(2, N, N)``:
-            ``arr[0]`` = attractive magnitudes (|negative energies|),
-            ``arr[1]`` = repulsive magnitudes (positive energies).
-        storage : sawnergy_util.ArrayStorage
-            Open ArrayStorage to write into (must be writable).
-        arrays_per_chunk : int
-            Chunk length along axis 0 for compression/IO efficiency.
-        attractive_dataset_name : str
-            Target dataset name for the attractive channel.
-        repulsive_dataset_name : str
-            Target dataset name for the repulsive channel.
-        return_back : bool, default True
-            If True, return ``arr`` so this function can be composed in a
-            pipeline; otherwise return ``None``.
+        Args:
+            arr: A 3-D array with shape ``(2, N, N)`` where the first axis indexes
+                the channels: ``arr[0]`` is the attractive channel and ``arr[1]`` is
+                the repulsive channel.
+            storage: An open ``ArrayStorage`` handle to write into.
+            arrays_per_chunk: Number of matrices per chunk along the leading axis
+                when writing into the Zarr arrays.
+            attractive_dataset_name: Dataset (block) name to store the attractive
+                channel under.
+            repulsive_dataset_name: Dataset (block) name to store the repulsive
+                channel under.
 
-        Returns
-        -------
-        np.ndarray | None
-            ``arr`` if ``return_back`` is True; otherwise ``None``.
+        Returns:
+            None
 
-        Notes
-        -----
-        This function does not modify ``arr`` in place.
+        Notes:
+            - If ``arr`` does not have the expected shape ``(2, N, N)``, a warning
+            is logged and the function still attempts to write ``arr[0]`` and
+            ``arr[1]`` as the two channels.
+            - Exceptions raised by the storage layer propagate to the caller.
         """
         if arr.ndim != 3 or arr.shape[0] != 2:
             _logger.warning(
-                "Expected two-channel array with shape (2, N, N); got %s", getattr(arr, "shape", None)
+                "Expected two-channel array with shape (2, N, N); got %s",
+                getattr(arr, "shape", None),
             )
 
         _logger.debug(
@@ -640,10 +634,6 @@ class RINBuilder:
             attractive_dataset_name, repulsive_dataset_name
         )
 
-        if return_back:
-            return arr
-        return None
-
     # ---------------------------------------------------------------------------------------------- #
     #                                           PUBLIC API
     # ---------------------------------------------------------------------------------------------- #
@@ -664,96 +654,81 @@ class RINBuilder:
         COM_dataset_name: str = "COM",
         attractive_dataset_name: str = "ATTRACTIVE",
         repulsive_dataset_name: str = "REPULSIVE",
-        in_parallel: bool = False,
-        max_workers: int | None = None,
+        parallel_cpptraj: bool = False,
+        simul_cpptraj_instances: int | None = None,
         num_matrices_in_compressed_blocks: int = 10,
         compression_level: int = 3,
         cpptraj_run_time_limit: float | None = None
     ) -> str:
-        """
-        Build a Residue Interaction Network (RIN) archive from an MD trajectory.
+        """Build a Residue Interaction Network (RIN) archive from an MD trajectory.
 
-        Pipeline (per requested frames):
-        1) Discover MD metadata (total frames, residues of target molecule).
-        2) For each frame batch:
-        a) Run cpptraj pairwise on atoms → EMAP + VMAP → sum = atomic matrix.
-        b) Project atomic→residue using membership matrix (Pᵀ @ A @ P).
-        c) Post-process residue matrix into two channels:
-            - split into attractive/repulsive,
-            - prune by per-row quantile,
-            - remove self-interactions,
-            - symmetrize.
-        d) Optionally store **absolute energies** (two blocks).
-        e) Row-wise L1 normalize (produces transition probabilities) and store.
-        3) Compute per-residue COM coordinates for each frame and store.
-        4) Zip the store to a read-only ``.zip`` (Zarr v3) and return its path.
+        High-level pipeline:
+        1. Discover MD metadata (trajectory frame count; residue membership of the
+            target molecule).
+        2. For each frame batch:
+            a. Run cpptraj `pairwise` on atoms → EMAP + VMAP → sum (atomic matrix).
+            b. Project atomic → residue with ``R = Pᵀ @ A @ P``.
+            c. Post-process residue matrix:
+                - split into (attractive, repulsive) channels,
+                - per-row quantile pruning,
+                - remove self-interactions,
+                - symmetrize.
+            d. Optionally store **absolute energies** (two blocks).
+            e. Row-wise L1 normalize (directed transition probabilities) and store.
+        3. Compute per-residue COM coordinates across requested frames and store.
+        4. Close and compress the temporary store into a zip (Zarr v3). Return path.
 
-        Parameters
-        ----------
-        topology_file : str
-            Path to the topology (parm/prmtop).
-        trajectory_file : str
-            Path to the trajectory readable by cpptraj.
-        molecule_of_interest : int
-            Molecule selector/ID used by cpptraj (e.g., 1 for ``^1``).
-        frame_range : tuple[int, int] | None, optional
-            1-based inclusive (start, end). If None, uses the full trajectory.
-        frame_batch_size : int, optional
-            Number of frames per batch for pairwise calculations. If <= 0, uses
-            all frames (single batch).
-        prune_low_energies_frac : float, optional
-            Per-row quantile ``q`` in (0, 1] for pruning small values.
-        output_path : str | Path | None, optional
-            Destination path (with or without ``.zip``). Defaults to
-            ``RIN_<YYYY-MM-DD_HHMMSS>.zip`` in the CWD.
-        keep_absolute_energies : bool, optional
-            If True, stores the pre-normalized attractive/repulsive matrices
-            under ``<ATTRACTIVE|REPULSIVE><absolute_energies_suffix>``.
-        absolute_energies_suffix : str, optional
-            Suffix for absolute-energy datasets (default: ``"_energies"``).
-        transition_probabilities_suffix : str, optional
-            Suffix for normalized datasets (default: ``"_transitions"``).
-        COM_dataset_name : str, optional
-            Dataset name for COM coordinates (default: ``"COM"``).
-        attractive_dataset_name : str, optional
-            Base dataset name for attractive channel (default: ``"ATTRACTIVE"``).
-        repulsive_dataset_name : str, optional
-            Base dataset name for repulsive channel (default: ``"REPULSIVE"``).
-        in_parallel : bool, optional
-            If True, parallelizes per-frame work (with care to avoid oversubscription).
-        max_workers : int | None, optional
-            Maximum workers for thread/process pools. Defaults to ``os.cpu_count()``.
-        num_matrices_in_compressed_blocks : int, optional
-            Number of matrices per chunk along axis 0 in the Zarr arrays.
-        compression_level : int, optional
-            Blosc Zstd compression level for the final ZipStore (0-9).
-        cpptraj_run_time_limit : float | None, optional
-            Timeout (seconds) applied to cpptraj subprocesses.
+        Args:
+            topology_file: Path to the topology (parm/prmtop) file.
+            trajectory_file: Path to a cpptraj-readable trajectory file.
+            molecule_of_interest: Molecule selector/ID used by cpptraj (e.g., ``1``
+                for ``^1``).
+            frame_range: 1-based inclusive ``(start, end)`` frames to process. If
+                ``None``, uses the full trajectory.
+            frame_batch_size: Number of frames per batch for pairwise calculations.
+                If ``<= 0``, processes all frames in a single batch.
+            prune_low_energies_frac: Per-row quantile ``q`` in ``(0, 1]`` used to
+                zero out small values independently in both channels.
+            output_path: Destination path (with or without ``.zip``). Defaults to
+                ``RIN_<timestamp>.zip`` in the current working directory.
+            keep_absolute_energies: If ``True``, stores the pre-normalized
+                attractive/repulsive matrices under
+                ``<ATTRACTIVE|REPULSIVE><absolute_energies_suffix>``.
+            absolute_energies_suffix: Suffix appended to absolute-energy datasets.
+            transition_probabilities_suffix: Suffix appended to normalized datasets.
+            COM_dataset_name: Dataset name for COM coordinates.
+            attractive_dataset_name: Base dataset name for the attractive channel.
+            repulsive_dataset_name: Base dataset name for the repulsive channel.
+            parallel_cpptraj: If ``True``, run multiple cpptraj frame batches in
+                parallel using threads (safe w.r.t. pickling).
+            simul_cpptraj_instances: Maximum concurrent cpptraj tasks (defaults to
+                ``os.cpu_count()`` when ``None``).
+            num_matrices_in_compressed_blocks: Number of matrices per chunk along
+                the leading axis when writing Zarr arrays.
+            compression_level: Blosc Zstd compression level for the final ZipStore.
+            cpptraj_run_time_limit: Optional timeout (seconds) for cpptraj calls.
 
-        Returns
-        -------
-        str
-            Path to the created ``.zip`` archive (Zarr v3).
+        Returns:
+            str: Path to the created ``.zip`` archive (Zarr v3).
 
-        Notes
-        -----
-        - Row-wise L1 normalization produces *directed* transition probabilities
-        (rows sum to 1) and breaks symmetry by design.
-        - Energies are split into two channels: attractive (-E → +|E|) and repulsive (+E).
-        - Logging at INFO shows milestones; DEBUG adds deeper diagnostics.
+        Raises:
+            RuntimeError: Propagated from helper methods (e.g., cpptraj failures).
+            ValueError: Propagated from helper methods (e.g., bad frame ranges or
+                pruning quantile).
+
+        Notes:
+            * Row-wise L1 normalization produces **directed** transition
+            probabilities (rows sum to 1) and therefore breaks symmetry.
+            * All linear algebra runs in a single Python thread; BLAS may use
+            multiple threads internally. cpptraj parallelism is optional and uses
+            threads to avoid pickling constraints.
         """
         _logger.info(
             "Building RIN (mol=%s, traj=%s, frame_range=%s, frame_batch_size=%s, "
-            "keep_abs=%s, parallel=%s, max_workers=%s, comp_level=%s)",
+            "keep_abs=%s, parallel_cpptraj=%s, simul_instances=%s, comp_level=%s)",
             molecule_of_interest, trajectory_file, frame_range, frame_batch_size,
-            keep_absolute_energies, in_parallel, max_workers, compression_level
+            keep_absolute_energies, parallel_cpptraj, simul_cpptraj_instances, compression_level
         )
-
-        if in_parallel and not sawnergy_util.is_main_process():
-            raise RuntimeError("Parallel execution is not allowed"
-                            "If the caller process is not main."
-                            "Solution: call 'build_rin' inside"
-                            "`if __name__ == '__main__':\n...`\nblock.")
 
         # ----------------------------------- MD META DATA -------------------------------------
         total_frames = self._get_number_frames(
@@ -772,10 +747,10 @@ class RINBuilder:
         # --------------------------------------------------------------------------------------
 
         # --------------------- AUXILIARY VARIABLES' / TOOLS PREPARATION -----------------------
-        max_workers = max_workers or (os.cpu_count() or 1)
+        simul_cpptraj_instances = simul_cpptraj_instances or (os.cpu_count() or 1)
         output_path = Path((output_path or (Path(os.getcwd()) /
                         f"RIN_{sawnergy_util.current_time()}"))).with_suffix(".zip")
-        _logger.debug("Output archive: %s", output_path)
+        _logger.debug("Output archive path: %s", output_path)
 
         # -=- FRAMES OF THE MD SIMULATION -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
         if frame_batch_size <= 0:
@@ -788,26 +763,19 @@ class RINBuilder:
             (s, min(s + frame_batch_size - 1, end_frame))
             for s in range(start_frame, end_frame + 1, max(1, frame_batch_size))
         )
-        _logger.debug("Frame batch size: %s", frame_batch_size)
-        _logger.debug("Processing frames [%d..%d]", start_frame, end_frame)
+        _logger.debug("Frame selection: [%d..%d], batch_size=%d", start_frame, end_frame, frame_batch_size)
         # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
         # -=- DATA PROCESSORS -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
         frame_processor = sawnergy_util.elementwise_processor(
-            in_parallel=in_parallel,
+            in_parallel=parallel_cpptraj,
             Executor=ThreadPoolExecutor,
-            max_workers=max_workers,
+            max_workers=simul_cpptraj_instances,
             capture_output=True
         )
-        primary_matrix_processor = sawnergy_util.elementwise_processor(
-            in_parallel=False,  # <- BLAS handles parallelism
-            capture_output=True
-        )
-        secondary_matrix_processor = sawnergy_util.elementwise_processor(
-            in_parallel=in_parallel,
-            Executor=ProcessPoolExecutor,
-            max_workers=max_workers,
-            capture_output=False
+        matrix_processor = sawnergy_util.elementwise_processor(
+            in_parallel=False,   # <- BLAS handles lin. alg. parallelism
+            capture_output=True  # the rest of the code is vectorized by default
         )
         # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
@@ -818,72 +786,33 @@ class RINBuilder:
                 MKL_NUM_THREADS=1,
                 OPENBLAS_NUM_THREADS=1,
                 MKL_DYNAMIC=False
-            ) if in_parallel else None
+            ) if parallel_cpptraj else None
         )
-
-        COM_subprocess_env = (
-            sawnergy_util.create_updated_subprocess_env(
-                OMP_NUM_THREADS=max_workers,
-                MKL_NUM_THREADS=max_workers,
-                OPENBLAS_NUM_THREADS=max_workers,
-                MKL_DYNAMIC=True
-            ) if in_parallel else None
-        )
-        _logger.debug("Subprocess env set (pairwise, COM) for parallel=%s", in_parallel)
+        _logger.debug("cpptraj parallel: %s (instances=%s)", parallel_cpptraj, simul_cpptraj_instances)
         # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
         # create a membership matrix for atoms in residues
         membership_matrix = self._compute_residue_membership_matrix(molecule_composition)
-        _logger.info(
-            "Membership matrix ready: shape=%s, nnz=%d",
-            membership_matrix.shape, int(membership_matrix.sum())
-        )
+        _logger.info("Membership matrix ready: shape=%s, nnz=%d",
+                    membership_matrix.shape, int(membership_matrix.sum()))
         # --------------------------------------------------------------------------------------
 
         # -------------------- INTERACTION DATA EXTRACTION AND PROCESSING ----------------------
+        pipeline = sawnergy_util.compose_steps(
+            (self._convert_atomic_to_residue_interactions, {"membership_matrix": membership_matrix}),
+            (self._split_into_attractive_repulsive, None),
+            (self._prune_low_energies, {"q": prune_low_energies_frac}),
+            (self._remove_self_interactions, None),
+            (self._symmetrize, None),
+        )
+        _logger.debug("Post-processing pipeline assembled")
+
         with sawnergy_util.ArrayStorage.compress_and_cleanup(output_path, compression_level) as storage:
-            _logger.debug("Opened storage at %s", output_path)
-
-            # Build secondary computation pipeline
-            secondary_computation_steps = (
-                (self._split_into_attractive_repulsive, None),
-                (self._prune_low_energies, {"q": prune_low_energies_frac}),
-                (self._remove_self_interactions, None),
-                (self._symmetrize, None),
-            )
-
-            if keep_absolute_energies:
-                secondary_computation_steps += (
-                    (
-                        self._store_two_channel_array,
-                        {
-                            "storage": storage,
-                            "arrays_per_chunk": num_matrices_in_compressed_blocks,
-                            "attractive_dataset_name": attractive_dataset_name + absolute_energies_suffix,
-                            "repulsive_dataset_name": repulsive_dataset_name + absolute_energies_suffix,
-                            "return_back": True,
-                        },
-                    ),
-                )
-
-            secondary_computation_steps += (
-                (self._L1_normalize, None),
-                (
-                    self._store_two_channel_array,
-                    {
-                        "storage": storage,
-                        "arrays_per_chunk": num_matrices_in_compressed_blocks,
-                        "attractive_dataset_name": attractive_dataset_name + transition_probabilities_suffix,
-                        "repulsive_dataset_name": repulsive_dataset_name + transition_probabilities_suffix,
-                        "return_back": False,
-                    },
-                ),
-            )
-
+            _logger.debug("Opened temporary store for writing")
             for frame_batch in sawnergy_util.batches_of(
-                frames, batch_size=max_workers if in_parallel else 1
+                frames, batch_size=simul_cpptraj_instances if parallel_cpptraj else 1
             ):
-                _logger.debug("Submitting frame batch: %s", frame_batch)
+                _logger.debug("Processing next frame batch")
 
                 atomic_matrices = frame_processor(
                     frame_batch,
@@ -895,22 +824,39 @@ class RINBuilder:
                     timeout=cpptraj_run_time_limit,
                 )
 
-                interaction_matrices = primary_matrix_processor(
+                interaction_matrices = matrix_processor(
                     atomic_matrices,
-                    self._convert_atomic_to_residue_interactions,
-                    membership_matrix=membership_matrix,
+                    pipeline
                 )
 
-                secondary_matrix_processor(
+                if keep_absolute_energies:
+                    _logger.debug("Writing absolute energy channels")
+                    for arr in interaction_matrices:
+                        self._store_two_channel_array(
+                            arr,
+                            storage,
+                            num_matrices_in_compressed_blocks,
+                            attractive_dataset_name + absolute_energies_suffix,
+                            repulsive_dataset_name + absolute_energies_suffix
+                        )
+
+                transition_matrices = matrix_processor(
                     interaction_matrices,
-                    sawnergy_util.compose_steps(*secondary_computation_steps),
+                    self._L1_normalize
                 )
 
-                _logger.debug("Finished processing and storing a batch of matrices")
+                _logger.debug("Writing normalized transition channels")
+                for arr in transition_matrices:
+                    self._store_two_channel_array(
+                        arr,
+                        storage,
+                        num_matrices_in_compressed_blocks,
+                        attractive_dataset_name + transition_probabilities_suffix,
+                        repulsive_dataset_name + transition_probabilities_suffix
+                    )
 
             _logger.debug(
-                "Getting COMs per frame (frames=%d..%d, residues=%d, molecule_id=%s)",
-                start_frame, end_frame, number_residues, molecule_of_interest
+                "Computing COMs for frames [%d..%d] (residues=%d)", start_frame, end_frame, number_residues
             )
             COMs = self._get_residue_COMs_per_frame(
                 frame_range=(start_frame, end_frame),
@@ -918,13 +864,9 @@ class RINBuilder:
                 trajectory_file=trajectory_file,
                 molecule_id=molecule_of_interest,
                 number_residues=number_residues,
-                subprocess_env=COM_subprocess_env,
                 timeout=cpptraj_run_time_limit,
             )
-            _logger.debug(
-                "Writing COMs with %d frames to storage (chunk=%d)",
-                len(COMs), num_matrices_in_compressed_blocks
-            )
+            _logger.debug("Writing %d COM frames (chunk=%d)", len(COMs), num_matrices_in_compressed_blocks)
             storage.write(
                 COMs,
                 to_block_named=COM_dataset_name,
