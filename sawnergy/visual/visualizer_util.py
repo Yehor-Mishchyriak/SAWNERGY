@@ -1,6 +1,5 @@
 # third-pary
 import numpy as np
-import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from matplotlib.colors import Normalize
 import matplotlib.colors as mcolors
