@@ -131,7 +131,7 @@ class Visualizer:
 
         # ADD INTERACTIONS DATA IF AVAILABLE
         if attractive_interactions is not None:
-            Ath = np.quantile(attractive_interactions, 1 - top_percent_displayed, axis=1, keepdims=True)
+            Ath = np.quantile(attractive_interactions, 1 - top_percent_displayed)
             attr_edges = visualizer_util.create_weighted_edge_collection(
                                 coordinates,
                                 attractive_interactions,
@@ -141,7 +141,7 @@ class Visualizer:
             axes.add_collection3d(attr_edges)
 
         if repulsive_interactions is not None:
-            Rth = np.quantile(repulsive_interactions, 1 - top_percent_displayed, axis=1, keepdims=True)
+            Rth = np.quantile(repulsive_interactions, 1 - top_percent_displayed)
             repuls_edges = visualizer_util.create_weighted_edge_collection(
                                 coordinates,
                                 repulsive_interactions,
@@ -160,8 +160,8 @@ class Visualizer:
         frame_id: int,
         display_attractive_interactions: bool = True,
         display_repulsive_interactions: bool = True,
-        node_size: int = 60,
-        edge_scale: float = 10,
+        node_size: int = 15,
+        edge_scale: float = 1,
         top_percent_displayed: float = 0.1,
         node_colors: str | dict[Iterable[int], str] | None = None,
         one_based_residues: bool = True,
@@ -169,8 +169,8 @@ class Visualizer:
         repulsive_edge_color: str = RED,
         default_color: str = GRAY,
         title: str | None = None,
-        figsize: tuple[int, int] = (10, 8),
-        padding: float = 0.1,
+        figsize: tuple[int, int] = (8, 6),
+        padding: float = 0.5,
         elev: float = 35,
         azim: float = 45,
         show_axes: bool = False,
@@ -221,7 +221,7 @@ class Visualizer:
             )
         
         if show:
-            fig.show()
+            plt.show()
 
 
 __all__ = [

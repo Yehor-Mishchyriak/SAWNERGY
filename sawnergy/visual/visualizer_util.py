@@ -25,8 +25,10 @@ def create_weighted_edge_collection(coords: np.ndarray,
     
     N = np.size(coords, axis=0)
     r, c = np.triu_indices(N, k=1) # skip the main diag
-    kept = weights[r, c] > thresh
-    r, c, edge_weights = r[kept], c[kept], weights[kept]
+    edge_vals = weights[r, c] # 1D edge list
+    kept = edge_vals > thresh # mask over that list
+    r, c = r[kept], c[kept]
+    edge_weights = edge_vals[kept]
     segments = np.stack([coords[r], coords[c]], axis=1)
     norm = Normalize(vmin=edge_weights.min(), vmax=edge_weights.max())
     line_widths = edge_scale * norm(edge_weights)
