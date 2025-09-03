@@ -302,7 +302,7 @@ class RINBuilder:
                 f"Row(s) {bad[:5]} have wrong length; expected {number_residues*3} floats."
             )
 
-        coords: list[np.ndarray] = [row.reshape(number_residues, 3) for row in rows]
+        coords: list[np.ndarray] = [row.reshape(3, number_residues).T for row in rows]
         _logger.info("Built %d COM arrays of shape %s (one per frame)",
                     len(coords), coords[0].shape)
         return coords
