@@ -65,22 +65,23 @@ def warm_start_matplotlib() -> None:
         _logger.debug("warm_start_matplotlib: 3D warmup failed: %s", e)
 
 def map_groups_to_colors(N: int,
-                        groups: dict[Iterable[int], str],
+                        groups: tuple[Iterable[int], str] | None,
                         default_color: str,
                         one_based: bool = True):
     _logger.debug("map_groups_to_colors: N=%s, groups=%s, default_color=%s, one_based=%s",
                   N, None if groups is None else len(groups), default_color, one_based)
     base = mcolors.to_rgba(default_color)
     colors = [base for _ in range(N)]
-    for indices, hex_color in groups.items():
-        col = mcolors.to_rgba(hex_color)
-        for idx in indices:
-            i = (idx - 1) if one_based else idx
-            if not (0 <= i < N):
-                _logger.error("map_groups_to_colors: index %s out of range for N=%s", idx, N)
-                raise IndexError(f"Index {idx} out of range for N={N}")
-            colors[i] = col
-    _logger.debug("map_groups_to_colors: completed.")
+    if groups is not None:
+        for indices, hex_color in groups:
+            col = mcolors.to_rgba(hex_color)
+            for idx in indices:
+                i = (idx - 1) if one_based else idx
+                if not (0 <= i < N):
+                    _logger.error("map_groups_to_colors: index %s out of range for N=%s", idx, N)
+                    raise IndexError(f"Index {idx} out of range for N={N}")
+                colors[i] = col
+        _logger.debug("map_groups_to_colors: completed.")
     return colors
 
 # -=-=-=-=-=-=-=-=-=-=-=- #

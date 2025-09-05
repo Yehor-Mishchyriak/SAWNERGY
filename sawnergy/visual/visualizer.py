@@ -56,7 +56,6 @@ class Visualizer:
     
     # ---------- LOAD THE DATA ---------- #
         with sawnergy_util.ArrayStorage(RIN_path, mode="r") as storage:
-            # FIX: correct type hints to np.ndarray (not str)
             self.COM_coords: np.ndarray      = storage.read(COM_dataset_name, slice(None))
             self.attr_energies: np.ndarray   = storage.read(attr_data_name, slice(None))
             self.repuls_energies: np.ndarray = storage.read(repuls_data_name, slice(None))
@@ -218,7 +217,7 @@ class Visualizer:
         global_interactions_frac: bool = True,
         global_opacity: bool = True,
         global_color_saturation: bool = True,
-        node_colors: str | dict[Iterable[int], str] | None = None,
+        node_colors: str | tuple[Iterable[int], str] | None = None,
         title: str | None = None,
         padding: float = 0.1,
         spread: float = 1.0,
@@ -410,6 +409,61 @@ class Visualizer:
             else:
                 plt.show()
         _logger.debug("build_frame completed.")
+
+    def animate_trajectory(
+        self,
+        start: int = 1,
+        stop: int | None = None,
+        step: int = 1,
+        interval_ms: int = 50,
+        loop: bool = False,
+        **build_kwargs,
+    ):
+        """
+        Play the trajectory by reusing existing artists.
+        Pass the same kwargs you'd pass to build_frame (except show=False which is enforced).
+        If `loop=True`, frames repeat until the figure window is closed or the user
+        interrupts (Ctrl+C).
+        """
+        _logger.debug(
+            "animate_trajectory | start=%s, stop=%s, step=%s, interval_ms=%s, loop=%s",
+            start, stop, step, interval_ms, loop
+        )
+
+        # default to all frames
+        T = int(self.COM_coords.shape[0])
+        if stop is None:
+            stop = T
+
+        if step == 0:
+            raise ValueError("step must be non-zero")
+
+        # build the list of frame ids
+        frames = list(range(start, stop + (1 if step > 0 else -1), step)) # allow for backward play
+        if not frames:
+            _logger.debug("animate_trajectory | empty frame list -> return")
+            return
+
+        build_kwargs.setdefault("show", False)
+
+        try:
+            if loop:
+                _logger.debug("animate_trajectory | entering repeat loop until window closed.")
+                while plt.fignum_exists(self._fig.number):
+                    for fid in frames:
+                        if not plt.fignum_exists(self._fig.number):
+                            break
+                        self.build_frame(fid, **build_kwargs)
+                        self._update_canvas(pause_for=interval_ms / 1000.0)
+            else:
+                _logger.debug("animate_trajectory | single pass over frames.")
+                for fid in frames:
+                    self.build_frame(fid, **build_kwargs)
+                    self._update_canvas(pause_for=interval_ms / 1000.0)
+                # one final show so the window stays up when the loop ends
+                plt.show()
+        except KeyboardInterrupt:
+            _logger.debug("animate_trajectory | interrupted by user (KeyboardInterrupt).")
 
 
 __all__ = [
