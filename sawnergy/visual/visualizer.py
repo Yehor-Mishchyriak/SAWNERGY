@@ -33,7 +33,7 @@ class Visualizer:
         RIN_path: str | Path,
         figsize: tuple[int, int] = (9, 7),
         node_size: int = 120,
-        edge_width: float = 1,
+        edge_width: float = 1.25,
         default_node_color: str = visualizer_util.GRAY,
         depthshade: bool = False,
         antialiased: bool = False,
@@ -215,6 +215,9 @@ class Visualizer:
         displayed_pairwise_attraction_for_nodes: np.typing.ArrayLike | Literal["DISPLAYED_NODES"] | None = "DISPLAYED_NODES",
         displayed_pairwise_repulsion_for_nodes: np.typing.ArrayLike | Literal["DISPLAYED_NODES"] | None = "DISPLAYED_NODES",
         frac_node_interactions_displayed: float = 0.01, # 1%
+        global_interactions_frac: bool = True,
+        global_opacity: bool = True,
+        global_color_saturation: bool = True,
         node_colors: str | dict[Iterable[int], str] | None = None,
         title: str | None = None,
         padding: float = 0.1,
@@ -258,6 +261,8 @@ class Visualizer:
 
         nodes = self._fix_view(nodes, padding, spread)
         _logger.debug("Nodes after _fix_view | shape=%s", getattr(nodes, "shape", None))
+        coords_for_edges = frame_coords.copy()
+        coords_for_edges[displayed_nodes] = nodes
 
         # ATTRACTIVE EDGES
         if displayed_pairwise_attraction_for_nodes is not None:
@@ -283,9 +288,12 @@ class Visualizer:
                 visualizer_util.build_line_segments(
                     self.N,
                     displayed_pairwise_attraction_for_nodes,
-                    nodes,
+                    coords_for_edges,
                     self.attr_energies[frame_id],
-                    frac_node_interactions_displayed
+                    frac_node_interactions_displayed,
+                    global_weights_frac=global_interactions_frac,
+                    global_opacity=global_opacity,
+                    global_color_saturation=global_color_saturation
                 )
             _logger.debug("Attraction edges built | segs.shape=%s, color_w.shape=%s, opacity_w.shape=%s",
                           getattr(attractive_edges, "shape", None),
@@ -320,9 +328,12 @@ class Visualizer:
                 visualizer_util.build_line_segments(
                     self.N,
                     displayed_pairwise_repulsion_for_nodes,
-                    nodes,
+                    coords_for_edges,
                     self.repuls_energies[frame_id],
-                    frac_node_interactions_displayed
+                    frac_node_interactions_displayed,
+                    global_weights_frac=global_interactions_frac,
+                    global_opacity=global_opacity,
+                    global_color_saturation=global_color_saturation
                 )
             _logger.debug("Repulsion edges built | segs.shape=%s, color_w.shape=%s, opacity_w.shape=%s",
                           getattr(repulsive_edges, "shape", None),

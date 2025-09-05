@@ -30,8 +30,8 @@ SKY = "#0EA5E9"         # Sky Blue
 SLATE = "#475569"       # Slate Gray
 
 # CONTINUOUS SPECTRUM
-HEAT = "gist_heat"
-COLD = "cool"
+HEAT = "autumn"
+COLD = "winter"
 
 # *----------------------------------------------------*
 #                       FUNCTIONS
@@ -124,49 +124,89 @@ def build_line_segments(
     include: np.ndarray, 
     coords: np.ndarray,
     weights: np.ndarray,
-    top_frac_weights_displayed: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-
+    top_frac_weights_displayed: float,
+    *,
+    global_weights_frac: bool = True,
+    global_opacity: bool = True,
+    global_color_saturation: bool = True
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     _logger.debug(
-        "build_line_segments: N=%s, include.len=%s, coords.shape=%s, weights.shape=%s, top_frac=%s",
+        "build_line_segments: N=%s, include.len=%s, coords.shape=%s, weights.shape=%s, top_frac=%s, "
+        "global_weights_frac=%s, global_opacity=%s, global_color_saturation=%s",
         N,
         None if include is None else np.asarray(include).size,
         getattr(coords, "shape", None),
         getattr(weights, "shape", None),
         top_frac_weights_displayed,
+        global_weights_frac, global_opacity, global_color_saturation
     )
 
-    absolutely_normalized_weights = absolute_norm(weights)
-    row_wise_normalized_weights   = row_wise_norm(weights)
+    # Candidate edges
+    rows, cols = np.triu_indices(N, k=1)
 
-    # all candidate edges (upper triangle)
-    rows, cols = np.triu_indices(N, k=1) # rows='from', cols='to'
-    _logger.debug("build_line_segments: total upper-tri edges=%d", rows.size)
-
-    inc = np.zeros(N, dtype=bool)
-    inc[np.asarray(include, dtype=int)] = True
-
-    edge_mask = inc[rows] & inc[cols] # make sure both endpoints are included
+    # Endpoint filter: keep edges whose BOTH endpoints are in 'include'
+    inc_mask = np.zeros(N, dtype=bool)
+    inc_idx = np.asarray(include, dtype=int)
+    inc_mask[inc_idx] = True
+    edge_mask = inc_mask[rows] & inc_mask[cols]
     rows, cols = rows[edge_mask], cols[edge_mask]
-    _logger.debug("build_line_segments: edges after endpoint filter=%d", rows.size)
 
-    # weights for those edges
+    if rows.size == 0:
+        _logger.debug("build_line_segments: no candidate edges after endpoint filter; returning empties.")
+        return (np.empty((0, 2, 3), dtype=float),
+                np.empty((0,), dtype=float),
+                np.empty((0,), dtype=float))
+
     edge_weights = weights[rows, cols]
 
-    # select top fraction globally by threshold
-    thresh = absolute_quantile(N, weights, top_frac_weights_displayed)
+    # Threshold: global vs local (displayed-only) quantile
+    if global_weights_frac:
+        thresh = absolute_quantile(N, weights, top_frac_weights_displayed)
+    else:
+        thresh = float(np.quantile(edge_weights, 1.0 - top_frac_weights_displayed))
     kept = edge_weights >= thresh
     rows, cols = rows[kept], cols[kept]
-    _logger.debug("build_line_segments: edges kept by threshold=%d (thresh=%.6g)", rows.size, float(thresh))
 
-    # network data for kept edges
-    color_weights   = absolutely_normalized_weights[rows, cols]
-    opacity_weights = row_wise_normalized_weights[rows, cols]
+    if rows.size == 0:
+        _logger.debug("build_line_segments: no edges kept after threshold; returning empties.")
+        return (np.empty((0, 2, 3), dtype=float),
+                np.empty((0,), dtype=float),
+                np.empty((0,), dtype=float))
 
-    line_segments = np.stack([coords[rows], coords[cols]], axis=1)  # (E,2,3)
-    _logger.debug("build_line_segments: segments.shape=%s, color_w.shape=%s, opacity_w.shape=%s",
+    # Build a matrix containing ONLY the kept edges (others zeroed)
+    displayed_weights = np.zeros_like(weights)
+    displayed_weights[rows, cols] = weights[rows, cols]
+    displayed_weights[cols, rows] = weights[rows, cols]  # keep symmetry for row sums
+
+    # Opacity weights: global vs displayed-only
+    if global_opacity:
+        opacity_weights = row_wise_norm(weights)[rows, cols]
+    else:
+        opacity_weights = row_wise_norm(displayed_weights)[rows, cols]
+
+    # Color weights: global vs displayed-only (absolute normalization)
+    if global_color_saturation:
+        color_weights = absolute_norm(weights)[rows, cols]
+    else:
+        color_weights = absolute_norm(displayed_weights)[rows, cols]
+
+    # Coordinates: EXPECT (N, 3)
+    coords = np.asarray(coords)
+    if coords.shape[0] != N:
+        raise ValueError(
+            f"`coords` must be shape (N, 3) with N={N}. "
+            "If you spread only displayed nodes, create a copy of the full frame coords and "
+            "overwrite those displayed rows before calling this function."
+        )
+
+    # Segments (E, 2, 3)
+    line_segments = np.stack([coords[rows], coords[cols]], axis=1)
+
+    _logger.debug("build_line_segments: segments.shape=%s, color_w.shape=%s, opacity_w.shape=%s, thresh=%.6g, kept=%d",
                   getattr(line_segments, "shape", None),
                   getattr(color_weights, "shape", None),
-                  getattr(opacity_weights, "shape", None))
+                  getattr(opacity_weights, "shape", None),
+                  thresh, rows.size)
 
     return line_segments, color_weights, opacity_weights
 
