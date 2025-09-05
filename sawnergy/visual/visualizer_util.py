@@ -1,11 +1,9 @@
 # third-pary
 import numpy as np
-import matplotlib as mpl
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 # built-in
-from typing import Iterable, Callable
+from typing import Iterable
 import logging
 
 # *----------------------------------------------------*
@@ -33,7 +31,7 @@ SLATE = "#475569"       # Slate Gray
 
 # CONTINUOUS SPECTRUM
 HEAT = "gist_heat"
-COLD = "winter"
+COLD = "cool"
 
 # *----------------------------------------------------*
 #                       FUNCTIONS
