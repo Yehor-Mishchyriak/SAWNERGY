@@ -210,8 +210,8 @@ class Visualizer:
         self,
         frame_id: int,
         displayed_nodes: np.typing.ArrayLike | Literal["ALL"] | None = "ALL",
-        dispalyed_pairwise_attraction_for_nodes: np.typing.ArrayLike | Literal["ALL"] | None = "ALL",
-        dispalyed_pairwise_repulsion_for_nodes: np.typing.ArrayLike | Literal["ALL"] | None = "ALL",
+        dispalyed_pairwise_attraction_for_nodes: np.typing.ArrayLike | Literal["DISPLAYED_NODES"] | None = "DISPLAYED_NODES",
+        dispalyed_pairwise_repulsion_for_nodes: np.typing.ArrayLike | Literal["DISPLAYED_NODES"] | None = "DISPLAYED_NODES",
         frac_node_interactions_displayed: float = 0.01, # 1%
         node_colors: str | dict[Iterable[int], str] | None = None,
         title: str | None = None,
@@ -235,7 +235,7 @@ class Visualizer:
         if displayed_nodes is not None:
             if isinstance(displayed_nodes, str):
                 if displayed_nodes == "ALL":
-                    displayed_nodes = ALL_RESIDUES
+                    displayed_nodes = np.arange(0, self.N, 1)
                     _logger.debug("displayed_nodes='ALL' -> count=%d", displayed_nodes.size)
                 else:
                     _logger.error("Invalid displayed_nodes string: %s", displayed_nodes)
@@ -260,14 +260,14 @@ class Visualizer:
         # ATTRACTIVE EDGES
         if dispalyed_pairwise_attraction_for_nodes is not None:
             if isinstance(dispalyed_pairwise_attraction_for_nodes, str):
-                if dispalyed_pairwise_attraction_for_nodes == "ALL":
-                    dispalyed_pairwise_attraction_for_nodes = ALL_RESIDUES
-                    _logger.debug("Attraction nodes='ALL' -> count=%d", dispalyed_pairwise_attraction_for_nodes.size)
+                if dispalyed_pairwise_attraction_for_nodes == "DISPLAYED_NODES":
+                    dispalyed_pairwise_attraction_for_nodes = displayed_nodes
+                    _logger.debug("Attraction nodes='DISPLAYED_NODES' -> count=%d", dispalyed_pairwise_attraction_for_nodes.size)
                 else:
                     _logger.error("Invalid attraction selector string: %s", dispalyed_pairwise_attraction_for_nodes)
                     raise ValueError(
                             "'dispalyed_pairwise_attraction_for_nodes' has to be either an ArrayLike "
-                            "collection of node indices, or an 'ALL' string, "
+                            "collection of node indices, or an 'DISPLAYED_NODES' string, "
                             "or None.")
             else:
                 dispalyed_pairwise_attraction_for_nodes = np.asarray(dispalyed_pairwise_attraction_for_nodes)-1 # 1-base indexing
@@ -297,14 +297,14 @@ class Visualizer:
         # REPULSIVE EDGES
         if dispalyed_pairwise_repulsion_for_nodes is not None:
             if isinstance(dispalyed_pairwise_repulsion_for_nodes, str):
-                if dispalyed_pairwise_repulsion_for_nodes == "ALL":
-                    dispalyed_pairwise_repulsion_for_nodes = ALL_RESIDUES
-                    _logger.debug("Repulsion nodes='ALL' -> count=%d", dispalyed_pairwise_repulsion_for_nodes.size)
+                if dispalyed_pairwise_repulsion_for_nodes == "DISPLAYED_NODES":
+                    dispalyed_pairwise_repulsion_for_nodes = displayed_nodes
+                    _logger.debug("Repulsion nodes='DISPLAYED_NODES' -> count=%d", dispalyed_pairwise_repulsion_for_nodes.size)
                 else:
                     _logger.error("Invalid repulsion selector string: %s", dispalyed_pairwise_repulsion_for_nodes)
                     raise ValueError(
                             "'dispalyed_pairwise_repulsion_for_nodes' has to be either an ArrayLike "
-                            "collection of node indices, or an 'ALL' string, "
+                            "collection of node indices, or an 'DISPLAYED_NODES' string, "
                             "or None.")
             else:
                 dispalyed_pairwise_repulsion_for_nodes = np.asarray(dispalyed_pairwise_repulsion_for_nodes)-1 # 1-base indexing
@@ -396,3 +396,11 @@ class Visualizer:
             else:
                 plt.show()
         _logger.debug("build_frame completed.")
+
+
+__all__ = [
+    "Visualizer"
+]
+
+if __name__ == "__main__":
+    pass
