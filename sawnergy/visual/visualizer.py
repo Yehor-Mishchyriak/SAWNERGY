@@ -131,7 +131,7 @@ class Visualizer:
 
     # ---------- HELPER FIELDS --------- #
         # NOTE: 'under the hood' everything is 0-base indexed,
-        # BUT, from the API point of view, the idexing is 1-base,
+        # BUT, from the API point of view, the indexing is 1-base,
         # because amino acid residues are 1-base indexed.
         self._residue_norm = mpl.colors.Normalize(0,  self.N-1) # uniform coloring
         self.default_node_color = default_node_color
@@ -297,7 +297,14 @@ class Visualizer:
             `spread` was applied; otherwise the input array is returned.
         """
         _logger.debug("_fix_view | coords.shape=%s, padding=%s, spread=%s",
-                      getattr(coordinates, "shape", None), padding, spread)
+                        getattr(coordinates, "shape", None), padding, spread)
+
+        # Apply spread first so limits reflect the final positions
+        if spread != 1.0:
+            center = coordinates.mean(axis=0, keepdims=True)
+            coordinates = center + spread * (coordinates - center)
+            _logger.debug("_fix_view | applied spread around centroid.")
+
         orig_min = coordinates.min(axis=0)
         orig_max = coordinates.max(axis=0)
         orig_span = np.maximum(orig_max - orig_min, 1e-12)
@@ -309,12 +316,8 @@ class Visualizer:
         self._ax.set_zlim(xyz_min[2], xyz_max[2])
         self._ax.set_box_aspect(np.maximum(xyz_max - xyz_min, 1e-12))
         _logger.debug("_fix_view | bounds set: x=(%s,%s), y=(%s,%s), z=(%s,%s)",
-                      xyz_min[0], xyz_max[0], xyz_min[1], xyz_max[1], xyz_min[2], xyz_max[2])
+                        xyz_min[0], xyz_max[0], xyz_min[1], xyz_max[1], xyz_min[2], xyz_max[2])
 
-        if spread != 1.0:
-            center = coordinates.mean(axis=0, keepdims=True)
-            coordinates = center + spread * (coordinates - center)
-            _logger.debug("_fix_view | applied spread around centroid.")
         return coordinates
 
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
@@ -331,7 +334,7 @@ class Visualizer:
         global_interactions_frac: bool = True,
         global_opacity: bool = True,
         global_color_saturation: bool = True,
-        node_colors: str | tuple[Iterable[int], str] | None = None,
+        node_colors: str | tuple[tuple[Iterable[int], str]] | None = None,
         title: str | None = None,
         padding: float = 0.1,
         spread: float = 1.0,
@@ -388,7 +391,6 @@ class Visualizer:
         # PRELIMINARY
         _logger.debug("build_frame called | frame_id(1-based)=%s, frac_node_interactions_displayed=%s, padding=%s, spread=%s, show=%s, show_node_labels=%s",
                       frame_id, frac_node_interactions_displayed, padding, spread, show, show_node_labels)
-        ALL_RESIDUES = np.arange(0, self.N, 1)
         frame_id -= 1 # 1-base indexing
         _logger.debug("build_frame | using frame_id(0-based)=%s", frame_id)
 
@@ -509,7 +511,7 @@ class Visualizer:
         else:
             color_array_full = visualizer_util.map_groups_to_colors(
                 N=self.N,
-                groups= {} if node_colors is None else node_colors,
+                groups=node_colors,
                 default_color=self.default_node_color,
                 one_based=True
             )
@@ -522,7 +524,7 @@ class Visualizer:
         if attractive_edges is not None:
             attractive_cmap = plt.get_cmap(attractive_edge_cmap)
             attr_rgba = attractive_cmap(attractive_color_weights)         # (E,4)
-            attr_rgba[:, 3] = repulsive_opacity_weights if False else attractive_opacity_weights 
+            attr_rgba[:, 3] = attractive_opacity_weights
             self._update_attr_edges(attractive_edges,
                                     colors=attr_rgba,
                                     opacity=None)
@@ -620,7 +622,7 @@ class Visualizer:
             _logger.debug("animate_trajectory | empty frame list -> return")
             return
 
-        build_kwargs.setdefault("show", False)
+        build_kwargs["show"] = False
 
         try:
             if loop:

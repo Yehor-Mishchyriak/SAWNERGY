@@ -78,7 +78,7 @@ def warm_start_matplotlib() -> None:
         _logger.debug("warm_start_matplotlib: 3D warmup failed: %s", e)
 
 def map_groups_to_colors(N: int,
-                        groups: tuple[Iterable[int], str] | None,
+                        groups: tuple[tuple[Iterable[int], str]] | None,
                         default_color: str,
                         one_based: bool = True):
     """Map index groups to RGBA colors.
@@ -88,7 +88,7 @@ def map_groups_to_colors(N: int,
 
     Args:
         N: Total number of items (length of the output color array).
-        groups: An optional iterable of ``(indices, color_hex)`` pairs, where
+        groups: An optional tuple of ``(indices, color_hex)`` pairs, where
             ``indices`` is any iterable of int indices and ``color_hex`` is a
             Matplotlib-parsable color (e.g., ``"#EF4444"``). If ``None``, all
             entries are set to ``default_color``.
