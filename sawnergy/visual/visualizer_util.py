@@ -1,5 +1,6 @@
 # third-pary
 import numpy as np
+import matplotlib as mpl
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
@@ -81,47 +82,50 @@ def map_groups_to_colors(N: int,
 #    SCENE CONSTRUCTION     
 # -=-=-=-=-=-=-=-=-=-=-=- #
 
-def absolute_quantile(): # low energy cutoff
-    pass
+def absolute_quantile(N: int, weights: np.ndarray, frac: float) -> float:
+    r, c = np.triu_indices(N, k=1)
+    vals = weights[r, c]
+    if vals.size == 0:
+        return 0.0
+    return float(np.quantile(vals, 1.0 - frac))
 
-def row_wise_norm(): # opacity
-    pass
+def row_wise_norm(weights: np.ndarray) -> np.ndarray:
+    return weights / np.sum(weights, axis=1, keepdims=True)
 
-def absolute_norm(): # color
-    pass
+def absolute_norm(weights: np.ndarray) -> np.ndarray:
+    return weights / np.sum(weights)
 
 def build_line_segments(
     N: int,
     include: np.ndarray, 
     coords: np.ndarray,
     weights: np.ndarray,
-    thresh: float,
-    colors: str,
-    *,
-    color_norm: Callable,
-    opacity_norm: Callable):
+    top_frac_weights_displayed: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
-    rows, cols = np.triu_indices(N, k=1) # skip the main diag
+    absolutely_normalized_weights = absolute_norm(weights)
+    row_wise_normalized_weights   = row_wise_norm(weights)
 
-    rows = rows[np.isin(include)]
-    cols = cols[np.isin(include)]
+    # all candidate edges (upper triangle)
+    rows, cols = np.triu_indices(N, k=1) # rows='from', cols='to'
 
-    edge_weights = weights[rows, cols] # 1D edge list
-    kept = edge_weights > thresh
+    inc = np.zeros(N, dtype=bool)
+    inc[np.asarray(include, dtype=int)] = True
+
+    edge_mask = inc[rows] & inc[cols] # make sure both endpoints are included
+    rows, cols = rows[edge_mask], cols[edge_mask]
+
+    # weights for those edges
+    edge_weights = weights[rows, cols]
+
+    # select top fraction globally by threshold
+    thresh = absolute_quantile(N, weights, top_frac_weights_displayed)
+    kept = edge_weights >= thresh
     rows, cols = rows[kept], cols[kept]
 
-    # network data:
-    edge_weights = edge_weights[kept]
-    node_coords = coords[include, :]
-    
-    color_norm = Normalize(vmin=edge_weights.min(), vmax=edge_weights.max())
-    opacity_norm = Normalize(vmin=edge_weights.min(), vmax=edge_weights.max())
+    # network data for kept edges
+    color_weights   = absolutely_normalized_weights[rows, cols]
+    opacity_weights = row_wise_normalized_weights[rows, cols]
 
-    row_wise_opacity = 
-    uniform_color_map = 
+    line_segments = np.stack([coords[rows], coords[cols]], axis=1)  # (E,2,3)
 
-    segments = np.stack([node_coords[rows], node_coords[cols]], axis=1) # I'm a bit confused about masking here
-    colors = ...
-    opacities = ...
-
-    return segments, colors, opacities
+    return line_segments, color_weights, opacity_weights
