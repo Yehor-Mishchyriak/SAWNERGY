@@ -42,7 +42,20 @@ COLD = "winter"
 # -=-=-=-=-=-=-=-=-=-=-=- #
 
 def warm_start_matplotlib() -> None:
-    """Prime font cache & 3D pipeline to avoid first-draw stalls."""
+    """Prime Matplotlib caches and the 3D pipeline.
+
+    This function performs a lightweight warm-up to avoid the first-draw stall
+    often seen in Matplotlib, especially when using 3D axes and colorbars.
+    It preloads the font manager and triggers a minimal 3D render.
+
+    Side Effects:
+        Initializes Matplotlib's font cache and issues a tiny 3D draw with a
+        colorbar, then closes the temporary figure.
+
+    Raises:
+        This function intentionally swallows all exceptions and logs them at
+        DEBUG level; nothing is raised to the caller.
+    """
     _logger.debug("warm_start_matplotlib: starting.")
     try:
         from matplotlib import font_manager
@@ -68,6 +81,35 @@ def map_groups_to_colors(N: int,
                         groups: tuple[Iterable[int], str] | None,
                         default_color: str,
                         one_based: bool = True):
+    """Map index groups to RGBA colors.
+
+    Builds an RGBA color array of length ``N`` initialized to ``default_color``,
+    then overwrites entries specified by the provided groups.
+
+    Args:
+        N: Total number of items (length of the output color array).
+        groups: An optional iterable of ``(indices, color_hex)`` pairs, where
+            ``indices`` is any iterable of int indices and ``color_hex`` is a
+            Matplotlib-parsable color (e.g., ``"#EF4444"``). If ``None``, all
+            entries are set to ``default_color``.
+        default_color: Fallback color used for all indices not covered by
+            ``groups``.
+        one_based: If ``True``, the indices in each group are interpreted as
+            1-based and will be converted internally to 0-based. If ``False``,
+            indices are used as-is.
+
+    Returns:
+        list[tuple[float, float, float, float]]: A list of RGBA tuples of length
+        ``N`` suitable for Matplotlib facecolors.
+
+    Raises:
+        IndexError: If any provided index is out of ``[0, N-1]`` after
+            converting from 1-based (when ``one_based=True``).
+
+    Notes:
+        - No deduplication is performed across groups; later groups overwrite
+          earlier ones for the same index.
+    """
     _logger.debug("map_groups_to_colors: N=%s, groups=%s, default_color=%s, one_based=%s",
                   N, None if groups is None else len(groups), default_color, one_based)
     base = mcolors.to_rgba(default_color)
@@ -89,6 +131,27 @@ def map_groups_to_colors(N: int,
 # -=-=-=-=-=-=-=-=-=-=-=- #
 
 def absolute_quantile(N: int, weights: np.ndarray, frac: float) -> float:
+    """Compute a global upper-triangle weight quantile threshold.
+
+    Extracts the upper triangular (k=1) entries of the ``weights`` matrix for a
+    graph of size ``N`` and returns the quantile corresponding to
+    ``1.0 - frac``. For example, ``frac=0.25`` yields the 75th percentile.
+
+    Args:
+        N: Number of nodes (size of the square ``weights`` matrix).
+        weights: 2D array of shape ``(N, N)`` containing edge weights.
+        frac: Fraction in ``[0, 1]`` representing the *top* share of edges to
+            keep (e.g., 0.01 means top 1%). Internally converts to the
+            ``1.0 - frac`` quantile.
+
+    Returns:
+        float: The threshold value such that edges >= threshold correspond
+        approximately to the top ``frac`` of the (upper-triangle) weights.
+
+    Raises:
+        ValueError: If ``weights`` has incompatible shape with ``N`` (not
+            explicitly validated here, but downstream NumPy may raise).
+    """
     _logger.debug("absolute_quantile: N=%s, weights.shape=%s, frac=%s",
                   N, getattr(weights, "shape", None), frac)
     r, c = np.triu_indices(N, k=1)
@@ -101,6 +164,23 @@ def absolute_quantile(N: int, weights: np.ndarray, frac: float) -> float:
     return q
 
 def row_wise_norm(weights: np.ndarray) -> np.ndarray:
+    """Normalize an adjacency/weight matrix row-wise.
+
+    Each row is divided by its row sum. This is commonly used to derive
+    per-source probabilities for edges.
+
+    Args:
+        weights: 2D array, typically ``(N, N)`` adjacency/weight matrix.
+
+    Returns:
+        np.ndarray: Array of the same shape as ``weights`` where each row sums
+        to ~1 (subject to floating-point error).
+
+    Notes:
+        - No zero-division protection is applied. If a row sums to 0, the
+          result for that row will be ``NaN``/``inf`` depending on NumPy
+          settings.
+    """
     _logger.debug("row_wise_norm: weights.shape=%s", getattr(weights, "shape", None))
     sums = np.sum(weights, axis=1, keepdims=True)
     out = weights / sums
@@ -111,6 +191,22 @@ def row_wise_norm(weights: np.ndarray) -> np.ndarray:
     return out
 
 def absolute_norm(weights: np.ndarray) -> np.ndarray:
+    """Normalize an array by its total sum.
+
+    Divides all entries of ``weights`` by ``weights.sum()`` to obtain values
+    that sum to ~1.
+
+    Args:
+        weights: Array (any shape). Often an ``(N, N)`` matrix of edge weights.
+
+    Returns:
+        np.ndarray: Array with the same shape as ``weights`` whose values sum to
+        ~1.
+
+    Notes:
+        - No zero-division protection is applied. If the total sum is 0, the
+          result will contain ``NaN``/``inf`` depending on NumPy settings.
+    """
     _logger.debug("absolute_norm: weights.shape=%s", getattr(weights, "shape", None))
     total = np.sum(weights)
     out = weights / total
@@ -131,6 +227,45 @@ def build_line_segments(
     global_opacity: bool = True,
     global_color_saturation: bool = True
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Construct 3D line segments and per-edge style weights.
+
+    Builds edge segments between selected node pairs and returns arrays used for
+    color and opacity weighting. The selection is performed by:
+    1) keeping only edges whose both endpoints are in ``include``, then
+    2) thresholding by a quantile on weights (globally or only among candidate
+       edges), keeping approximately the top ``top_frac_weights_displayed``.
+
+    Args:
+        N: Total number of nodes (size of the weight matrix).
+        include: 1D array of node indices to consider (0-based).
+        coords: Array of shape ``(N, 3)`` with per-node 3D coordinates used to
+            construct line segments.
+        weights: 2D array of shape ``(N, N)`` with edge weights.
+        top_frac_weights_displayed: Fraction in ``[0, 1]`` specifying how many
+            of the heaviest edges to keep (approximately).
+        global_weights_frac: If ``True``, the quantile threshold is computed
+            from **all** upper-triangle weights. If ``False``, it is computed
+            only from candidate edges (those with both endpoints in
+            ``include``).
+        global_opacity: If ``True``, opacity weights are derived from
+            ``row_wise_norm(weights)``. If ``False``, they are derived only from
+            the kept edges (others zeroed) before normalizing.
+        global_color_saturation: If ``True``, color weights are derived from
+            ``absolute_norm(weights)``. If ``False``, they are derived only from
+            the kept edges (others zeroed) before normalizing.
+
+    Returns:
+        tuple:
+            - ``line_segments`` (np.ndarray): Shape ``(E, 2, 3)`` where each row
+              contains the ``[from_xyz, to_xyz]`` coordinates for one edge.
+            - ``color_weights`` (np.ndarray): Shape ``(E,)`` scalar weights
+              intended for colormap mapping (e.g., saturation).
+            - ``opacity_weights`` (np.ndarray): Shape ``(E,)`` scalar weights
+              intended for alpha/opacity.
+
+    Raises:
+        ValueError: If ``coords`` is not shape ``(N, 3)``.
+    """
     _logger.debug(
         "build_line_segments: N=%s, include.len=%s, coords.shape=%s, weights.shape=%s, top_frac=%s, "
         "global_weights_frac=%s, global_opacity=%s, global_color_saturation=%s",

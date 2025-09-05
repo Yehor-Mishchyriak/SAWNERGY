@@ -25,6 +25,28 @@ _logger = logging.getLogger(__name__)
 # *----------------------------------------------------*
 
 class Visualizer:
+    """3D network/trajectory visualizer.
+
+    This class renders nodes (scatter) and pairwise interactions (line
+    segments) for frames of a trajectory stored in an ArrayStorage-backed
+    file (e.g., Zarr in a ZIP). It supports showing only a subset of nodes,
+    coloring nodes by groups or a colormap, drawing attractive/repulsive
+    edges by weight quantiles, and animating the full trajectory.
+
+    Attributes:
+        no_instances: Class-level flag to warm-start Matplotlib only once.
+        COM_coords: Trajectory coordinates, shape (T, N, 3).
+        attr_energies: Attractive interaction weights, shape (T, N, N).
+        repuls_energies: Repulsive interaction weights, shape (T, N, N).
+        N: Number of nodes (int).
+        _fig: Matplotlib Figure.
+        _ax: 3D Axes.
+        _scatter: PathCollection for node markers.
+        _attr: Line3DCollection for attractive edges.
+        _repuls: Line3DCollection for repulsive edges.
+        _residue_norm: Normalizer mapping [0, N-1] to [0, 1] for colormaps.
+        default_node_color: Hex color string used when no group color is set.
+    """
 
     no_instances: bool = True
 
@@ -44,7 +66,27 @@ class Visualizer:
         attr_data_name: str = "ATTRACTIVE_energies",
         repuls_data_name: str = "REPULSIVE_energies",
     ) -> None:
+        """Initialize the visualizer and load datasets.
 
+        Args:
+            RIN_path: Path to the archive or store containing datasets.
+            figsize: Figure size (inches) for the Matplotlib window.
+            node_size: Marker area for nodes (passed to `Axes3D.scatter`).
+            edge_width: Line width for edge collections.
+            default_node_color: Hex color used for nodes not in any group.
+            depthshade: Whether to apply depth shading to scatter points.
+            antialiased: Whether to antialias line collections.
+            init_elev: Initial elevation angle (degrees) for 3D view.
+            init_azim: Initial azimuth angle (degrees) for 3D view.
+            COM_dataset_name: Name of the coordinates dataset in storage.
+            attr_data_name: Name of the attractive weights dataset in storage.
+            repuls_data_name: Name of the repulsive weights dataset in storage.
+
+        Side Effects:
+            - Optionally warms up Matplotlib (first instance only).
+            - Opens and reads required datasets from storage.
+            - Creates a figure, 3D axes, and empty artists for later updates.
+        """
     # ---------- WARM UP MPL ------------ #
         _logger.debug("Visualizer.__init__ start | RIN_path=%s, figsize=%s, node_size=%s, edge_width=%s, depthshade=%s, antialiased=%s, init_view=(%s,%s)",
                       RIN_path, figsize, node_size, edge_width, depthshade, antialiased, init_elev, init_azim)
@@ -105,6 +147,17 @@ class Visualizer:
     
     # --- UPDS ---
     def _update_scatter(self, xyz, *, colors=None):
+        """Update scatter artist with new positions (and optional colors).
+
+        Args:
+            xyz: Array-like of shape (N_visible, 3) containing node positions
+                for the *currently displayed* nodes.
+            colors: Optional array of RGBA colors (len=N_visible) or a single
+                color broadcastable by Matplotlib.
+
+        Returns:
+            None
+        """
         try:
             _logger.debug("_update_scatter | xyz.shape=%s, colors=%s",
                           getattr(xyz, "shape", None),
@@ -118,6 +171,17 @@ class Visualizer:
         _logger.debug("_update_scatter done | n_points=%s", len(x) if hasattr(x, "__len__") else "unknown")
 
     def _update_attr_edges(self, segs, *, colors=None, opacity=None):
+        """Update attractive edge collection.
+
+        Args:
+            segs: Array of shape (E, 2, 3) with edge endpoints.
+            colors: Optional array of RGB/RGBA per-edge colors or a single color.
+            opacity: Optional array or scalar alpha(s). If both `colors` and
+                `opacity` are provided, alpha will be fused into the RGBA.
+
+        Returns:
+            None
+        """
         _logger.debug("_update_attr_edges | segs.shape=%s, colors=%s, opacity=%s",
                       getattr(segs, "shape", None),
                       "provided" if colors is not None else "None",
@@ -139,6 +203,17 @@ class Visualizer:
         _logger.debug("_update_attr_edges done.")
 
     def _update_repuls_edges(self, segs, *, colors=None, opacity=None):
+        """Update repulsive edge collection.
+
+        Args:
+            segs: Array of shape (E, 2, 3) with edge endpoints.
+            colors: Optional array of RGB/RGBA per-edge colors or a single color.
+            opacity: Optional array or scalar alpha(s). If both `colors` and
+                `opacity` are provided, alpha will be fused into the RGBA.
+
+        Returns:
+            None
+        """
         _logger.debug("_update_repuls_edges | segs.shape=%s, colors=%s, opacity=%s",
                       getattr(segs, "shape", None),
                       "provided" if colors is not None else "None",
@@ -161,20 +236,44 @@ class Visualizer:
     # --- CLEARS ---
 
     def _clear_scatter(self):
+        """Clear node positions from the scatter artist.
+
+        Returns:
+            None
+        """
         _logger.debug("_clear_scatter called.")
         self._scatter._offsets3d = ([], [], [])
 
     def _clear_attr_edges(self):
+        """Clear all attractive edges from the collection.
+
+        Returns:
+            None
+        """
         _logger.debug("_clear_attr_edges called.")
         self._attr.set_segments(np.empty((0, 2, 3)))
 
     def _clear_repuls_edges(self):
+        """Clear all repulsive edges from the collection.
+
+        Returns:
+            None
+        """
         _logger.debug("_clear_repuls_edges called.")
         self._repuls.set_segments(np.empty((0, 2, 3)))
     
     # --- FINAL UPD ---
 
     def _update_canvas(self, *, pause_for: float = 0.0):
+        """Request a canvas redraw and optionally pause.
+
+        Args:
+            pause_for: If > 0, calls `plt.pause(pause_for)` to advance GUI
+                event loops and create a visible delay (useful in animations).
+
+        Returns:
+            None
+        """
         _logger.debug("_update_canvas | pause_for=%s", pause_for)
         self._fig.canvas.draw_idle()
         if pause_for > 0.0:
@@ -182,6 +281,21 @@ class Visualizer:
 
     # ADJUST THE VIEW
     def _fix_view(self, coordinates: np.ndarray, padding: float, spread: float):
+        """Adjust axes limits/box aspect and apply optional spatial spreading.
+
+        Computes a bounding box around provided coordinates, expands it by
+        ``padding`` (relative to span), sets axes limits and box aspect, and
+        optionally spreads points around their centroid by factor ``spread``.
+
+        Args:
+            coordinates: Array of shape (M, 3) for currently displayed nodes.
+            padding: Fraction of the original span added to min/max on each axis.
+            spread: If != 1.0, multiply deviations from centroid by this factor.
+
+        Returns:
+            np.ndarray: Possibly modified copy of `coordinates` (same shape) if
+            `spread` was applied; otherwise the input array is returned.
+        """
         _logger.debug("_fix_view | coords.shape=%s, padding=%s, spread=%s",
                       getattr(coordinates, "shape", None), padding, spread)
         orig_min = coordinates.min(axis=0)
@@ -227,7 +341,50 @@ class Visualizer:
         node_label_size: int = 6,
         attractive_edge_cmap: str = visualizer_util.HEAT,
         repulsive_edge_cmap: str = visualizer_util.COLD):
-        
+        """Render a single frame into existing artists.
+
+        This updates node positions/colors and draws attractive/repulsive
+        edges chosen by a quantile threshold on weights. Indices passed from
+        the public API are interpreted as 1-based and converted to 0-based
+        internally.
+
+        Args:
+            frame_id: 1-based frame index to render.
+            displayed_nodes: Iterable of node indices to show (1-based),
+                "ALL" for all nodes, or None to return early.
+            displayed_pairwise_attraction_for_nodes: Iterable of node indices
+                (1-based) or the literal "DISPLAYED_NODES" to restrict
+                candidate attractive edges to those whose endpoints are both
+                in this set.
+            displayed_pairwise_repulsion_for_nodes: Same contract as
+                `displayed_pairwise_attraction_for_nodes` but for repulsive edges.
+            frac_node_interactions_displayed: Fraction of heaviest edges to keep
+                (approximate top-`frac`) after endpoint filtering.
+            global_interactions_frac: If True, the threshold uses all
+                upper-triangle weights; otherwise only candidate edges.
+            global_opacity: If True, opacity uses global row-wise normalization;
+                otherwise, normalization uses only kept edges (others set to 0).
+            global_color_saturation: If True, color uses global absolute
+                normalization; otherwise, normalization uses only kept edges.
+            node_colors: Either a Matplotlib colormap name (str) or a tuple of
+                (indices, hex_color) group pairs for per-node colors.
+            title: Optional title displayed in axis coordinates.
+            padding: Fractional padding around the displayed nodes' bounds.
+            spread: Spatial spread multiplier applied about centroid (displayed
+                nodes only).
+            show: If True, shows the figure (non-blocking in IPython).
+            show_node_labels: If True, annotate nodes with 1-based labels.
+            node_label_size: Font size for the node labels.
+            attractive_edge_cmap: Matplotlib colormap name for attractive edges.
+            repulsive_edge_cmap: Matplotlib colormap name for repulsive edges.
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: If any requested attraction/repulsion node set is not a
+                subset of `displayed_nodes`, or invalid sentinel strings are used.
+        """
         # PRELIMINARY
         _logger.debug("build_frame called | frame_id(1-based)=%s, frac_node_interactions_displayed=%s, padding=%s, spread=%s, show=%s, show_node_labels=%s",
                       frame_id, frac_node_interactions_displayed, padding, spread, show, show_node_labels)
@@ -419,11 +576,30 @@ class Visualizer:
         loop: bool = False,
         **build_kwargs,
     ):
-        """
-        Play the trajectory by reusing existing artists.
-        Pass the same kwargs you'd pass to build_frame (except show=False which is enforced).
-        If `loop=True`, frames repeat until the figure window is closed or the user
-        interrupts (Ctrl+C).
+        """Play frames as an animation by reusing existing artists.
+
+        Iterates frames from `start` to `stop` (inclusive, stepping by `step`)
+        and calls `build_frame` for each, pausing `interval_ms` between
+        updates. If `loop=True`, the sequence repeats until the figure is
+        closed or the user interrupts.
+
+        Args:
+            start: 1-based starting frame index.
+            stop: 1-based ending frame index (inclusive). Defaults to the last
+                available frame if None.
+            step: Step size between frames. Negative values play backwards.
+            interval_ms: Pause between frames in milliseconds.
+            loop: If True, repeat the frame sequence indefinitely (until the
+                figure is closed or interrupted).
+            **build_kwargs: Additional keyword arguments forwarded to
+                `build_frame` (e.g., `displayed_nodes`, `padding`, `spread`,
+                `node_colors`, etc.). `show=False` is enforced internally.
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: If `step` is zero.
         """
         _logger.debug(
             "animate_trajectory | start=%s, stop=%s, step=%s, interval_ms=%s, loop=%s",
