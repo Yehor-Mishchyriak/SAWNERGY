@@ -210,8 +210,8 @@ class Visualizer:
         self,
         frame_id: int,
         displayed_nodes: np.typing.ArrayLike | Literal["ALL"] | None = "ALL",
-        dispalyed_pairwise_attraction_for_nodes: np.typing.ArrayLike | Literal["DISPLAYED_NODES"] | None = "DISPLAYED_NODES",
-        dispalyed_pairwise_repulsion_for_nodes: np.typing.ArrayLike | Literal["DISPLAYED_NODES"] | None = "DISPLAYED_NODES",
+        displayed_pairwise_attraction_for_nodes: np.typing.ArrayLike | Literal["DISPLAYED_NODES"] | None = "DISPLAYED_NODES",
+        displayed_pairwise_repulsion_for_nodes: np.typing.ArrayLike | Literal["DISPLAYED_NODES"] | None = "DISPLAYED_NODES",
         frac_node_interactions_displayed: float = 0.01, # 1%
         node_colors: str | dict[Iterable[int], str] | None = None,
         title: str | None = None,
@@ -258,29 +258,29 @@ class Visualizer:
         _logger.debug("Nodes after _fix_view | shape=%s", getattr(nodes, "shape", None))
 
         # ATTRACTIVE EDGES
-        if dispalyed_pairwise_attraction_for_nodes is not None:
-            if isinstance(dispalyed_pairwise_attraction_for_nodes, str):
-                if dispalyed_pairwise_attraction_for_nodes == "DISPLAYED_NODES":
-                    dispalyed_pairwise_attraction_for_nodes = displayed_nodes
-                    _logger.debug("Attraction nodes='DISPLAYED_NODES' -> count=%d", dispalyed_pairwise_attraction_for_nodes.size)
+        if displayed_pairwise_attraction_for_nodes is not None:
+            if isinstance(displayed_pairwise_attraction_for_nodes, str):
+                if displayed_pairwise_attraction_for_nodes == "DISPLAYED_NODES":
+                    displayed_pairwise_attraction_for_nodes = displayed_nodes
+                    _logger.debug("Attraction nodes='DISPLAYED_NODES' -> count=%d", displayed_pairwise_attraction_for_nodes.size)
                 else:
-                    _logger.error("Invalid attraction selector string: %s", dispalyed_pairwise_attraction_for_nodes)
+                    _logger.error("Invalid attraction selector string: %s", displayed_pairwise_attraction_for_nodes)
                     raise ValueError(
-                            "'dispalyed_pairwise_attraction_for_nodes' has to be either an ArrayLike "
+                            "'displayed_pairwise_attraction_for_nodes' has to be either an ArrayLike "
                             "collection of node indices, or an 'DISPLAYED_NODES' string, "
                             "or None.")
             else:
-                dispalyed_pairwise_attraction_for_nodes = np.asarray(dispalyed_pairwise_attraction_for_nodes)-1 # 1-base indexing
-                _logger.debug("Attraction nodes provided | count=%d", dispalyed_pairwise_attraction_for_nodes.size)
+                displayed_pairwise_attraction_for_nodes = np.asarray(displayed_pairwise_attraction_for_nodes)-1 # 1-base indexing
+                _logger.debug("Attraction nodes provided | count=%d", displayed_pairwise_attraction_for_nodes.size)
             
-            if np.setdiff1d(dispalyed_pairwise_attraction_for_nodes, displayed_nodes).size > 0:
+            if np.setdiff1d(displayed_pairwise_attraction_for_nodes, displayed_nodes).size > 0:
                 _logger.error("Attraction nodes not a subset of displayed_nodes.")
-                raise ValueError("'dispalyed_pairwise_attraction_for_nodes' must be a subset of 'displayed_nodes'")
+                raise ValueError("'displayed_pairwise_attraction_for_nodes' must be a subset of 'displayed_nodes'")
             
             attractive_edges, attractive_color_weights, attractive_opacity_weights = \
                 visualizer_util.build_line_segments(
                     self.N,
-                    dispalyed_pairwise_attraction_for_nodes,
+                    displayed_pairwise_attraction_for_nodes,
                     nodes,
                     self.attr_energies[frame_id],
                     frac_node_interactions_displayed
@@ -295,29 +295,29 @@ class Visualizer:
             _logger.debug("Attraction edges skipped (selector=None).")
 
         # REPULSIVE EDGES
-        if dispalyed_pairwise_repulsion_for_nodes is not None:
-            if isinstance(dispalyed_pairwise_repulsion_for_nodes, str):
-                if dispalyed_pairwise_repulsion_for_nodes == "DISPLAYED_NODES":
-                    dispalyed_pairwise_repulsion_for_nodes = displayed_nodes
-                    _logger.debug("Repulsion nodes='DISPLAYED_NODES' -> count=%d", dispalyed_pairwise_repulsion_for_nodes.size)
+        if displayed_pairwise_repulsion_for_nodes is not None:
+            if isinstance(displayed_pairwise_repulsion_for_nodes, str):
+                if displayed_pairwise_repulsion_for_nodes == "DISPLAYED_NODES":
+                    displayed_pairwise_repulsion_for_nodes = displayed_nodes
+                    _logger.debug("Repulsion nodes='DISPLAYED_NODES' -> count=%d", displayed_pairwise_repulsion_for_nodes.size)
                 else:
-                    _logger.error("Invalid repulsion selector string: %s", dispalyed_pairwise_repulsion_for_nodes)
+                    _logger.error("Invalid repulsion selector string: %s", displayed_pairwise_repulsion_for_nodes)
                     raise ValueError(
-                            "'dispalyed_pairwise_repulsion_for_nodes' has to be either an ArrayLike "
+                            "'displayed_pairwise_repulsion_for_nodes' has to be either an ArrayLike "
                             "collection of node indices, or an 'DISPLAYED_NODES' string, "
                             "or None.")
             else:
-                dispalyed_pairwise_repulsion_for_nodes = np.asarray(dispalyed_pairwise_repulsion_for_nodes)-1 # 1-base indexing
-                _logger.debug("Repulsion nodes provided | count=%d", dispalyed_pairwise_repulsion_for_nodes.size)
+                displayed_pairwise_repulsion_for_nodes = np.asarray(displayed_pairwise_repulsion_for_nodes)-1 # 1-base indexing
+                _logger.debug("Repulsion nodes provided | count=%d", displayed_pairwise_repulsion_for_nodes.size)
             
-            if np.setdiff1d(dispalyed_pairwise_repulsion_for_nodes, displayed_nodes).size > 0:
+            if np.setdiff1d(displayed_pairwise_repulsion_for_nodes, displayed_nodes).size > 0:
                 _logger.error("Repulsion nodes not a subset of displayed_nodes.")
-                raise ValueError("'dispalyed_pairwise_repulsion_for_nodes' must be a subset of 'displayed_nodes'")
+                raise ValueError("'displayed_pairwise_repulsion_for_nodes' must be a subset of 'displayed_nodes'")
             
             repulsive_edges, repulsive_color_weights, repulsive_opacity_weights = \
                 visualizer_util.build_line_segments(
                     self.N,
-                    dispalyed_pairwise_repulsion_for_nodes,
+                    displayed_pairwise_repulsion_for_nodes,
                     nodes,
                     self.repuls_energies[frame_id],
                     frac_node_interactions_displayed
