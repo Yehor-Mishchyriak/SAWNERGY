@@ -31,7 +31,7 @@ class Visualizer:
     def __init__(
         self,
         RIN_path: str | Path,
-        figsize: tuple[int, int] = (8, 6),
+        figsize: tuple[int, int] = (9, 7),
         node_size: int = 120,
         edge_width: float = 1,
         default_node_color: str = visualizer_util.GRAY,
@@ -72,8 +72,10 @@ class Visualizer:
         _logger.debug("Computed N=%d", self.N)
 
     # - SET UP THE CANVAS AND THE AXES - #
-        self._fig = plt.figure(figsize=figsize)
+        self._fig = plt.figure(figsize=figsize, num="SAWNERGY")
         self._ax  = self._fig.add_subplot(111, projection="3d")
+        self._fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+        self._fig.patch.set_facecolor("#999999")
         self._ax.set_autoscale_on(False)
         self._ax.view_init(elev=init_elev, azim=init_azim)
         self._ax.set_axis_off()
@@ -370,14 +372,15 @@ class Visualizer:
   
         # EXTRAS
         if title:
-            self._fig.suptitle(title)
+            self._ax.text2D(0.5, 0.99, title, transform=self._ax.transAxes,
+                            ha="center", va="top")
             _logger.debug("Title set: %s", title)
 
         if show_node_labels:
             labs = (np.asarray(displayed_nodes, dtype=int) + 1) # one-based labels
             _logger.debug("Adding node labels | count=%d, fontsize=%d", labs.size, node_label_size)
             for (x, y, z), lab in zip(nodes, labs):
-                self._ax.text(float(x), float(y), float(z), str(lab),
+                self._ax.text(float(x)+.3, float(y)+.3, float(z)+1.3, str(lab),
                               fontsize=node_label_size, color="k")
         
         if show:
