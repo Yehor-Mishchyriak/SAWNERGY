@@ -41,6 +41,27 @@ COLD = "winter"
 #       CONVENIENCE     
 # -=-=-=-=-=-=-=-=-=-=-=- #
 
+def ensure_backend(show: bool) -> None:
+    """
+    If the user asked to show a window but no GUI is available, switch to Agg and warn.
+    Must be called *before* importing matplotlib.pyplot.
+    """
+    import os, sys, matplotlib, warnings, logging
+    headless = (
+        sys.platform.startswith("linux")
+        and not os.environ.get("DISPLAY")
+        and not os.environ.get("WAYLAND_DISPLAY")
+    )
+    if show and headless:
+        matplotlib.use("Agg", force=True)
+        warnings.warn(
+            "No GUI/display detected. Falling back to non-interactive 'Agg' backend. "
+            "Figures will be saved to files instead of shown."
+        )
+        logging.getLogger(__name__).warning(
+            "Headless environment detected; switched Matplotlib backend to 'Agg'."
+        )
+
 def warm_start_matplotlib() -> None:
     """Prime Matplotlib caches and the 3D pipeline.
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 # third-pary
 import numpy as np
 import matplotlib as mpl
-import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from matplotlib.collections import PathCollection
 # built-in
@@ -27,11 +26,20 @@ _logger = logging.getLogger(__name__)
 class Visualizer:
     """3D network/trajectory visualizer.
 
-    This class renders nodes (scatter) and pairwise interactions (line
-    segments) for frames of a trajectory stored in an ArrayStorage-backed
-    file (e.g., Zarr in a ZIP). It supports showing only a subset of nodes,
-    coloring nodes by groups or a colormap, drawing attractive/repulsive
-    edges by weight quantiles, and animating the full trajectory.
+    This class renders nodes (scatter) and pairwise interactions (line segments)
+    for frames of a trajectory stored in an ArrayStorage-backed file (e.g., Zarr
+    in a ZIP). It supports showing only a subset of nodes, coloring nodes by
+    groups or a colormap, drawing attractive/repulsive edges by weight quantiles,
+    and animating the full trajectory.
+
+    Backend & GUI behavior:
+        - The Matplotlib backend is chosen in __init__ via
+          visualizer_util.ensure_backend(show), *before* importing pyplot.
+          If `show=True` but no GUI/display is available (e.g., headless Linux),
+          the backend is switched to 'Agg' and a warning is emitted. In this mode
+          figures render off-screen; use savefig() instead of interactive windows.
+        - pyplot is imported lazily inside __init__ after backend selection and
+          stored as `self._plt` to keep backend control deterministic.
 
     Attributes:
         no_instances: Class-level flag to warm-start Matplotlib only once.
@@ -65,6 +73,7 @@ class Visualizer:
         COM_dataset_name: str = "COM",
         attr_data_name: str = "ATTRACTIVE_energies",
         repuls_data_name: str = "REPULSIVE_energies",
+        show: bool = False
     ) -> None:
         """Initialize the visualizer and load datasets.
 
@@ -81,12 +90,23 @@ class Visualizer:
             COM_dataset_name: Name of the coordinates dataset in storage.
             attr_data_name: Name of the attractive weights dataset in storage.
             repuls_data_name: Name of the repulsive weights dataset in storage.
+            show: Hint about intended usage. If True and a GUI/display is available,
+                interactive windows can be shown later (e.g., via `self._plt.show()`).
+                If True but no GUI/display is available, the backend is switched to
+                'Agg' (off-screen) and a warning is issued. This flag does not itself
+                call `show()`; it only influences backend selection.
 
         Side Effects:
-            - Optionally warms up Matplotlib (first instance only).
+            - Selects a Matplotlib backend before importing pyplot; may fall back
+                to 'Agg' in headless environments when `show=True`.
+            - Optionally warms up Matplotlib once per process (first instance only).
             - Opens and reads required datasets from storage.
             - Creates a figure, 3D axes, and empty artists for later updates.
         """
+        # choose GUI backend before importing pyplot
+        visualizer_util.ensure_backend(show)
+        import matplotlib.pyplot as plt
+        self._plt = plt
     # ---------- WARM UP MPL ------------ #
         _logger.debug("Visualizer.__init__ start | RIN_path=%s, figsize=%s, node_size=%s, edge_width=%s, depthshade=%s, antialiased=%s, init_view=(%s,%s)",
                       RIN_path, figsize, node_size, edge_width, depthshade, antialiased, init_elev, init_azim)
@@ -277,7 +297,7 @@ class Visualizer:
         _logger.debug("_update_canvas | pause_for=%s", pause_for)
         self._fig.canvas.draw_idle()
         if pause_for > 0.0:
-            plt.pause(pause_for)
+            self._plt.pause(pause_for)
 
     # ADJUST THE VIEW
     def _fix_view(self, coordinates: np.ndarray, padding: float, spread: float):
@@ -375,11 +395,13 @@ class Visualizer:
             padding: Fractional padding around the displayed nodes' bounds.
             spread: Spatial spread multiplier applied about centroid (displayed
                 nodes only).
-            show: If True, shows the figure (non-blocking in IPython).
-            show_node_labels: If True, annotate nodes with 1-based labels.
-            node_label_size: Font size for the node labels.
-            attractive_edge_cmap: Matplotlib colormap name for attractive edges.
-            repulsive_edge_cmap: Matplotlib colormap name for repulsive edges.
+            show: If True, request a window display:
+                - In IPython/interactive mode, uses non-blocking `show(block=False)` and
+                a short `pause()` to flush the GUI loop.
+                - In non-interactive scripts, uses blocking `show()` at the end
+                of the draw step.
+                - If the backend is 'Agg' (headless fallback), this is a no-op for
+                windows; use `self._plt.savefig(...)` to persist images.
 
         Returns:
             None
@@ -504,7 +526,7 @@ class Visualizer:
 
         # COLOR THE DATA POINTS
         if isinstance(node_colors, str):
-            node_cmap = plt.get_cmap(node_colors)
+            node_cmap = self._plt.get_cmap(node_colors)
             idx0 = np.asarray(displayed_nodes, dtype=int)
             color_array = node_cmap(self._residue_norm(idx0))
             _logger.debug("Node colors via colormap '%s' | count=%d", node_colors, idx0.size)
@@ -522,7 +544,7 @@ class Visualizer:
         self._update_scatter(nodes, colors=color_array)
         
         if attractive_edges is not None:
-            attractive_cmap = plt.get_cmap(attractive_edge_cmap)
+            attractive_cmap = self._plt.get_cmap(attractive_edge_cmap)
             attr_rgba = attractive_cmap(attractive_color_weights)         # (E,4)
             attr_rgba[:, 3] = attractive_opacity_weights
             self._update_attr_edges(attractive_edges,
@@ -531,7 +553,7 @@ class Visualizer:
             _logger.debug("Attraction edges updated on canvas.")
         
         if repulsive_edges is not None:
-            repulsive_cmap = plt.get_cmap(repulsive_edge_cmap)
+            repulsive_cmap = self._plt.get_cmap(repulsive_edge_cmap)
             rep_rgba = repulsive_cmap(repulsive_color_weights)            # (E,4)
             rep_rgba[:, 3] = repulsive_opacity_weights
             self._update_repuls_edges(repulsive_edges,
@@ -560,13 +582,13 @@ class Visualizer:
             except NameError:
                 in_ipy = False
 
-            _logger.debug("Showing figure | in_ipy=%s, interactive=%s", in_ipy, plt.isinteractive())
+            _logger.debug("Showing figure | in_ipy=%s, interactive=%s", in_ipy, self._plt.isinteractive())
 
-            if in_ipy or plt.isinteractive():
-                plt.show(block=False)
-                plt.pause(0.05)
+            if in_ipy or self._plt.isinteractive():
+                self._plt.show(block=False)
+                self._plt.pause(0.05)
             else:
-                plt.show()
+                self._plt.show()
         _logger.debug("build_frame completed.")
 
     def animate_trajectory(
@@ -602,6 +624,13 @@ class Visualizer:
 
         Raises:
             ValueError: If `step` is zero.
+            
+        Notes:
+            - Internally enforces `build_kwargs["show"] = False` during iteration to
+            avoid blocking; a final `self._plt.show()` is issued at the end of a
+            single pass.
+            - In headless mode (backend 'Agg'), no GUI window appears; use
+            `self._plt.savefig(...)` or a writer to export frames.
         """
         _logger.debug(
             "animate_trajectory | start=%s, stop=%s, step=%s, interval_ms=%s, loop=%s",
@@ -627,9 +656,9 @@ class Visualizer:
         try:
             if loop:
                 _logger.debug("animate_trajectory | entering repeat loop until window closed.")
-                while plt.fignum_exists(self._fig.number):
+                while self._plt.fignum_exists(self._fig.number):
                     for fid in frames:
-                        if not plt.fignum_exists(self._fig.number):
+                        if not self._plt.fignum_exists(self._fig.number):
                             break
                         self.build_frame(fid, **build_kwargs)
                         self._update_canvas(pause_for=interval_ms / 1000.0)
@@ -639,7 +668,7 @@ class Visualizer:
                     self.build_frame(fid, **build_kwargs)
                     self._update_canvas(pause_for=interval_ms / 1000.0)
                 # one final show so the window stays up when the loop ends
-                plt.show()
+                self._plt.show()
         except KeyboardInterrupt:
             _logger.debug("animate_trajectory | interrupted by user (KeyboardInterrupt).")
 
