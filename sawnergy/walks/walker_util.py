@@ -74,8 +74,11 @@ class SharedNDArray:
         self.shm   = shm
         self.shape = tuple(shape)
         self.dtype = np.dtype(dtype)
-
         self._default_readonly = default_readonly
+        _logger.debug(
+            "SharedNDArray.__init__(name=%r, shape=%s, dtype=%s, default_readonly=%s)",
+            getattr(self.shm, "name", None), self.shape, self.dtype, self._default_readonly
+        )
 
     def __len__(self) -> int:
         """Return the size of axis 0 (NumPy semantics).
@@ -87,8 +90,11 @@ class SharedNDArray:
             TypeError: If the wrapped array is 0-D (unsized).
         """
         if len(self.shape) == 0:
+            _logger.error("len() called on 0-D array (shape=%s)", self.shape)
             raise TypeError("len() of unsized object")
-        return self.shape[0]
+        length = self.shape[0]
+        _logger.debug("__len__ -> %d", length)
+        return length
 
     def __repr__(self):
         """Debug-friendly representation showing name/shape/dtype."""
@@ -100,18 +106,27 @@ class SharedNDArray:
         - slice     -> view
         - int       -> view (requires ndim >= 2); for 1D, use slice(i, i+1)
         """
+        _logger.debug("__getitem__(ids=%r)", ids)
         arr = self.array 
         if ids is None:
+            _logger.debug("__getitem__: returning full view")
             return arr
         if isinstance(ids, slice):
+            _logger.debug("__getitem__: slice=%s", ids)
             return arr[ids, ...]
         if isinstance(ids, int):
             if arr.ndim == 1:
+                _logger.error(
+                    "__getitem__: 1D int indexing requested (idx=%r) -> would copy; raising",
+                    ids
+                )
                 raise TypeError(
                     "No-copy view for 1D int indexing is impossible. "
                     "Use slice(i, i+1) to get a 1-row view."
                 )
+            _logger.debug("__getitem__: int=%d", ids)
             return arr[ids, ...]
+        _logger.error("__getitem__: unsupported key type %s", type(ids).__name__)
         raise TypeError("Only axis-0 int/slice/None are allowed for no-copy access.")
 
     @classmethod
@@ -135,8 +150,11 @@ class SharedNDArray:
             they match the original settings. Passing inconsistent metadata
             results in undefined views.
         """
+        _logger.debug("SharedNDArray.attach(name=%r, shape=%s, dtype=%s)", name, shape, np.dtype(dtype))
         shm = shared_memory.SharedMemory(name=name, create=False)
-        return cls(shm, shape, dtype)
+        obj = cls(shm, shape, dtype)
+        _logger.debug("Attached to shared memory: name=%r", obj.name)
+        return obj
 
     @classmethod
     def create(cls, shape, dtype, *, from_array=None, name: str | None = None):
@@ -164,6 +182,7 @@ class SharedNDArray:
         """
         dtype = np.dtype(dtype)
         nbytes = int(np.prod(shape)) * dtype.itemsize
+        _logger.debug("SharedNDArray.create(shape=%s, dtype=%s, name=%r, nbytes=%d)", shape, dtype, name, nbytes)
         shm = shared_memory.SharedMemory(create=True, size=nbytes, name=name)
         obj = cls(shm, shape, dtype)
 
@@ -171,10 +190,14 @@ class SharedNDArray:
         if from_array is not None:
             src = np.ascontiguousarray(from_array, dtype=dtype)
             if src.shape != tuple(shape):
+                _logger.error("create: source shape %s does not match %s", src.shape, shape)
                 raise ValueError(f"shape mismatch: {src.shape} vs {shape}")
             view[...] = src
+            _logger.debug("create: seeded from array (shape=%s, dtype=%s)", src.shape, src.dtype)
         else:
             view.fill(0)
+            _logger.debug("create: zero-initialized buffer")
+        _logger.debug("create: created shared segment name=%r", obj.name)
         return obj
 
     def close(self) -> None:
@@ -184,6 +207,7 @@ class SharedNDArray:
         After closing, any existing views into the buffer must **not** be used
         unless you first copy them (e.g., ``np.array(view, copy=True)``).
         """
+        _logger.debug("close(): name=%r", self.name)
         self.shm.close()
 
     def unlink(self) -> None:
@@ -193,6 +217,7 @@ class SharedNDArray:
         called :meth:`close`. After unlinking, the ``name`` may be reused by
         the OS for new segments.
         """
+        _logger.debug("unlink(): name=%r", self.name)
         self.shm.unlink()
 
     def view(self, *, readonly: bool | None = None) -> np.ndarray: # if readonly is False, arr is mutable
@@ -215,7 +240,9 @@ class SharedNDArray:
         """
         arr = np.ndarray(self.shape, dtype=self.dtype, buffer=self.shm.buf)
         ro = self._default_readonly if readonly is None else readonly
-        if ro: arr.flags.writeable = False
+        _logger.debug("view(readonly=%r) -> resolved_readonly=%r", readonly, ro)
+        if ro:
+            arr.flags.writeable = False
         return arr
 
     @property
@@ -226,6 +253,7 @@ class SharedNDArray:
     @property
     def array(self) -> np.ndarray:
         """Default zero-copy view honoring ``default_readonly``."""
+        _logger.debug("array property accessed (default_readonly=%r)", self._default_readonly)
         return self.view(readonly=self._default_readonly)
 
 
