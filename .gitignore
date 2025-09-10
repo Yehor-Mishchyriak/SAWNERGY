@@ -4,16 +4,12 @@
 # except for
 !sawnergy/
 !sawnergy/*.py
-!sawnergy/config.json
 # ----------------------------
-!sawnergy/_cython/
-!sawnergy/_cython/*.pyx
-!sawnergy/_cython/*.py
-!sawnergy/_cython/*.c
-!sawnergy/_cython/*.cpp
-# ----------------------------
-!sawnergy/embedding
+!sawnergy/embedding/
 !sawnergy/embedding/*.py
+# ----------------------------
+!sawnergy/walks/
+!sawnergy/walks/*.py
 # ----------------------------
 !sawnergy/rin/
 !sawnergy/rin/*.py
