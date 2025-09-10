@@ -187,24 +187,20 @@ def absolute_quantile(N: int, weights: np.ndarray, frac: float) -> float:
 def row_wise_norm(weights: np.ndarray) -> np.ndarray:
     """Normalize an adjacency/weight matrix row-wise.
 
-    Each row is divided by its row sum. This is commonly used to derive
-    per-source probabilities for edges.
+    Each row is divided by its row sum. Rows with zero sum become all zeros
+    (no NaNs/inf).
 
     Args:
         weights: 2D array, typically ``(N, N)`` adjacency/weight matrix.
 
     Returns:
-        np.ndarray: Array of the same shape as ``weights`` where each row sums
-        to ~1 (subject to floating-point error).
-
-    Notes:
-        - No zero-division protection is applied. If a row sums to 0, the
-          result for that row will be ``NaN``/``inf`` depending on NumPy
-          settings.
+        np.ndarray: Same shape as ``weights`` with each row summing to ~1, or
+        all zeros for zero-sum rows.
     """
     _logger.debug("row_wise_norm: weights.shape=%s", getattr(weights, "shape", None))
     sums = np.sum(weights, axis=1, keepdims=True)
-    out = weights / sums
+    out = np.zeros_like(weights, dtype=float)
+    np.divide(weights, sums, out=out, where=(sums != 0))
     try:
         _logger.debug("row_wise_norm: row_sums[min=%.6g, max=%.6g]", float(sums.min()), float(sums.max()))
     except Exception:
@@ -214,22 +210,21 @@ def row_wise_norm(weights: np.ndarray) -> np.ndarray:
 def absolute_norm(weights: np.ndarray) -> np.ndarray:
     """Normalize an array by its total sum.
 
-    Divides all entries of ``weights`` by ``weights.sum()`` to obtain values
-    that sum to ~1.
+    Divides all entries by the total sum. If the total is zero/non-finite,
+    returns an all-zeros array (no NaNs/inf).
 
     Args:
         weights: Array (any shape). Often an ``(N, N)`` matrix of edge weights.
 
     Returns:
-        np.ndarray: Array with the same shape as ``weights`` whose values sum to
-        ~1.
-
-    Notes:
-        - No zero-division protection is applied. If the total sum is 0, the
-          result will contain ``NaN``/``inf`` depending on NumPy settings.
+        np.ndarray: Same shape as ``weights`` whose values sum to ~1, or zeros
+        if the total is zero/non-finite.
     """
     _logger.debug("absolute_norm: weights.shape=%s", getattr(weights, "shape", None))
     total = np.sum(weights)
+    if not np.isfinite(total) or total == 0:
+        _logger.debug("absolute_norm: total_sum is zero/non-finite; returning zeros")
+        return np.zeros_like(weights, dtype=float)
     out = weights / total
     try:
         _logger.debug("absolute_norm: total_sum=%.6g", float(total))
