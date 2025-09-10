@@ -70,12 +70,12 @@ class Walker:
         matrix = self._matrices_of_interaction_type(interaction_type)[time_stamp]
         return matrix[node, :].copy()
 
-    def _step_node(self,
+    def _step_node(self, # RECODE
                   node: int,
                   time_stamp: int,
                   interaction_type: Literal["attr", "repuls"],
-                  *,
-                  avoid: np.typing.ArrayLike | None) -> int:
+                  avoid: np.typing.ArrayLike) -> int:
+        # make it return the update to_avouid array
         prob_dist = self._extract_prob_vector(node, time_stamp, interaction_type)
         if avoid is not None:
             prob_dist[np.asarray(avoid, dtype=np.intp)] = 0.0
@@ -84,7 +84,7 @@ class Walker:
             prob_dist = walker_util.l1_norm(prob_dist)
         return int(np.random.choice(self.nodes, p=prob_dist))
 
-    def _step_time(self,
+    def _step_time(self, # RECODE
                 time_stamp: int,
                 interaction_type: Literal["attr", "repuls"],
                 avoid: np.typing.ArrayLike,
@@ -135,6 +135,17 @@ class Walker:
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
     #                                PUBLIC
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
+
+    def walk(start: int, length: int, self_avoid: bool, time_aware: bool, stickiness: float | None = None):
+        pth = np.zeros(shape=(length,), dtype=np.uint16)
+        for _ in range(length):
+            pass
+            # step node and step time and store updated to_avoid arrays for further use
+            # pass them regardless of whether time_aware or self_avoid,
+            # in those cases they must be empty though, so make sure
+            # this behaviour is consistent across _step_node and _step_time
+            
+
 
 
 if __name__ == "__main__":
