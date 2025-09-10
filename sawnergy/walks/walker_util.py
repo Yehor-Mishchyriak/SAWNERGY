@@ -256,6 +256,49 @@ class SharedNDArray:
         _logger.debug("array property accessed (default_readonly=%r)", self._default_readonly)
         return self.view(readonly=self._default_readonly)
 
+# *----------------------------------------------------*
+#                       FUNCTIONS
+# *----------------------------------------------------*
+
+def l1_norm(X: np.ndarray) -> np.ndarray:
+    X = np.asarray(X, dtype=float)
+    s = float(np.sum(X))
+    if not np.isfinite(s) or s <= 0.0:
+        return np.zeros_like(X)
+    return X / s
+
+def apply_on_axis0(X: np.ndarray, func):
+    X = np.asarray(X)
+    out0 = func(X[0])
+    # the 0th axis has to have as many dims as the X array has along the 0th axis;
+    # as for the other axes, they coincide in dimensionality with the output of func
+    out = np.empty((X.shape[0],) + np.shape(out0), dtype=np.asarray(out0).dtype)
+    out[0] = out0
+    for i in range(1, X.shape[0]):
+        out[i] = func(X[i])
+    return out
+
+def cosine_similarity(A: np.ndarray, eps: float = 1e-12):
+
+    def inner(B: np.ndarray):
+        nonlocal A
+        nonlocal eps
+
+        A = np.asarray(A)
+        B = np.asarray(B)
+        if A.shape != B.shape:
+            raise ValueError(f"shapes must match, got {A.shape} vs {B.shape}")
+
+        a = A.ravel()
+        b = B.ravel()
+
+        denom = np.linalg.norm(a) * np.linalg.norm(b)
+        if denom < eps:
+            return 0.0
+        return (float(a @ b / denom) + 1) / 2 # translate from [-1, 1] to [0, 2] to [0, 1]
+
+    return inner
+
 
 if __name__ == "__main__":
     pass
