@@ -146,10 +146,30 @@ class Walker:
     #                                PUBLIC
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
 
-    def walk(start_node: int | None, start_time_stamp: int | None, length: int, self_avoid: bool, time_aware: bool, stickiness: float | None = None):
-        pth = np.zeros(shape=(length,), dtype=np.uint16) # add the visited node to the appropriate cell in the pth arr
+    def walk(self,
+            start_node: int | None,
+            start_time_stamp: int | None,
+            length: int,
+            interaction_type: Literal["attr", "repuls"],
+            self_avoid: bool,
+            time_aware: bool = False,
+            stickiness: float | None = None,
+            on_no_options: Literal["raise", "loop"] | None = None) -> np.ndarray:
+        node = start_node or np.random.choice(self.nodes)
+        nodes_to_avoid = np.array([start_node], dtype=np.intp) if self_avoid else np.array([], dtype=np.intp)
+        
+        time_stamp = start_time_stamp or np.random.choice(self.time_stamps)
+        time_stamps_to_avoid = np.array([], dtype=np.intp)
+
+        pth = np.array([start_node], dtype=np.intp)
+
         for _ in range(length):
-            pass # walk node, walk matrix, update corresponding to_avoid arrays, repeat
+            node, nodes_to_avoid = self._step_node(node, interaction_type, time_stamp, nodes_to_avoid)
+            pth = np.append(pth, node).astype(np.intp, copy=False)
+            if time_aware:
+                time_stamp, time_stamps_to_avoid = self._step_time(time_stamp, interaction_type, stickiness, on_no_options, time_stamps_to_avoid)
+        
+        return pth
 
 
 if __name__ == "__main__":
