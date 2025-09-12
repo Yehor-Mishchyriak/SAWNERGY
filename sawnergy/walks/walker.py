@@ -70,47 +70,55 @@ class Walker:
         matrix = self._matrices_of_interaction_type(interaction_type)[time_stamp]
         return matrix[node, :].copy()
 
-    def _step_node(self, # RECODE
+    def _step_node(self,
                   node: int,
-                  time_stamp: int,
                   interaction_type: Literal["attr", "repuls"],
-                  avoid: np.typing.ArrayLike) -> int:
-        # make it return the update to_avouid array
+                  time_stamp: int = 0, # 0 is default because having 1 avged over the traj matrix is common
+                  avoid: np.typing.ArrayLike = []) -> tuple[int, np.ndarray]:
         prob_dist = self._extract_prob_vector(node, time_stamp, interaction_type)
-        if avoid is not None:
-            prob_dist[np.asarray(avoid, dtype=np.intp)] = 0.0
+
+        to_avoid = np.asarray(avoid, dtype=np.intp)
+
+        if avoid is not None: # to seed self-avoidance pass itself to `avoid`
+            prob_dist[to_avoid] = 0.0
+
             if prob_dist.sum() <= 0.0:
                 raise RuntimeError("No available node transitions (avoiding all the nodes).")
-            prob_dist = walker_util.l1_norm(prob_dist)
-        return int(np.random.choice(self.nodes, p=prob_dist))
 
-    def _step_time(self, # RECODE
+            prob_dist = walker_util.l1_norm(prob_dist)
+            next_node = int(np.random.choice(self.nodes, p=prob_dist))
+            to_avoid = np.append(to_avoid, next_node).astype(np.intp, copy=False)
+
+            return next_node, to_avoid
+
+        return int(np.random.choice(self.nodes, p=prob_dist)), np.array([], dtype=np.intp)
+
+    def _step_time(self,
                 time_stamp: int,
                 interaction_type: Literal["attr", "repuls"],
-                avoid: np.typing.ArrayLike,
-                *,
                 stickiness: float,
-                on_no_options: Literal["raise", "loop"]) -> tuple[int, np.ndarray]:
+                on_no_options: Literal["raise", "loop"],
+                avoid: np.typing.ArrayLike) -> tuple[int, np.ndarray]:
+
         if not (0.0 <= stickiness <= 1.0):
             raise ValueError("stickiness must be in [0,1]")
         
-        avoid_arr = np.asarray(avoid, dtype=np.intp)
+        to_avoid = np.asarray(avoid, dtype=np.intp)
 
-        # stickiness:
         # since .random() is uniform, `stickiness`% of the time it will fall below `stickiness`
         if np.random.random() < float(stickiness):
-            return int(time_stamp), avoid_arr
+            return int(time_stamp), to_avoid
 
         # exclude current time since we chose not to stick
-        to_avoid = np.append(avoid_arr, time_stamp).astype(np.intp, copy=False)
-        keep = np.setdiff1d(self.time_stamps, np.unique(to_avoid))
+        to_avoid =  np.unique(np.append(to_avoid, time_stamp).astype(np.intp, copy=False))
+        keep = np.setdiff1d(self.time_stamps, to_avoid, assume_unique=True)
 
         matrices = self._matrices_of_interaction_type(interaction_type)
         current_matrix = matrices[time_stamp]
 
         if keep.size == 0:
             if on_no_options == "raise":
-                raise RuntimeError(f"No available time stamps (avoid={np.unique(avoid_arr)})")
+                raise RuntimeError(f"No available time stamps (avoid={np.unique(to_avoid)})")
             elif on_no_options == "loop":
                 # reset avoidance and sample from all time stamps
                 to_avoid = np.array([], dtype=np.intp)
@@ -130,22 +138,18 @@ class Walker:
                 "Likely causes: all candidate matrices have zero norm, all similarities evaluated to 0, or all candidates were masked."
             )
 
-        return int(np.random.choice(keep, p=probs)), to_avoid
+        next_time_stamp = int(np.random.choice(keep, p=probs))
+
+        return next_time_stamp, to_avoid # we don't need to append to_avoid now because it's done at the start of the call
     
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
     #                                PUBLIC
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
 
-    def walk(start: int, length: int, self_avoid: bool, time_aware: bool, stickiness: float | None = None):
-        pth = np.zeros(shape=(length,), dtype=np.uint16)
+    def walk(start_node: int | None, start_time_stamp: int | None, length: int, self_avoid: bool, time_aware: bool, stickiness: float | None = None):
+        pth = np.zeros(shape=(length,), dtype=np.uint16) # add the visited node to the appropriate cell in the pth arr
         for _ in range(length):
-            pass
-            # step node and step time and store updated to_avoid arrays for further use
-            # pass them regardless of whether time_aware or self_avoid,
-            # in those cases they must be empty though, so make sure
-            # this behaviour is consistent across _step_node and _step_time
-            
-
+            pass # walk node, walk matrix, update corresponding to_avoid arrays, repeat
 
 
 if __name__ == "__main__":
