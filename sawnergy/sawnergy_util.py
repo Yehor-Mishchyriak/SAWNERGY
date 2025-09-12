@@ -9,7 +9,7 @@ import numpy as np
 import re
 import logging
 from math import ceil
-from datetime import datetime
+from datetime import datetime, date
 import multiprocessing as mp
 from concurrent.futures import as_completed, ThreadPoolExecutor, ProcessPoolExecutor
 from typing import Callable, Iterable, Iterator, Any
@@ -412,6 +412,62 @@ class ArrayStorage:
             d.pop(named, None)
             self._attrs[key] = d
         _logger.debug("Removed metadata entries for '%s'", named)
+
+    def add_attr(self, key: str, val: Any) -> None:
+        """
+        Attach JSON-serializable metadata to the root group's attributes.
+
+        Coerces common non-JSON types into JSON-safe forms before writing to
+        ``self.root.attrs``:
+        * NumPy scalars → native Python scalars via ``.item()``
+        * NumPy arrays → Python lists via ``.tolist()``
+        * ``set``/``tuple`` → lists
+        * ``datetime.datetime``/``datetime.date`` → ISO 8601 strings via ``.isoformat()``
+
+        Args:
+        key (str): Attribute name to set on the root group.
+        val (Any): Value to store. If not JSON-serializable as provided, it will be
+            coerced using the rules above. Large blobs should not be stored as attrs.
+
+        Raises:
+        RuntimeError: If the storage was opened in read-only mode (``mode == "r"``).
+        TypeError: If the coerced value is still not JSON-serializable by Zarr.
+
+        Examples:
+        >>> store = ArrayStorage("/tmp/demo", mode="w")
+        >>> store.add_attr("experiment", "run_3")
+        >>> store.add_attr("created_at", datetime.utcnow())
+        >>> store.add_attr("means", np.arange(3, dtype=np.float32))
+        >>> store.root.attrs["experiment"]
+        'run_3'
+
+        Note:
+        If you distribute consolidated metadata, re-consolidate after changing attrs
+        so external readers can see the updates.
+        """
+        if self.mode == "r":
+            _logger.error("Write attempted in read-only mode")
+            raise RuntimeError("Cannot write to a read-only ArrayStorage")
+
+        # coerce to JSON-safe types Zarr accepts for attrs
+        def _to_json_safe(x):
+            if isinstance(x, np.generic):
+                return x.item()
+            if isinstance(x, np.ndarray):
+                return x.tolist()
+            if isinstance(x, (set, tuple)):
+                return list(x)
+            if isinstance(x, (datetime, date)):
+                return x.isoformat()
+            return x
+
+        js_val = _to_json_safe(val)
+        try:
+            self.root.attrs[key] = js_val
+            _logger.debug("Set root attr %r=%r", key, js_val)
+        except TypeError as e:
+            _logger.error("Value for attr %r is not JSON-serializable: %s", key, e)
+            raise
 
     def compress(
         self,
