@@ -73,44 +73,53 @@ class Walker:
     def _step_node(self,
                   node: int,
                   interaction_type: Literal["attr", "repuls"],
-                  time_stamp: int = 0, # 0 is default because having 1 avged over the traj matrix is common
-                  avoid: np.typing.ArrayLike = []) -> tuple[int, np.ndarray]:
+                  time_stamp: int = 0,  # 0 is default because having 1 avged over the traj matrix is common
+                  avoid: np.typing.ArrayLike | None = None
+                  ) -> tuple[int, np.ndarray | None]:
         prob_dist = self._extract_prob_vector(node, time_stamp, interaction_type)
 
+        if avoid is None:
+            keep = self.nodes
+            probs = walker_util.l1_norm(prob_dist)
+            if probs.sum() <= 0.0:
+                raise RuntimeError("No valid node transitions: probability mass is zero.")
+            next_node = int(np.random.choice(keep, p=probs))
+            # no self-avoid tracking when avoid=None
+            return next_node, None
+
+        # self-avoid path
         to_avoid = np.asarray(avoid, dtype=np.intp)
+        # candidates = all nodes except those avoided
+        keep = np.setdiff1d(self.nodes, to_avoid, assume_unique=False)
+        if keep.size == 0:
+            raise RuntimeError("No available node transitions (avoiding all the nodes).")
 
-        if avoid is not None: # to seed self-avoidance pass itself to `avoid`
-            prob_dist[to_avoid] = 0.0
+        probs = walker_util.l1_norm(prob_dist[keep])
+        if probs.sum() <= 0.0:
+            raise RuntimeError("No valid node transitions: probability mass is zero after masking/normalization.")
 
-            if prob_dist.sum() <= 0.0:
-                raise RuntimeError("No available node transitions (avoiding all the nodes).")
+        next_node = int(np.random.choice(keep, p=probs))
+        to_avoid = np.append(to_avoid, next_node).astype(np.intp, copy=False)
 
-            prob_dist = walker_util.l1_norm(prob_dist)
-            next_node = int(np.random.choice(self.nodes, p=prob_dist))
-            to_avoid = np.append(to_avoid, next_node).astype(np.intp, copy=False)
-
-            return next_node, to_avoid
-
-        return int(np.random.choice(self.nodes, p=prob_dist)), np.array([], dtype=np.intp)
+        return next_node, to_avoid
 
     def _step_time(self,
                 time_stamp: int,
                 interaction_type: Literal["attr", "repuls"],
                 stickiness: float,
                 on_no_options: Literal["raise", "loop"],
-                avoid: np.typing.ArrayLike) -> tuple[int, np.ndarray]:
-
+                avoid: np.typing.ArrayLike | None) -> tuple[int, np.ndarray | None]:
         if not (0.0 <= stickiness <= 1.0):
             raise ValueError("stickiness must be in [0,1]")
         
-        to_avoid = np.asarray(avoid, dtype=np.intp)
+        to_avoid = np.array([], dtype=np.intp) if avoid is None else np.asarray(avoid, dtype=np.intp)
 
         # since .random() is uniform, `stickiness`% of the time it will fall below `stickiness`
         if np.random.random() < float(stickiness):
             return int(time_stamp), to_avoid
 
         # exclude current time since we chose not to stick
-        to_avoid =  np.unique(np.append(to_avoid, time_stamp).astype(np.intp, copy=False))
+        to_avoid = np.unique(np.append(to_avoid, time_stamp).astype(np.intp, copy=False))
         keep = np.setdiff1d(self.time_stamps, to_avoid, assume_unique=True)
 
         matrices = self._matrices_of_interaction_type(interaction_type)
@@ -120,14 +129,13 @@ class Walker:
             if on_no_options == "raise":
                 raise RuntimeError(f"No available time stamps (avoid={np.unique(to_avoid)})")
             elif on_no_options == "loop":
-                # reset avoidance and sample from all time stamps
-                to_avoid = np.array([], dtype=np.intp)
+                to_avoid = np.array([time_stamp], dtype=np.intp) # avoid current still
                 keep = self.time_stamps
-                matrices_stack = matrices.array # using ndarray, not SharedNDArray
+                matrices_stack = matrices.array  # using ndarray, not SharedNDArray
             else:
                 raise ValueError("on_no_options must be 'raise' or 'loop'")
         else:
-            matrices_stack = matrices.array[keep] # fancy indexing on ndarray
+            matrices_stack = matrices.array[keep]  # fancy indexing on ndarray
 
         sims = walker_util.apply_on_axis0(matrices_stack, walker_util.cosine_similarity(current_matrix))
         probs = walker_util.l1_norm(sims)
@@ -139,8 +147,7 @@ class Walker:
             )
 
         next_time_stamp = int(np.random.choice(keep, p=probs))
-
-        return next_time_stamp, to_avoid # we don't need to append to_avoid now because it's done at the start of the call
+        return next_time_stamp, to_avoid  # unchanged because we already added current to avoid above
     
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
     #                                PUBLIC
@@ -155,20 +162,30 @@ class Walker:
             time_aware: bool = False,
             stickiness: float | None = None,
             on_no_options: Literal["raise", "loop"] | None = None) -> np.ndarray:
-        node = start_node or np.random.choice(self.nodes)
-        nodes_to_avoid = np.array([start_node], dtype=np.intp) if self_avoid else np.array([], dtype=np.intp)
-        
-        time_stamp = start_time_stamp or np.random.choice(self.time_stamps)
-        time_stamps_to_avoid = np.array([], dtype=np.intp)
 
-        pth = np.array([start_node], dtype=np.intp)
+        node = int(start_node)-1 if start_node is not None else int(np.random.choice(self.nodes))
+        time_stamp = int(start_time_stamp)-1 if start_time_stamp is not None else int(np.random.choice(self.time_stamps))
+
+        nodes_to_avoid: np.ndarray | None = np.array([node], dtype=np.intp) if self_avoid else None
+        time_stamps_to_avoid: np.ndarray | None = None
+
+        pth = np.array([node], dtype=np.intp)
+
+        if time_aware and (stickiness is None or on_no_options is None):
+            raise ValueError("time_aware=True requires both `stickiness` and `on_no_options` to be provided.")
 
         for _ in range(length):
-            node, nodes_to_avoid = self._step_node(node, interaction_type, time_stamp, nodes_to_avoid)
+            if self_avoid:
+                node, nodes_to_avoid = self._step_node(node, interaction_type, time_stamp, nodes_to_avoid)
+            else:
+                node, _ = self._step_node(node, interaction_type, time_stamp, avoid=None)
             pth = np.append(pth, node).astype(np.intp, copy=False)
+
             if time_aware:
-                time_stamp, time_stamps_to_avoid = self._step_time(time_stamp, interaction_type, stickiness, on_no_options, time_stamps_to_avoid)
-        
+                time_stamp, time_stamps_to_avoid = self._step_time(
+                    time_stamp, interaction_type, stickiness, on_no_options, time_stamps_to_avoid
+                )
+
         return pth
 
 
