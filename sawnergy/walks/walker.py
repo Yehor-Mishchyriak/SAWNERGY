@@ -107,29 +107,47 @@ class Walker:
         _logger.info("RNG initialized (master seed=%d)", self._seed)
 
     # explicit resource cleanup
-    def close(self, *, unlink: bool = True) -> None:
-        """Close shared-memory handles and optionally unlink segments.
+    def close(self) -> None:
+        """Close shared-memory handles and (in main process) unlink segments.
+
+        This method is idempotent: if cleanup has already occurred, it returns
+        immediately. It always closes local handles in the current process.
+        If the caller is the main process (as determined by
+        ``sawnergy_util.is_main_process()``), it will also attempt to unlink
+        the underlying shared-memory segments. Unlink attempts are best-effort
+        and ignore ``FileNotFoundError`` (e.g., if already unlinked elsewhere).
 
         Args:
-            unlink: If ``True``, attempt to unlink the shared-memory segments
-                after closing local handles.
+            None
+
+        Returns:
+            None
 
         Notes:
-            Unlinking removes the named shared-memory objects. In multi-process
-            settings, only one process should unlink; others should just close.
+            Use a context manager (``with``) or call ``close()`` explicitly for
+            deterministic cleanup. In multi-process usage, only the main process
+            will perform unlinking; worker processes will only close their handles.
         """
         if self._memory_cleaned_up:
-            _logger.debug("close(): already cleaned up; unlink=%s", unlink)
+            _logger.debug("close(): already cleaned up; returning")
             return
-        _logger.info("Closing Walker (unlink=%s)", unlink)
+        _logger.info("Closing Walker resources (is_main=%s)", sawnergy_util.is_main_process())
         try:
             self.attr_matrices.close()
             self.repuls_matrices.close()
             _logger.debug("SharedNDArray handles closed")
-            if unlink:
-                _logger.debug("Unlinking shared memory segments")
-                self.attr_matrices.unlink()
-                self.repuls_matrices.unlink()
+            if sawnergy_util.is_main_process():
+                _logger.debug("Attempting to unlink shared memory segments (main process)")
+                try:
+                    self.attr_matrices.unlink()
+                except FileNotFoundError:
+                    _logger.warning("attr SharedMemory already unlinked")
+                try:
+                    self.repuls_matrices.unlink()
+                except FileNotFoundError:
+                    _logger.warning("repuls SharedMemory already unlinked")
+            else:
+                _logger.debug("Not main process; skipping unlink")
         finally:
             self._memory_cleaned_up = True
             _logger.info("Cleanup complete")
