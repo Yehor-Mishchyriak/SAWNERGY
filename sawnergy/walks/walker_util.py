@@ -1,5 +1,7 @@
-from multiprocessing import shared_memory
+# third-party
 import numpy as np
+# built-in
+from multiprocessing import shared_memory
 import logging
 
 # *----------------------------------------------------*
