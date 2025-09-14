@@ -670,5 +670,9 @@ class Walker:
         return str(output_path)
 
 
+__all__ = [
+    "Walker"
+]
+
 if __name__ == "__main__":
     pass

@@ -373,5 +373,12 @@ def cosine_similarity(A: np.ndarray, eps: float = 1e-12):
     return inner
 
 
+__all__ = [
+    "SharedNDArray",
+    "l1_norm",
+    "apply_on_axis0",
+    "cosine_similarity"
+]
+
 if __name__ == "__main__":
     pass
