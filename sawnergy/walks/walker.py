@@ -131,7 +131,7 @@ class Walker:
         if self._memory_cleaned_up:
             _logger.debug("close(): already cleaned up; returning")
             return
-        _logger.info("Closing Walker resources (is_main=%s)", sawnergy_util.is_main_process())
+        _logger.debug("Closing Walker resources (is_main=%s)", sawnergy_util.is_main_process())
         try:
             self.attr_matrices.close()
             self.repuls_matrices.close()
@@ -150,7 +150,7 @@ class Walker:
                 _logger.debug("Not main process; skipping unlink")
         finally:
             self._memory_cleaned_up = True
-            _logger.info("Cleanup complete")
+            _logger.debug("Cleanup complete")
 
     def __enter__(self):
         """Enter context manager scope.
@@ -476,32 +476,33 @@ class Walker:
         out = []
         for snode in start_nodes:
             for _ in range(int(num_walks_from_each)):
-                out.append(self.walk(int(snode), *args, **kwargs))
+                out.append(self.walk(int(snode)+1, *args, **kwargs)) # int(snode)+1 is because .walk is part of API, so 1-based
         arr = np.stack(out, axis=0).astype(np.uint16, copy=False)
         _logger.debug("_walk_batch_with_seed: produced walks shape=%s dtype=%s", arr.shape, arr.dtype)
         return arr
 
     def sample_walks(self,
-                     # walks
-                     walk_length: int,
-                     walks_per_node: int,
-                     saw_frac: float,
-                     # time aware params
-                     time_aware: bool = False,
-                     stickiness: float | None = None,
-                     on_no_options: Literal["raise", "loop"] | None = None,
-                     # output
-                     output_path: str | Path | None = None,
-                     *,
-                     # computation
-                     in_parallel: bool,
-                     # storage
-                     attractive_dataset_name: str = "ATTRACTIVE",
-                     repulsive_dataset_name: str = "REPULSIVE",
-                     RW_suffix: str = "_RWs",
-                     SAW_suffix: str = "_SAWs",
-                     compression_level: int = 3
-                     ) -> str:
+                    # walks
+                    walk_length: int,
+                    walks_per_node: int,
+                    saw_frac: float,
+                    # time aware params
+                    time_aware: bool = False,
+                    stickiness: float | None = None,
+                    on_no_options: Literal["raise", "loop"] | None = None,
+                    # output
+                    output_path: str | Path | None = None,
+                    *,
+                    # computation
+                    in_parallel: bool,
+                    # storage
+                    attractive_dataset_name: str = "ATTRACTIVE",
+                    repulsive_dataset_name: str = "REPULSIVE",
+                    RW_suffix: str = "_RWs",
+                    SAW_suffix: str = "_SAWs",
+                    compression_level: int = 3,
+                    num_walk_matrices_in_compressed_blocks: int | None = None
+                    ) -> str:
         """Generate and persist random walks for all nodes.
 
         For each node, produces both RWs and SAWs according to ``saw_frac``,
@@ -526,6 +527,11 @@ class Walker:
             RW_suffix: Suffix for random-walk datasets.
             SAW_suffix: Suffix for self-avoiding-walk datasets.
             compression_level: Compression level passed to storage.
+            num_walk_matrices_in_compressed_blocks:
+                Optional chunking hint for the writer. If provided, the writer
+                groups at most this many walk matrices per compressed chunk when
+                calling ``storage.write(..., arrays_per_chunk=...)``. When ``None``,
+                it defaults to the number of node batches (i.e., ``len(node_batches)``).
 
         Returns:
             str: The string form of ``output_path`` where data were written.
@@ -536,8 +542,12 @@ class Walker:
                 or propagated from the stepping routines when no valid choices
                 are available.
         """
-        _logger.info("sample_walks: L=%d, per_node=%d, saw_frac=%.3f, time_aware=%s, out=%s, parallel=%s",
-                     walk_length, walks_per_node, saw_frac, time_aware, output_path, in_parallel)
+        _logger.info(
+            "sample_walks: L=%d, per_node=%d, saw_frac=%.3f, time_aware=%s, out=%s, "
+            "parallel=%s, arrays_per_chunk=%s",
+            walk_length, walks_per_node, saw_frac, time_aware, output_path, in_parallel,
+            num_walk_matrices_in_compressed_blocks,
+        )
 
         output_path = Path((output_path or (Path(os.getcwd()) /
                         f"WALKS_{sawnergy_util.current_time()}"))).with_suffix(".zip")
@@ -580,6 +590,11 @@ class Walker:
         work_items = list(zip(node_batches, child_seeds))
         _logger.debug("Prepared %d work_items with child seeds", len(work_items))
 
+        num_walk_matrices_in_compressed_blocks = num_walk_matrices_in_compressed_blocks or len(node_batches)
+        _logger.info(
+            "arrays_per_chunk resolved to: %d", num_walk_matrices_in_compressed_blocks
+        )
+
         with sawnergy_util.ArrayStorage.compress_and_cleanup(output_path, compression_level) as storage:
             # --- ATTR RWs ---
             _logger.info("Generating ATTR RWs ...")
@@ -598,7 +613,8 @@ class Walker:
             if chunks:
                 all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
                 _logger.info("ATTR RWs: concatenated shape=%s", all_walks.shape)
-                storage.write(list(all_walks), to_block_named=attractive_dataset_name + RW_suffix)
+                storage.write(list(all_walks), to_block_named=attractive_dataset_name + RW_suffix,
+                            arrays_per_chunk=num_walk_matrices_in_compressed_blocks)
 
             # --- ATTR SAWs ---
             _logger.info("Generating ATTR SAWs ...")
@@ -617,7 +633,8 @@ class Walker:
             if chunks:
                 all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
                 _logger.info("ATTR SAWs: concatenated shape=%s", all_walks.shape)
-                storage.write(list(all_walks), to_block_named=attractive_dataset_name + SAW_suffix)
+                storage.write(list(all_walks), to_block_named=attractive_dataset_name + SAW_suffix,
+                            arrays_per_chunk=num_walk_matrices_in_compressed_blocks)
 
             # --- REPULS RWs ---
             _logger.info("Generating REPULS RWs ...")
@@ -636,7 +653,8 @@ class Walker:
             if chunks:
                 all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
                 _logger.info("REPULS RWs: concatenated shape=%s", all_walks.shape)
-                storage.write(list(all_walks), to_block_named=repulsive_dataset_name + RW_suffix)
+                storage.write(list(all_walks), to_block_named=repulsive_dataset_name + RW_suffix,
+                            arrays_per_chunk=num_walk_matrices_in_compressed_blocks)
 
             # --- REPULS SAWs ---
             _logger.info("Generating REPULS SAWs ...")
@@ -655,7 +673,8 @@ class Walker:
             if chunks:
                 all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
                 _logger.info("REPULS SAWs: concatenated shape=%s", all_walks.shape)
-                storage.write(list(all_walks), to_block_named=repulsive_dataset_name + SAW_suffix)
+                storage.write(list(all_walks), to_block_named=repulsive_dataset_name + SAW_suffix,
+                            arrays_per_chunk=num_walk_matrices_in_compressed_blocks)
 
             # useful metadata for reproducibility
             storage.add_attr("seed", int(self._seed))
@@ -664,7 +683,7 @@ class Walker:
             storage.add_attr("in_parallel", bool(in_parallel))
             storage.add_attr("batch_size_nodes", int(batch_size_nodes))
             _logger.info("Wrote metadata: seed=%d, workers=%d, parallel=%s, batch=%d",
-                         int(self._seed), int(num_workers), bool(in_parallel), int(batch_size_nodes))
+                        int(self._seed), int(num_workers), bool(in_parallel), int(batch_size_nodes))
 
         _logger.info("sample_walks complete -> %s", str(output_path))
         return str(output_path)
