@@ -438,7 +438,7 @@ class ArrayStorage:
         >>> store.add_attr("experiment", "run_3")
         >>> store.add_attr("created_at", datetime.utcnow())
         >>> store.add_attr("means", np.arange(3, dtype=np.float32))
-        >>> store.root.attrs["experiment"]
+        >>> store.get_attr["experiment"]
         'run_3'
 
         Note:
@@ -468,6 +468,26 @@ class ArrayStorage:
         except TypeError as e:
             _logger.error("Value for attr %r is not JSON-serializable: %s", key, e)
             raise
+
+    def get_attr(self, key: str):
+        """Return a root attribute by key.
+
+        Args:
+            key: Attribute name.
+
+        Returns:
+            The stored value as-is (JSON-safe form, e.g., lists/ISO strings).
+
+        Raises:
+            KeyError: If the attribute does not exist.
+        """
+        try:
+            val = self.root.attrs[key]
+        except KeyError:
+            _logger.error("get_attr: attribute %r not found", key)
+            raise
+        _logger.debug("get_attr: %r=%r", key, val)
+        return val
 
     def compress(
         self,
