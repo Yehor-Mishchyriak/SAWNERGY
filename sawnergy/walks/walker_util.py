@@ -263,13 +263,51 @@ class SharedNDArray:
 # *----------------------------------------------------*
 
 def l1_norm(X: np.ndarray) -> np.ndarray:
+    """Return an L1-normalized copy of ``X`` (sum to 1), or zeros if invalid.
+
+    Args:
+        X (np.ndarray): Array of nonnegative weights/probabilities (any shape).
+            It is coerced with ``np.asarray(X, dtype=float)``.
+
+    Returns:
+        np.ndarray: Array with the same shape as ``X`` whose entries sum to 1
+        (within FP error). If the total mass is non-finite or <= 0, returns
+        an array of zeros with the same shape/dtype.
+
+    Notes:
+        - If ``X`` contains NaNs or Infs, the sum becomes non-finite and a
+          zeros array is returned.
+        - Works for any shape; normalization is over all elements.
+    """
     X = np.asarray(X, dtype=float)
     s = float(np.sum(X))
     if not np.isfinite(s) or s <= 0.0:
         return np.zeros_like(X)
     return X / s
 
+
 def apply_on_axis0(X: np.ndarray, func):
+    """Apply a function independently to each slice ``X[i]`` along axis 0.
+
+    ``func`` is called once per ``i`` with a view/copy of ``X[i]`` and its
+    first result is used to allocate the output array.
+
+    Args:
+        X (np.ndarray): Input array of shape ``(N, ...)`` where ``N >= 1``.
+        func (Callable): Function taking ``X[i]`` (shape ``X.shape[1:]``) and
+            returning an array-like object. All returns must be broadcast-
+            compatible and have identical shape.
+
+    Returns:
+        np.ndarray: Stacked results with shape ``(N,) + out0.shape``, where
+        ``out0`` is ``func(X[0])``. The dtype matches ``np.asarray(out0).dtype``.
+
+    Raises:
+        IndexError: If ``X`` is empty along axis 0 (i.e., ``X.shape[0] == 0``).
+
+    Notes:
+        The first call to ``func`` determines the output dtype and shape.
+    """
     X = np.asarray(X)
     out0 = func(X[0])
     # the 0th axis has to have as many dims as the X array has along the 0th axis;
@@ -280,9 +318,42 @@ def apply_on_axis0(X: np.ndarray, func):
         out[i] = func(X[i])
     return out
 
+
 def cosine_similarity(A: np.ndarray, eps: float = 1e-12):
+    """Create a callable that computes cosine similarity to a fixed array ``A``.
+
+    The returned function takes an array ``B`` (same shape as ``A``), computes
+    the cosine similarity between ``A`` and ``B`` (using flattened views),
+    and maps it from ``[-1, 1]`` to ``[0, 1]`` via ``(cos + 1) / 2``.
+    If either vector has norm below ``eps``, it returns ``0.0``.
+
+    Args:
+        A (np.ndarray): Reference array. Coerced with ``np.asarray``.
+        eps (float, optional): Small threshold to guard against division by
+            near-zero norms. Defaults to ``1e-12``.
+
+    Returns:
+        Callable[[np.ndarray], float]: Function ``inner(B)`` that returns a
+        similarity score in ``[0, 1]``.
+
+    Raises:
+        ValueError: If the input ``B`` provided to the returned function does
+            not match the shape of ``A``.
+    """
 
     def inner(B: np.ndarray):
+        """Compute cosine similarity between the captured ``A`` and input ``B``.
+
+        Args:
+            B (np.ndarray): Array with the same shape as ``A``.
+
+        Returns:
+            float: Cosine similarity mapped to ``[0, 1]``. Returns ``0.0`` if
+            the product of the norms is below ``eps``.
+
+        Raises:
+            ValueError: If ``A.shape != B.shape``.
+        """
         nonlocal A
         nonlocal eps
 
