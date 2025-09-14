@@ -1,7 +1,0 @@
-#Name1           At1 --       Name2   At2 : ENE
-       A_1@Q     X --        A_1@W     X  : EELEC= 3.0e+00
-       A_1@Q     X --        B_2@Q     X  : EELEC= 8.0e+00
-       A_1@Q     X --        B_2@W     X  : EELEC= 1.0e+00
-       A_1@W     X --        B_2@Q     X  : EELEC= -2.0e+00
-       A_1@W     X --        B_2@W     X  : EELEC= 3.0e+00
-       B_2@Q     X --        B_2@W     X  : EELEC= 6.0e+00
