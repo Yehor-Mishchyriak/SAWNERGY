@@ -518,7 +518,8 @@ class Walker:
                 staying at the current time step.
             on_no_options: Required when ``time_aware=True``; behavior when no
                 alternative time stamps are available (``"raise"`` or ``"loop"``).
-            output_path: Output archive/directory path for `ArrayStorage`.
+            output_path: Destination path (with or without ``.zip``). Defaults to
+                ``WALKS_<timestamp>.zip`` in the current working directory.
             in_parallel: If ``True``, process batches with ``ProcessPoolExecutor``.
             attractive_dataset_name: Base dataset name for attractive walks.
             repulsive_dataset_name: Base dataset name for repulsive walks.
@@ -530,8 +531,7 @@ class Walker:
             str: The string form of ``output_path`` where data were written.
 
         Raises:
-            ValueError: If ``output_path`` is ``None`` or ``saw_frac`` outside
-                ``[0,1]``.
+            ValueError: If ``saw_frac`` outside ``[0,1]``.
             RuntimeError: If called in parallel without a main-process guard,
                 or propagated from the stepping routines when no valid choices
                 are available.
@@ -539,9 +539,9 @@ class Walker:
         _logger.info("sample_walks: L=%d, per_node=%d, saw_frac=%.3f, time_aware=%s, out=%s, parallel=%s",
                      walk_length, walks_per_node, saw_frac, time_aware, output_path, in_parallel)
 
-        if output_path is None:
-            _logger.error("output_path is None")
-            raise ValueError("output_path must be provided (path to .zip or directory).")
+        output_path = Path((output_path or (Path(os.getcwd()) /
+                        f"WALKS_{sawnergy_util.current_time()}"))).with_suffix(".zip")
+        _logger.debug("Output archive path: %s", output_path)
 
         if not (0.0 <= saw_frac <= 1.0):
             _logger.error("saw_frac out of range: %r", saw_frac)
