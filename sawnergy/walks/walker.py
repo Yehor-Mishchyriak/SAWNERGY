@@ -399,6 +399,7 @@ class Walker:
         Returns:
             np.ndarray: Array of node indices (dtype ``intp``) representing the
             path, including the start node. Shape is ``(length + 1,)``.
+            Note: 1-based indexed.
 
         Raises:
             ValueError: If provided start indices are out of range or required
@@ -448,6 +449,8 @@ class Walker:
                 time_stamp, time_stamps_to_avoid = self._step_time(
                     time_stamp, interaction_type, stickiness, on_no_options, time_stamps_to_avoid
                 )
+        
+        pth += 1 # ensure 1-based indexing output
 
         _logger.debug("walk: finished path of len=%d", pth.size)
         return pth
