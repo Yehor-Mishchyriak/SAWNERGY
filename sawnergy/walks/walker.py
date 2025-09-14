@@ -21,6 +21,14 @@ _logger = logging.getLogger(__name__)
 # *----------------------------------------------------*
 
 class Walker:
+    """Random-walk sampler over time-indexed transition matrices.
+
+    This class loads two stacks of transition matrices (attractive/repulsive),
+    exposes a sampler for random walks (RWs) and self-avoiding walks (SAWs),
+    and can optionally make time-aware transitions by sampling similar
+    time-stamp matrices. It uses shared memory for matrices and a per-instance
+    NumPy Generator for reproducible sampling.
+    """
 
     def __init__(self,
                  RIN_path: str | Path,
@@ -28,6 +36,23 @@ class Walker:
                  attr_data_name: str = "ATTRACTIVE_transitions",
                  repuls_data_name: str = "REPULSIVE_transitions",
                  seed: int | None = None) -> None:
+        """Initialize shared matrices and RNG.
+
+        Args:
+            RIN_path: Path to an `ArrayStorage` dataset containing transition
+                matrices.
+            attr_data_name: Dataset name for attractive transitions (shape
+                (T, N, N)).
+            repuls_data_name: Dataset name for repulsive transitions (shape
+                (T, N, N)).
+            seed: Optional master seed for the per-instance RNG. If ``None``,
+                a random 32-bit seed is chosen.
+
+        Raises:
+            ValueError: If loaded arrays do not have rank 3.
+            RuntimeError: If attractive/repulsive shapes differ or matrices
+                are not square along the last two axes.
+        """
         _logger.info("Initializing Walker from %s (attr=%s, repuls=%s)", RIN_path, attr_data_name, repuls_data_name)
 
         # load numpy arrays from read-only storage
@@ -83,6 +108,16 @@ class Walker:
 
     # explicit resource cleanup
     def close(self, *, unlink: bool = True) -> None:
+        """Close shared-memory handles and optionally unlink segments.
+
+        Args:
+            unlink: If ``True``, attempt to unlink the shared-memory segments
+                after closing local handles.
+
+        Notes:
+            Unlinking removes the named shared-memory objects. In multi-process
+            settings, only one process should unlink; others should just close.
+        """
         if self._memory_cleaned_up:
             _logger.debug("close(): already cleaned up; unlink=%s", unlink)
             return
@@ -100,14 +135,32 @@ class Walker:
             _logger.info("Cleanup complete")
 
     def __enter__(self):
+        """Enter context manager scope.
+
+        Returns:
+            Walker: Self, to be used within a ``with`` block.
+        """
         _logger.debug("__enter__")
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        """Exit context manager scope and perform cleanup.
+
+        Args:
+            exc_type: Exception type, if any.
+            exc: Exception instance, if any.
+            tb: Traceback, if any.
+        """
         _logger.debug("__exit__(exc_type=%s)", getattr(exc_type, "__name__", exc_type))
         self.close()
 
     def __del__(self):
+        """Best-effort destructor cleanup.
+
+        Notes:
+            Exceptions are suppressed; use explicit ``close()`` or a context
+            manager for deterministic cleanup.
+        """
         try:
             if not getattr(self, "_memory_cleaned_up", True):
                 _logger.debug("__del__: best-effort close")
@@ -120,6 +173,18 @@ class Walker:
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
         
     def _matrices_of_interaction_type(self, interaction_type: Literal["attr", "repuls"]):
+        """Return the shared array wrapper for the requested interaction type.
+
+        Args:
+            interaction_type: Either ``"attr"`` or ``"repuls"``.
+
+        Returns:
+            SharedNDArray: Wrapper exposing the (T, N, N) stack for the chosen
+            interaction type.
+
+        Raises:
+            ValueError: If ``interaction_type`` is not recognized.
+        """
         _logger.debug("_matrices_of_interaction_type(%s)", interaction_type)
         if interaction_type == "attr":
             return self.attr_matrices
@@ -133,6 +198,17 @@ class Walker:
                              node: int,
                              time_stamp: int,
                              interaction_type: Literal["attr", "repuls"]):
+        """Extract a copy of the transition probabilities for a node at a time.
+
+        Args:
+            node: Zero-based node index.
+            time_stamp: Zero-based time index.
+            interaction_type: Either ``"attr"`` or ``"repuls"``.
+
+        Returns:
+            np.ndarray: Copy of the row vector of transition weights
+            (shape ``(N,)``) for the specified node and time.
+        """
         _logger.debug("_extract_prob_vector(node=%d, t=%d, type=%s)", node, time_stamp, interaction_type)
         matrix = self._matrices_of_interaction_type(interaction_type)[time_stamp]
         vec = matrix[node, :].copy()  # detach from shared buffer to avoid mutation
@@ -145,6 +221,21 @@ class Walker:
                    time_stamp: int = 0,
                    avoid: np.typing.ArrayLike | None = None
                    ) -> tuple[int, np.ndarray | None]:
+        """Sample the next node given current node and optional avoidance set.
+
+        Args:
+            node: Current zero-based node index.
+            interaction_type: Either ``"attr"`` or ``"repuls"``.
+            time_stamp: Time index used to pick the transition row.
+            avoid: Optional iterable of node indices to exclude (self-avoid).
+
+        Returns:
+            Tuple[int, Optional[np.ndarray]]: The sampled next node and the
+            updated avoidance array (or ``None`` if avoidance is disabled).
+
+        Raises:
+            RuntimeError: If the candidate set is empty or normalized mass is 0.
+        """
         _logger.debug("_step_node(node=%d, t=%d, type=%s, avoid_len=%s)",
                       node, time_stamp, interaction_type,
                       None if avoid is None else np.asarray(avoid).size)
@@ -180,6 +271,26 @@ class Walker:
                    stickiness: float,
                    on_no_options: Literal["raise", "loop"],
                    avoid: np.typing.ArrayLike | None) -> tuple[int, np.ndarray | None]:
+        """Sample the next time stamp given stickiness and similarity.
+
+        Args:
+            time_stamp: Current zero-based time index.
+            interaction_type: Either ``"attr"`` or ``"repuls"``.
+            stickiness: Probability of remaining at the current time.
+            on_no_options: Behavior when no alternative times are available.
+                - ``"raise"``: raise an error.
+                - ``"loop"``: consider all except the current one.
+            avoid: Optional iterable of time indices to exclude.
+
+        Returns:
+            Tuple[int, Optional[np.ndarray]]: The sampled next time index and
+            the updated avoidance array (or ``None`` if avoidance is disabled).
+
+        Raises:
+            ValueError: If ``stickiness`` is outside ``[0, 1]`` or
+                ``on_no_options`` is invalid.
+            RuntimeError: If no candidates are available or probability mass is 0.
+        """
         _logger.debug("_step_time(t=%d, type=%s, stickiness=%.3f, on_no_options=%s, avoid_len=%s)",
                       time_stamp, interaction_type, stickiness, on_no_options,
                       None if avoid is None else np.asarray(avoid).size)
@@ -252,6 +363,31 @@ class Walker:
              time_aware: bool = False,
              stickiness: float | None = None,
              on_no_options: Literal["raise", "loop"] | None = None) -> np.ndarray:
+        """Generate a single walk path.
+
+        Args:
+            start_node: 1-based start node index; if ``None``, sampled uniformly.
+            start_time_stamp: 1-based start time index; if ``None``, sampled uniformly.
+            length: Number of transition steps to simulate.
+            interaction_type: Either ``"attr"`` or ``"repuls"``.
+            self_avoid: If ``True``, the walk will not revisit nodes within the
+                same path (SAW).
+            time_aware: If ``True``, advance time using ``_step_time`` each step.
+            stickiness: Required when ``time_aware=True``; probability of staying
+                at the current time.
+            on_no_options: Required when ``time_aware=True``; behavior when no
+                time candidates are available (``"raise"`` or ``"loop"``).
+
+        Returns:
+            np.ndarray: Array of node indices (dtype ``intp``) representing the
+            path, including the start node. Shape is ``(length + 1,)``.
+
+        Raises:
+            ValueError: If provided start indices are out of range or required
+                time-aware parameters are missing.
+            RuntimeError: Propagated from stepping functions when no valid
+                transitions are available.
+        """
         _logger.debug("walk(start_node=%r, start_time_stamp=%r, length=%d, type=%s, self_avoid=%s, time_aware=%s)",
                       start_node, start_time_stamp, length, interaction_type, self_avoid, time_aware)
 
@@ -300,6 +436,21 @@ class Walker:
 
     # deterministic per-batch worker: (start_nodes_batch, seedseq/int) -> stack of walks
     def _walk_batch_with_seed(self, work_item, num_walks_from_each: int, *args, **kwargs):
+        """Worker function that seeds RNG and generates a batch of walks.
+
+        Args:
+            work_item: Tuple of ``(start_nodes, seed_obj)`` where ``start_nodes``
+                is an iterable of node indices and ``seed_obj`` is either an
+                ``np.random.SeedSequence`` or an ``int`` seed.
+            num_walks_from_each: Number of walks to generate per start node.
+            *args: Positional args forwarded to ``walk`` (excluding start_node).
+            **kwargs: Keyword args forwarded to ``walk``.
+
+        Returns:
+            np.ndarray: Stack of walks with shape
+            ``(len(start_nodes) * num_walks_from_each, L+1)`` and dtype
+            ``uint16`` (as produced by the existing code path).
+        """
         start_nodes, seed_obj = work_item
         _logger.debug("_walk_batch_with_seed: batch_size=%d, walks_each=%d", np.asarray(start_nodes).size, int(num_walks_from_each))
         self.rng = np.random.default_rng(seed_obj)  # SeedSequence or int OK
@@ -333,6 +484,40 @@ class Walker:
                      SAW_suffix: str = "_SAWs",
                      compression_level: int = 3
                      ) -> str:
+        """Generate and persist random walks for all nodes.
+
+        For each node, produces both RWs and SAWs according to ``saw_frac``,
+        optionally time-aware, and writes them into blocks under the provided
+        dataset names.
+
+        Args:
+            walk_length: Number of steps per walk.
+            walks_per_node: Total walks to generate per node (split into RW/SAW).
+            saw_frac: Fraction of ``walks_per_node`` that are SAWs per node
+                (the remainder are RWs).
+            time_aware: If ``True``, enable time evolution via ``_step_time``.
+            stickiness: Required when ``time_aware=True``; probability of
+                staying at the current time step.
+            on_no_options: Required when ``time_aware=True``; behavior when no
+                alternative time stamps are available (``"raise"`` or ``"loop"``).
+            output_path: Output archive/directory path for `ArrayStorage`.
+            in_parallel: If ``True``, process batches with ``ProcessPoolExecutor``.
+            attractive_dataset_name: Base dataset name for attractive walks.
+            repulsive_dataset_name: Base dataset name for repulsive walks.
+            RW_suffix: Suffix for random-walk datasets.
+            SAW_suffix: Suffix for self-avoiding-walk datasets.
+            compression_level: Compression level passed to storage.
+
+        Returns:
+            str: The string form of ``output_path`` where data were written.
+
+        Raises:
+            ValueError: If ``output_path`` is ``None`` or ``saw_frac`` outside
+                ``[0,1]``.
+            RuntimeError: If called in parallel without a main-process guard,
+                or propagated from the stepping routines when no valid choices
+                are available.
+        """
         _logger.info("sample_walks: L=%d, per_node=%d, saw_frac=%.3f, time_aware=%s, out=%s, parallel=%s",
                      walk_length, walks_per_node, saw_frac, time_aware, output_path, in_parallel)
 
