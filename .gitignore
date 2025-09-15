@@ -17,6 +17,9 @@
 !sawnergy/visual/
 !sawnergy/visual/*.py
 # ----------------------------
+!tests/
+!tests/*.py
+# ----------------------------
 !.gitignore
 !README.md
 !requirements.txt
