@@ -20,6 +20,9 @@
 !tests/
 !tests/*.py
 # ----------------------------
+!deployment/
+!deployment/*.py
+# ----------------------------
 !.gitignore
 !README.md
 !requirements.txt
