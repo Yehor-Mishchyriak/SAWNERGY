@@ -457,32 +457,50 @@ class Walker:
 
     # deterministic per-batch worker: (start_nodes_batch, seedseq/int) -> stack of walks
     def _walk_batch_with_seed(self, work_item, num_walks_from_each: int, *args, **kwargs):
-        """Worker function that seeds RNG and generates a batch of walks.
+        """Worker: seed RNG and generate a batch of walks for a set of start nodes.
 
         Args:
-            work_item: Tuple of ``(start_nodes, seed_obj)`` where ``start_nodes``
-                is an iterable of node indices and ``seed_obj`` is either an
+            work_item: Tuple of ``(start_nodes, seed_obj)`` where ``start_nodes`` is
+                an iterable of node indices and ``seed_obj`` is either an
                 ``np.random.SeedSequence`` or an ``int`` seed.
-            num_walks_from_each: Number of walks to generate per start node.
-            *args: Positional args forwarded to ``walk`` (excluding start_node).
-            **kwargs: Keyword args forwarded to ``walk``.
+            num_walks_from_each: Number of walks to generate per start node. If this
+                is 0, the worker returns an empty array (see Returns).
+            *args: Positional args forwarded to ``walk`` (excluding ``start_node``).
+            **kwargs: Keyword args forwarded to ``walk``. Expected to include
+                ``length`` (int) so that the function can shape an empty result
+                when no walks are generated. If absent, ``length`` defaults to 0.
 
         Returns:
-            np.ndarray: Stack of walks with shape
-            ``(len(start_nodes) * num_walks_from_each, L+1)`` and dtype
-            ``uint16`` (as produced by the existing code path).
+            np.ndarray: If at least one walk is generated, returns a stack with
+            shape ``(len(start_nodes) * num_walks_from_each, L+1)`` and dtype
+            ``uint16`` (1-based node indices), where ``L`` is the provided
+            ``length`` in ``kwargs``. If no walks are requested/generated
+            (e.g., ``num_walks_from_each == 0`` or ``start_nodes`` is empty),
+            returns an empty array with shape ``(0, L+1)`` and dtype ``uint16``.
+
+        Notes:
+            - This function is deterministic given ``seed_obj`` and inputs.
+            - Empty-batch behavior prevents ``np.stack([])`` from raising
+            ``ValueError('need at least one array to stack')``.
         """
         start_nodes, seed_obj = work_item
-        _logger.debug("_walk_batch_with_seed: batch_size=%d, walks_each=%d", np.asarray(start_nodes).size, int(num_walks_from_each))
+        _logger.debug("_walk_batch_with_seed: batch_size=%d, walks_each=%d",
+                    np.asarray(start_nodes).size, int(num_walks_from_each))
         self.rng = np.random.default_rng(seed_obj)  # SeedSequence or int OK
         start_nodes = np.asarray(start_nodes, dtype=np.intp)
         out = []
         for snode in start_nodes:
             for _ in range(int(num_walks_from_each)):
-                out.append(self.walk(int(snode)+1, *args, **kwargs)) # int(snode)+1 is because .walk is part of API, so 1-based
+                out.append(self.walk(int(snode)+1, *args, **kwargs))  # 1-based API
+
+        if not out:
+            L = int(kwargs.get("length", 0))
+            return np.empty((0, L + 1), dtype=np.uint16)
+
         arr = np.stack(out, axis=0).astype(np.uint16, copy=False)
         _logger.debug("_walk_batch_with_seed: produced walks shape=%s dtype=%s", arr.shape, arr.dtype)
         return arr
+
 
     def sample_walks(self,
                     # walks
