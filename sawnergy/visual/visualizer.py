@@ -44,8 +44,8 @@ class Visualizer:
     Attributes:
         no_instances: Class-level flag to warm-start Matplotlib only once.
         COM_coords: Trajectory coordinates, shape (T, N, 3).
-        attr_energies: Attractive interaction weights, shape (T, N, N).
-        repuls_energies: Repulsive interaction weights, shape (T, N, N).
+        attr_energies: Attractive weights (shape (T, N, N)) or None if absent.
+        repuls_energies: Repulsive weights (shape (T, N, N)) or None if absent.
         N: Number of nodes (int).
         _fig: Matplotlib Figure.
         _ax: 3D Axes.
@@ -70,9 +70,6 @@ class Visualizer:
         init_elev: float = 35,
         init_azim: float = 45,
         *,
-        COM_dataset_name: str = "COM",
-        attr_data_name: str = "ATTRACTIVE_energies",
-        repuls_data_name: str = "REPULSIVE_energies",
         show: bool = False
     ) -> None:
         """Initialize the visualizer and load datasets.
@@ -87,14 +84,17 @@ class Visualizer:
             antialiased: Whether to antialias line collections.
             init_elev: Initial elevation angle (degrees) for 3D view.
             init_azim: Initial azimuth angle (degrees) for 3D view.
-            COM_dataset_name: Name of the coordinates dataset in storage.
-            attr_data_name: Name of the attractive weights dataset in storage.
-            repuls_data_name: Name of the repulsive weights dataset in storage.
             show: Hint about intended usage. If True and a GUI/display is available,
                 interactive windows can be shown later (e.g., via `self._plt.show()`).
                 If True but no GUI/display is available, the backend is switched to
                 'Agg' (off-screen) and a warning is issued. This flag does not itself
                 call `show()`; it only influences backend selection.
+
+        Data discovery:
+            Dataset names are auto-resolved from storage attrs:
+            'com_name', 'attractive_energies_name', 'repulsive_energies_name'.
+            Any missing channel remains disabled (None) but visualization still works
+            just without edges of a specific missing type.
 
         Side Effects:
             - Selects a Matplotlib backend before importing pyplot; may fall back
@@ -118,9 +118,12 @@ class Visualizer:
     
     # ---------- LOAD THE DATA ---------- #
         with sawnergy_util.ArrayStorage(RIN_path, mode="r") as storage:
-            self.COM_coords: np.ndarray      = storage.read(COM_dataset_name, slice(None))
-            self.attr_energies: np.ndarray   = storage.read(attr_data_name, slice(None))
-            self.repuls_energies: np.ndarray = storage.read(repuls_data_name, slice(None))
+            com_name = storage.get_attr("com_name")
+            attr_energies_name = storage.get_attr("ATTRACTIVE_energies")
+            repuls_energies_name = storage.get_attr("REPULSIVE_energies")
+            self.COM_coords: np.ndarray      = storage.read(com_name, slice(None))
+            self.attr_energies: np.ndarray   = storage.read(attr_energies_name, slice(None)) if attr_energies_name is not None else None
+            self.repuls_energies: np.ndarray = storage.read(repuls_energies_name, slice(None)) if repuls_energies_name is not None else None
         try:
             _logger.debug("Loaded datasets | COM_coords.shape=%s, attr_energies.shape=%s, repuls_energies.shape=%s",
                           getattr(self.COM_coords, "shape", None),
@@ -446,80 +449,86 @@ class Visualizer:
 
         # ATTRACTIVE EDGES
         if displayed_pairwise_attraction_for_nodes is not None:
-            if isinstance(displayed_pairwise_attraction_for_nodes, str):
-                if displayed_pairwise_attraction_for_nodes == "DISPLAYED_NODES":
-                    displayed_pairwise_attraction_for_nodes = displayed_nodes
-                    _logger.debug("Attraction nodes='DISPLAYED_NODES' -> count=%d", displayed_pairwise_attraction_for_nodes.size)
-                else:
-                    _logger.error("Invalid attraction selector string: %s", displayed_pairwise_attraction_for_nodes)
-                    raise ValueError(
-                            "'displayed_pairwise_attraction_for_nodes' has to be either an ArrayLike "
-                            "collection of node indices, or an 'DISPLAYED_NODES' string, "
-                            "or None.")
+            if self.attr_energies is None:
+                _logger.warning("Attractive dataset unavailable; skipping attractive edges.")
+                attractive_edges = None
             else:
-                displayed_pairwise_attraction_for_nodes = np.asarray(displayed_pairwise_attraction_for_nodes)-1 # 1-base indexing
-                _logger.debug("Attraction nodes provided | count=%d", displayed_pairwise_attraction_for_nodes.size)
-            
-            if np.setdiff1d(displayed_pairwise_attraction_for_nodes, displayed_nodes).size > 0:
-                _logger.error("Attraction nodes not a subset of displayed_nodes.")
-                raise ValueError("'displayed_pairwise_attraction_for_nodes' must be a subset of 'displayed_nodes'")
-            
-            attractive_edges, attractive_color_weights, attractive_opacity_weights = \
-                visualizer_util.build_line_segments(
-                    self.N,
-                    displayed_pairwise_attraction_for_nodes,
-                    coords_for_edges,
-                    self.attr_energies[frame_id],
-                    frac_node_interactions_displayed,
-                    global_weights_frac=global_interactions_frac,
-                    global_opacity=global_opacity,
-                    global_color_saturation=global_color_saturation
-                )
-            _logger.debug("Attraction edges built | segs.shape=%s, color_w.shape=%s, opacity_w.shape=%s",
-                          getattr(attractive_edges, "shape", None),
-                          getattr(attractive_color_weights, "shape", None),
-                          getattr(attractive_opacity_weights, "shape", None))
-
+                if isinstance(displayed_pairwise_attraction_for_nodes, str):
+                    if displayed_pairwise_attraction_for_nodes == "DISPLAYED_NODES":
+                        displayed_pairwise_attraction_for_nodes = displayed_nodes
+                        _logger.debug("Attraction nodes='DISPLAYED_NODES' -> count=%d", displayed_pairwise_attraction_for_nodes.size)
+                    else:
+                        _logger.error("Invalid attraction selector string: %s", displayed_pairwise_attraction_for_nodes)
+                        raise ValueError(
+                                "'displayed_pairwise_attraction_for_nodes' has to be either an ArrayLike "
+                                "collection of node indices, or an 'DISPLAYED_NODES' string, "
+                                "or None.")
+                else:
+                    displayed_pairwise_attraction_for_nodes = np.asarray(displayed_pairwise_attraction_for_nodes)-1 # 1-base indexing
+                    _logger.debug("Attraction nodes provided | count=%d", displayed_pairwise_attraction_for_nodes.size)
+                
+                if np.setdiff1d(displayed_pairwise_attraction_for_nodes, displayed_nodes).size > 0:
+                    _logger.error("Attraction nodes not a subset of displayed_nodes.")
+                    raise ValueError("'displayed_pairwise_attraction_for_nodes' must be a subset of 'displayed_nodes'")
+                
+                attractive_edges, attractive_color_weights, attractive_opacity_weights = \
+                    visualizer_util.build_line_segments(
+                        self.N,
+                        displayed_pairwise_attraction_for_nodes,
+                        coords_for_edges,
+                        self.attr_energies[frame_id],
+                        frac_node_interactions_displayed,
+                        global_weights_frac=global_interactions_frac,
+                        global_opacity=global_opacity,
+                        global_color_saturation=global_color_saturation
+                    )
+                _logger.debug("Attraction edges built | segs.shape=%s, color_w.shape=%s, opacity_w.shape=%s",
+                            getattr(attractive_edges, "shape", None),
+                            getattr(attractive_color_weights, "shape", None),
+                            getattr(attractive_opacity_weights, "shape", None))
         else:
             attractive_edges = None
             _logger.debug("Attraction edges skipped (selector=None).")
 
         # REPULSIVE EDGES
         if displayed_pairwise_repulsion_for_nodes is not None:
-            if isinstance(displayed_pairwise_repulsion_for_nodes, str):
-                if displayed_pairwise_repulsion_for_nodes == "DISPLAYED_NODES":
-                    displayed_pairwise_repulsion_for_nodes = displayed_nodes
-                    _logger.debug("Repulsion nodes='DISPLAYED_NODES' -> count=%d", displayed_pairwise_repulsion_for_nodes.size)
-                else:
-                    _logger.error("Invalid repulsion selector string: %s", displayed_pairwise_repulsion_for_nodes)
-                    raise ValueError(
-                            "'displayed_pairwise_repulsion_for_nodes' has to be either an ArrayLike "
-                            "collection of node indices, or an 'DISPLAYED_NODES' string, "
-                            "or None.")
+            if self.repuls_energies is None:
+                _logger.warning("Repulsive dataset unavailable; skipping repulsive edges.")
+                repulsive_edges = None
             else:
-                displayed_pairwise_repulsion_for_nodes = np.asarray(displayed_pairwise_repulsion_for_nodes)-1 # 1-base indexing
-                _logger.debug("Repulsion nodes provided | count=%d", displayed_pairwise_repulsion_for_nodes.size)
-            
-            if np.setdiff1d(displayed_pairwise_repulsion_for_nodes, displayed_nodes).size > 0:
-                _logger.error("Repulsion nodes not a subset of displayed_nodes.")
-                raise ValueError("'displayed_pairwise_repulsion_for_nodes' must be a subset of 'displayed_nodes'")
-            
-            repulsive_edges, repulsive_color_weights, repulsive_opacity_weights = \
-                visualizer_util.build_line_segments(
-                    self.N,
-                    displayed_pairwise_repulsion_for_nodes,
-                    coords_for_edges,
-                    self.repuls_energies[frame_id],
-                    frac_node_interactions_displayed,
-                    global_weights_frac=global_interactions_frac,
-                    global_opacity=global_opacity,
-                    global_color_saturation=global_color_saturation
-                )
-            _logger.debug("Repulsion edges built | segs.shape=%s, color_w.shape=%s, opacity_w.shape=%s",
-                          getattr(repulsive_edges, "shape", None),
-                          getattr(repulsive_color_weights, "shape", None),
-                          getattr(repulsive_opacity_weights, "shape", None))
-
+                if isinstance(displayed_pairwise_repulsion_for_nodes, str):
+                    if displayed_pairwise_repulsion_for_nodes == "DISPLAYED_NODES":
+                        displayed_pairwise_repulsion_for_nodes = displayed_nodes
+                        _logger.debug("Repulsion nodes='DISPLAYED_NODES' -> count=%d", displayed_pairwise_repulsion_for_nodes.size)
+                    else:
+                        _logger.error("Invalid repulsion selector string: %s", displayed_pairwise_repulsion_for_nodes)
+                        raise ValueError(
+                                "'displayed_pairwise_repulsion_for_nodes' has to be either an ArrayLike "
+                                "collection of node indices, or an 'DISPLAYED_NODES' string, "
+                                "or None.")
+                else:
+                    displayed_pairwise_repulsion_for_nodes = np.asarray(displayed_pairwise_repulsion_for_nodes)-1 # 1-base indexing
+                    _logger.debug("Repulsion nodes provided | count=%d", displayed_pairwise_repulsion_for_nodes.size)
+                
+                if np.setdiff1d(displayed_pairwise_repulsion_for_nodes, displayed_nodes).size > 0:
+                    _logger.error("Repulsion nodes not a subset of displayed_nodes.")
+                    raise ValueError("'displayed_pairwise_repulsion_for_nodes' must be a subset of 'displayed_nodes'")
+                
+                repulsive_edges, repulsive_color_weights, repulsive_opacity_weights = \
+                    visualizer_util.build_line_segments(
+                        self.N,
+                        displayed_pairwise_repulsion_for_nodes,
+                        coords_for_edges,
+                        self.repuls_energies[frame_id],
+                        frac_node_interactions_displayed,
+                        global_weights_frac=global_interactions_frac,
+                        global_opacity=global_opacity,
+                        global_color_saturation=global_color_saturation
+                    )
+                _logger.debug("Repulsion edges built | segs.shape=%s, color_w.shape=%s, opacity_w.shape=%s",
+                            getattr(repulsive_edges, "shape", None),
+                            getattr(repulsive_color_weights, "shape", None),
+                            getattr(repulsive_opacity_weights, "shape", None))
         else:
             repulsive_edges = None
             _logger.debug("Repulsion edges skipped (selector=None).")
