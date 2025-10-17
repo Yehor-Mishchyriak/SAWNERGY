@@ -773,6 +773,10 @@ class RINBuilder:
 
         # --------------------- AUXILIARY VARIABLES' / TOOLS PREPARATION -----------------------
         current_time = sawnergy_util.current_time()
+        attractive_transitions_name = "ATTRACTIVE_transitions"
+        repulsive_transitions_name  = "REPULSIVE_transitions"
+        attractive_energies_name    = "ATTRACTIVE_energies"
+        repulsive_energies_name     = "REPULSIVE_energies"
         simul_cpptraj_instances = simul_cpptraj_instances or (os.cpu_count() or 1)
         output_path = Path((output_path or (Path(os.getcwd()) /
                         f"RIN_{current_time}"))).with_suffix(".zip")
@@ -866,8 +870,8 @@ class RINBuilder:
                             arr,
                             storage,
                             num_matrices_in_compressed_blocks,
-                            "ATTRACTIVE_energies" if include_attractive else None,
-                            "REPULSIVE_energies" if include_repulsive else None
+                            attractive_energies_name if include_attractive else None,
+                            repulsive_energies_name if include_repulsive else None
                         )
 
                 transition_matrices = matrix_processor(
@@ -881,8 +885,8 @@ class RINBuilder:
                         arr,
                         storage,
                         num_matrices_in_compressed_blocks,
-                        "ATTRACTIVE_transitions" if include_attractive else None,
-                        "REPULSIVE_transitions" if include_repulsive else None
+                        attractive_transitions_name if include_attractive else None,
+                        repulsive_transitions_name if include_repulsive else None
                     )
 
             _logger.debug(
@@ -907,11 +911,11 @@ class RINBuilder:
 
             storage.add_attr("com_name", "COM")
 
-            storage.add_attr("attractive_transitions_name", "ATTRACTIVE_transitions" if include_attractive else None)
-            storage.add_attr("repulsive_transitions_name", "REPULSIVE_transitions" if include_repulsive else None)
+            storage.add_attr("attractive_transitions_name", attractive_transitions_name if include_attractive else None)
+            storage.add_attr("repulsive_transitions_name", repulsive_transitions_name if include_repulsive else None)
 
-            storage.add_attr("attractive_energies_name", "ATTRACTIVE_energies" if include_attractive and keep_prenormalized_energies else None)
-            storage.add_attr("repulsive_energies_name", "REPULSIVE_energies" if include_repulsive and keep_prenormalized_energies else None)            
+            storage.add_attr("attractive_energies_name", attractive_energies_name if include_attractive and keep_prenormalized_energies else None)
+            storage.add_attr("repulsive_energies_name", repulsive_energies_name if include_repulsive and keep_prenormalized_energies else None)            
             # --------------------------------------------------------------------------------------
         # --------------------------------------------------------------------------------------
 
