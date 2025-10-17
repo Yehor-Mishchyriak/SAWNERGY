@@ -119,8 +119,8 @@ class Visualizer:
     # ---------- LOAD THE DATA ---------- #
         with sawnergy_util.ArrayStorage(RIN_path, mode="r") as storage:
             com_name = storage.get_attr("com_name")
-            attr_energies_name = storage.get_attr("ATTRACTIVE_energies")
-            repuls_energies_name = storage.get_attr("REPULSIVE_energies")
+            attr_energies_name = storage.get_attr("attractive_energies_name")
+            repuls_energies_name = storage.get_attr("repulsive_energies_name")
             self.COM_coords: np.ndarray      = storage.read(com_name, slice(None))
             self.attr_energies: np.ndarray   = storage.read(attr_energies_name, slice(None)) if attr_energies_name is not None else None
             self.repuls_energies: np.ndarray = storage.read(repuls_energies_name, slice(None)) if repuls_energies_name is not None else None
