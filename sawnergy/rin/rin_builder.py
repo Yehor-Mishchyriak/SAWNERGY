@@ -28,11 +28,11 @@ class RINBuilder:
     """Builds Residue Interaction Networks (RINs) from MD trajectories.
 
     This class orchestrates running cpptraj to:
-      * compute per-frame, per-residue centers of mass (COMs),
-      * compute pairwise atomic non-bonded energies (electrostatics + van der Waals),
-      * project atomic interactions to residue-level interactions,
-      * post-process residue matrices (split, prune, symmetrize, normalize),
-      * package outputs into a compressed archive.
+    * compute per-frame, per-residue centers of mass (COMs),
+    * compute pairwise atomic non-bonded energies (electrostatics + van der Waals),
+    * project atomic interactions to residue-level interactions,
+    * post-process residue matrices (split, prune, remove self-interactions, symmetrize, normalize),
+    * package outputs into a compressed archive.
 
     Args:
         cpptraj_path (Path | str | None): Optional explicit path to the `cpptraj`
@@ -54,7 +54,8 @@ class RINBuilder:
     # ---------------------------------------------------------------------------------------------- #
     #                                         CPPTRAJ HELPERS
     # ---------------------------------------------------------------------------------------------- #
-        
+
+    # NOTE: the pattern might be version specific
     _elec_vdw_pattern = re.compile(r"""
         ^\s*\[printdata\s+PW\[EMAP\]\s+square2d\s+noheader\]\s*\r?\n
         ([0-9.eE+\-\s]+?)
@@ -63,6 +64,7 @@ class RINBuilder:
         (?=^\s*\[|^\s*TIME:|\Z)
     """, re.MULTILINE | re.DOTALL | re.VERBOSE)
 
+    # NOTE: the pattern might be version specific
     _com_block_pattern = lambda _, N: re.compile(rf"""
         ^[^\n]*\bCOMZ{N}\b[^\n]*\n
         ([0-9.eE+\-\s]+?)
@@ -178,7 +180,9 @@ class RINBuilder:
             timeout (float | None): Optional time limit (seconds).
 
         Returns:
-            np.ndarray: 2D array (n_atoms, n_atoms) of summed interactions.
+            np.ndarray: 2D array (n_atoms, n_atoms) of summed interactions. For the given
+            frame range, cpptraj's pairwise driver accumulates/averages internally and the
+            printed EMAP/VMAP “square2d” blocks correspond to the range specified.
 
         Raises:
             ValueError: If EMAP/VMAP blocks are not found, sizes mismatch, or the
@@ -199,7 +203,9 @@ class RINBuilder:
         m = self._elec_vdw_pattern.search(output)
         if not m:
             _logger.error("EMAP/VMAP blocks not found in cpptraj output.")
-            raise ValueError("Could not find EMAP/VMAP blocks in cpptraj output.")
+            raise ValueError("Could not find EMAP/VMAP blocks in cpptraj output. "
+                             "Potentially due to cpptraj version mismatch. "
+                             "The data retrieval is stable for CPPTRAJ of Version V6.18.1 (AmberTools)")
         emap_txt, vmap_txt = m.group(1), m.group(2)
 
         # Robust to wrapped lines: read all numbers, ignore line structure
@@ -209,12 +215,16 @@ class RINBuilder:
 
         if emap_flat.size != vmap_flat.size:
             _logger.error("Size mismatch EMAP(%d) vs VMAP(%d)", emap_flat.size, vmap_flat.size)
-            raise ValueError(f"EMAP and VMAP sizes differ: {emap_flat.size} vs {vmap_flat.size}")
+            raise ValueError(f"EMAP and VMAP sizes differ: {emap_flat.size} vs {vmap_flat.size} "
+                             "Potentially due to cpptraj version mismatch. "
+                             "The data retrieval is stable for CPPTRAJ of Version V6.18.1 (AmberTools)")
 
         n = int(round(math.sqrt(emap_flat.size)))
         if n * n != emap_flat.size:
             _logger.error("Non-square block: %d values (cannot form nxn)", emap_flat.size)
-            raise ValueError(f"Block is not square: {emap_flat.size} values (cannot reshape to nxn).")
+            raise ValueError(f"Block is not square: {emap_flat.size} values (cannot reshape to nxn). "
+                             "Potentially due to cpptraj version mismatch. "
+                             "The data retrieval is stable for CPPTRAJ of Version V6.18.1 (AmberTools)")
 
         elec_matrix = emap_flat.reshape(n, n)
         vdw_matrix  = vmap_flat.reshape(n, n)
@@ -283,7 +293,9 @@ class RINBuilder:
         if not m:
             _logger.error("COM print block not found in cpptraj output (expected COMZ%d header).",
                         number_residues)
-            raise RuntimeError("Could not find COM print block in cpptraj output.")
+            raise RuntimeError("Could not find COM print block in cpptraj output. "
+                             "Potentially due to cpptraj version mismatch. "
+                             "The data retrieval is stable for CPPTRAJ of Version V6.18.1 (AmberTools)")
         block = m.group(1)
         lines = self._com_row_pattern.findall(block)  # list[str], coords only (no frame #)
         _logger.debug("Extracted %d COM rows (expected %d)", len(lines), number_frames)
@@ -291,7 +303,9 @@ class RINBuilder:
         if len(lines) != number_frames:
             _logger.error("Frame row count mismatch: expected %d, got %d",
                         number_frames, len(lines))
-            raise RuntimeError(f"Expected {number_frames} frame rows, got {len(lines)}.")
+            raise RuntimeError(f"Expected {number_frames} frame rows, got {len(lines)}. "
+                             "Potentially due to cpptraj version mismatch. "
+                             "The data retrieval is stable for CPPTRAJ of Version V6.18.1 (AmberTools)")
 
         # parse and reshape to (n_residues, 3) per frame
         rows = [np.fromstring(line, dtype=np.float32, sep=' ') for line in lines]
@@ -299,7 +313,9 @@ class RINBuilder:
         if bad:
             _logger.error("Row(s) with wrong length detected (showing first few): %s", bad[:5])
             raise RuntimeError(
-                f"Row(s) {bad[:5]} have wrong length; expected {number_residues*3} floats."
+                f"Row(s) {bad[:5]} have wrong length; expected {number_residues*3} floats. "
+                "Potentially due to cpptraj version mismatch. "
+                "The data retrieval is stable for CPPTRAJ of Version V6.18.1 (AmberTools)"
             )
 
         coords: list[np.ndarray] = [row.reshape(3, number_residues).T for row in rows]
@@ -449,6 +465,15 @@ class RINBuilder:
         """
         _logger.debug("Converting atomic->residue: atomic_matrix=%s, membership=%s",
                       atomic_matrix.shape, membership_matrix.shape)
+        
+        if atomic_matrix.ndim != 2 or atomic_matrix.shape[0] != atomic_matrix.shape[1]:
+            raise ValueError(f"atomic_matrix must be square 2D; got shape {atomic_matrix.shape}")
+        if membership_matrix.ndim != 2 or membership_matrix.shape[0] != atomic_matrix.shape[0]:
+            raise ValueError(
+                f"Row count mismatch: atomic_matrix is {atomic_matrix.shape}, "
+                f"membership_matrix is {membership_matrix.shape}. Rows must match (#atoms)."
+            )
+
         thread_count = os.cpu_count() or 1 
         with threadpoolctl.threadpool_limits(limits=thread_count):
             result = (membership_matrix.T @ atomic_matrix @ membership_matrix).astype(dtype=np.float32)
@@ -549,14 +574,10 @@ class RINBuilder:
             np.ndarray: L1-normalized two-channel matrix.
         
         Note:
-            Row-wise normalization breaks symmetry.
-            This is because the numbers you get after normalization
-            are relative interaction strengths. Meaning, despite
-            two residues i and j having equal interaction energy
-            they both have different interaction strengths with
-            other neighbors, that is, altough (i,j) = (j,i),
-            (i,k) != (j,k), so when you normalize you get
-            different distributions, so (i,j) != (j,i) now.
+            Row-wise normalization breaks symmetry because it converts energies into
+            per-row transition probabilities (rows sum to 1). Even if (i, j) == (j, i)
+            before normalization, differing row totals generally yield (i, j) != (j, i)
+            afterward.
         """
         _logger.debug("L1-normalizing two-channel matrix shape=%s", two_channel_residue_matrix.shape)
         A = two_channel_residue_matrix[0]
@@ -577,8 +598,8 @@ class RINBuilder:
         arr: np.ndarray,
         storage: sawnergy_util.ArrayStorage,
         arrays_per_chunk: int,
-        attractive_dataset_name: str,
-        repulsive_dataset_name: str,
+        attractive_dataset_name: str | None,
+        repulsive_dataset_name: str | None,
     ) -> None:
         """Persist a two-channel residue interaction array to storage.
 
@@ -594,9 +615,9 @@ class RINBuilder:
             arrays_per_chunk: Number of matrices per chunk along the leading axis
                 when writing into the Zarr arrays.
             attractive_dataset_name: Dataset (block) name to store the attractive
-                channel under.
+                channel under (if None, the dataset isn't persisted).
             repulsive_dataset_name: Dataset (block) name to store the repulsive
-                channel under.
+                channel under (if None, the dataset isn't persisted).
 
         Returns:
             None
@@ -618,16 +639,19 @@ class RINBuilder:
             arr.shape, arrays_per_chunk, attractive_dataset_name, repulsive_dataset_name
         )
 
-        storage.write(
-            these_arrays=[arr[0]],
-            to_block_named=attractive_dataset_name,
-            arrays_per_chunk=arrays_per_chunk
-        )
-        storage.write(
-            these_arrays=[arr[1]],
-            to_block_named=repulsive_dataset_name,
-            arrays_per_chunk=arrays_per_chunk
-        )
+        if attractive_dataset_name is not None:
+            storage.write(
+                these_arrays=[arr[0]],
+                to_block_named=attractive_dataset_name,
+                arrays_per_chunk=arrays_per_chunk
+            )
+
+        if repulsive_dataset_name is not None:
+            storage.write(
+                these_arrays=[arr[1]],
+                to_block_named=repulsive_dataset_name,
+                arrays_per_chunk=arrays_per_chunk
+            )
 
         _logger.info(
             "Stored attractive/repulsive arrays to '%s' / '%s'",
@@ -647,13 +671,10 @@ class RINBuilder:
         frame_batch_size: int = -1,
         prune_low_energies_frac: float = 0.3,
         output_path: str | Path | None = None,
-        keep_absolute_energies: bool = True,
+        keep_prenormalized_energies: bool = True,
         *,
-        absolute_energies_suffix: str = "_energies",
-        transition_probabilities_suffix: str = "_transitions",
-        COM_dataset_name: str = "COM",
-        attractive_dataset_name: str = "ATTRACTIVE",
-        repulsive_dataset_name: str = "REPULSIVE",
+        include_attractive: bool = True,
+        include_repulsive: bool = True,
         parallel_cpptraj: bool = False,
         simul_cpptraj_instances: int | None = None,
         num_matrices_in_compressed_blocks: int = 10,
@@ -663,19 +684,28 @@ class RINBuilder:
         """Build a Residue Interaction Network (RIN) archive from an MD trajectory.
 
         High-level pipeline:
+        
         1. Discover MD metadata (trajectory frame count; residue membership of the
             target molecule).
+
         2. For each frame batch:
-            a. Run cpptraj `pairwise` on atoms → EMAP + VMAP → sum (atomic matrix).
-            b. Project atomic → residue with ``R = Pᵀ @ A @ P``.
-            c. Post-process residue matrix:
-                - split into (attractive, repulsive) channels,
-                - per-row quantile pruning,
-                - remove self-interactions,
-                - symmetrize.
-            d. Optionally store **absolute energies** (two blocks).
+            
+            a) Run cpptraj `pairwise` on atoms → EMAP + VMAP → sum (atomic matrix).
+            
+            b) Project atomic → residue with ``R = Pᵀ @ A @ P``.
+            
+            c) Post-process residue matrix:
+                split into (attractive, repulsive) channels,
+                per-row quantile pruning,
+                remove self-interactions,
+                symmetrize.
+
+            d. Optionally store **pre-normalized energies** (attractive or repulsive or both, depending on `include_<kind>`).
+            
             e. Row-wise L1 normalize (directed transition probabilities) and store.
+
         3. Compute per-residue COM coordinates across requested frames and store.
+
         4. Close and compress the temporary store into a zip (Zarr v3). Return path.
 
         Args:
@@ -691,14 +721,8 @@ class RINBuilder:
                 zero out small values independently in both channels.
             output_path: Destination path (with or without ``.zip``). Defaults to
                 ``RIN_<timestamp>.zip`` in the current working directory.
-            keep_absolute_energies: If ``True``, stores the pre-normalized
-                attractive/repulsive matrices under
-                ``<ATTRACTIVE|REPULSIVE><absolute_energies_suffix>``.
-            absolute_energies_suffix: Suffix appended to absolute-energy datasets.
-            transition_probabilities_suffix: Suffix appended to normalized datasets.
-            COM_dataset_name: Dataset name for COM coordinates.
-            attractive_dataset_name: Base dataset name for the attractive channel.
-            repulsive_dataset_name: Base dataset name for the repulsive channel.
+            keep_prenormalized_energies: If ``True``, stores the pre-normalized
+                attractive/repulsive matrices under ``ATTRACTIVE|REPULSIVE_energies``.
             parallel_cpptraj: If ``True``, run multiple cpptraj frame batches in
                 parallel using threads (safe w.r.t. pickling).
             simul_cpptraj_instances: Maximum concurrent cpptraj tasks (defaults to
@@ -727,7 +751,7 @@ class RINBuilder:
             "Building RIN (mol=%s, traj=%s, frame_range=%s, frame_batch_size=%s, "
             "keep_abs=%s, parallel_cpptraj=%s, simul_instances=%s, comp_level=%s)",
             molecule_of_interest, trajectory_file, frame_range, frame_batch_size,
-            keep_absolute_energies, parallel_cpptraj, simul_cpptraj_instances, compression_level
+            keep_prenormalized_energies, parallel_cpptraj, simul_cpptraj_instances, compression_level
         )
 
         # ----------------------------------- MD META DATA -------------------------------------
@@ -736,6 +760,7 @@ class RINBuilder:
             trajectory_file,
             timeout=cpptraj_run_time_limit
         )
+
         molecule_composition = self._get_atomic_composition_of_molecule(
             topology_file,
             trajectory_file,
@@ -747,9 +772,10 @@ class RINBuilder:
         # --------------------------------------------------------------------------------------
 
         # --------------------- AUXILIARY VARIABLES' / TOOLS PREPARATION -----------------------
+        current_time = sawnergy_util.current_time()
         simul_cpptraj_instances = simul_cpptraj_instances or (os.cpu_count() or 1)
         output_path = Path((output_path or (Path(os.getcwd()) /
-                        f"RIN_{sawnergy_util.current_time()}"))).with_suffix(".zip")
+                        f"RIN_{current_time}"))).with_suffix(".zip")
         _logger.debug("Output archive path: %s", output_path)
 
         # -=- FRAMES OF THE MD SIMULATION -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -759,6 +785,10 @@ class RINBuilder:
             start_frame, end_frame = 1, total_frames
         else:
             start_frame, end_frame = frame_range
+        
+        if not (1 <= start_frame <= end_frame <= total_frames):
+            raise ValueError(f"frame_range must lie within [1, {total_frames}] and be ordered; got {frame_range}.")
+
         frames = (
             (s, min(s + frame_batch_size - 1, end_frame))
             for s in range(start_frame, end_frame + 1, max(1, frame_batch_size))
@@ -774,7 +804,7 @@ class RINBuilder:
             capture_output=True
         )
         matrix_processor = sawnergy_util.elementwise_processor(
-            in_parallel=False,   # <- BLAS handles lin. alg. parallelism
+            in_parallel=False,   # <- BLAS handles lin. alg. parallelism &
             capture_output=True  # the rest of the code is vectorized by default
         )
         # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -829,15 +859,15 @@ class RINBuilder:
                     pipeline
                 )
 
-                if keep_absolute_energies:
+                if keep_prenormalized_energies:
                     _logger.debug("Writing absolute energy channels")
                     for arr in interaction_matrices:
                         self._store_two_channel_array(
                             arr,
                             storage,
                             num_matrices_in_compressed_blocks,
-                            attractive_dataset_name + absolute_energies_suffix,
-                            repulsive_dataset_name + absolute_energies_suffix
+                            "ATTRACTIVE_energies" if include_attractive else None,
+                            "REPULSIVE_energies" if include_repulsive else None
                         )
 
                 transition_matrices = matrix_processor(
@@ -851,8 +881,8 @@ class RINBuilder:
                         arr,
                         storage,
                         num_matrices_in_compressed_blocks,
-                        attractive_dataset_name + transition_probabilities_suffix,
-                        repulsive_dataset_name + transition_probabilities_suffix
+                        "ATTRACTIVE_transitions" if include_attractive else None,
+                        "REPULSIVE_transitions" if include_repulsive else None
                     )
 
             _logger.debug(
@@ -869,9 +899,20 @@ class RINBuilder:
             _logger.debug("Writing %d COM frames (chunk=%d)", len(COMs), num_matrices_in_compressed_blocks)
             storage.write(
                 COMs,
-                to_block_named=COM_dataset_name,
+                to_block_named="COM",
                 arrays_per_chunk=num_matrices_in_compressed_blocks,
             )
+            # ----------------------------------- ADD META-DATA ------------------------------------
+            storage.add_attr("time_created", current_time)
+
+            storage.add_attr("com_name", "COM")
+
+            storage.add_attr("attractive_transitions_name", "ATTRACTIVE_transitions" if include_attractive else None)
+            storage.add_attr("repulsive_transitions_name", "REPULSIVE_transitions" if include_repulsive else None)
+
+            storage.add_attr("attractive_energies_name", "ATTRACTIVE_energies" if include_attractive and keep_prenormalized_energies else None)
+            storage.add_attr("repulsive_energies_name", "REPULSIVE_energies" if include_repulsive and keep_prenormalized_energies else None)            
+            # --------------------------------------------------------------------------------------
         # --------------------------------------------------------------------------------------
 
         _logger.info("RIN build complete -> %s", output_path)
