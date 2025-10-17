@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # third-pary
 import numpy as np
 # built-in
@@ -21,75 +23,121 @@ _logger = logging.getLogger(__name__)
 # *----------------------------------------------------*
 
 class Walker:
-    """Random-walk sampler over time-indexed transition matrices.
+    """Random-walk sampler over time-indexed **transition** matrices.
 
-    This class loads two stacks of transition matrices (attractive/repulsive),
-    exposes a sampler for random walks (RWs) and self-avoiding walks (SAWs),
-    and can optionally make time-aware transitions by sampling similar
-    time-stamp matrices. It uses shared memory for matrices and a per-instance
-    NumPy Generator for reproducible sampling.
+    Loads per-timestamp stacks of attractive/repulsive **transition** matrices
+    (shape ``(T, N, N)``) previously written by the RIN builder, exposes
+    sampling for random walks (RW) and self-avoiding walks (SAW), and can
+    optionally advance a *time* coordinate using cosine-similarity between
+    transition slices (time-aware walks).
+
+    Matrices live in OS shared memory via :class:`walker_util.SharedNDArray`,
+    so multiple processes can read the same buffers zero-copy. Each `Walker`
+    instance owns a dedicated :class:`numpy.random.Generator` seeded from a
+    master seed for reproducibility.
     """
 
     def __init__(self,
                  RIN_path: str | Path,
                  *,
-                 attr_data_name: str = "ATTRACTIVE_transitions",
-                 repuls_data_name: str = "REPULSIVE_transitions",
                  seed: int | None = None) -> None:
         """Initialize shared matrices and RNG.
 
+        Data source:
+            Transition dataset names are resolved from the archive attributes
+            ``'attractive_transitions_name'`` and ``'repulsive_transitions_name'``.
+            If either attribute is ``None``, that channel is unavailable.
+
         Args:
-            RIN_path: Path to an `ArrayStorage` dataset containing transition
-                matrices.
-            attr_data_name: Dataset name for attractive transitions (shape
-                (T, N, N)).
-            repuls_data_name: Dataset name for repulsive transitions (shape
-                (T, N, N)).
-            seed: Optional master seed for the per-instance RNG. If ``None``,
+            RIN_path: Path to an ``ArrayStorage`` archive (.zip) containing
+                **transition** matrices written by the builder.
+            seed: Optional master seed for this instance's RNG. If ``None``,
                 a random 32-bit seed is chosen.
 
         Raises:
-            ValueError: If loaded arrays do not have rank 3.
+            ValueError: If no matrices are found or arrays are not rank-3.
             RuntimeError: If attractive/repulsive shapes differ or matrices
                 are not square along the last two axes.
         """
-        _logger.info("Initializing Walker from %s (attr=%s, repuls=%s)", RIN_path, attr_data_name, repuls_data_name)
+        _logger.info("Initializing Walker from %s", RIN_path)
 
-        # load numpy arrays from read-only storage
+        # Load numpy arrays from read-only storage
         with sawnergy_util.ArrayStorage(RIN_path, mode="r") as storage:
-            attr_matrices  : np.ndarray = storage.read(attr_data_name, slice(None))
-            repuls_matrices: np.ndarray = storage.read(repuls_data_name, slice(None))
+            attr_name   = storage.get_attr("attractive_transitions_name")
+            repuls_name = storage.get_attr("repulsive_transitions_name")
+            attr_matrices  : np.ndarray | None = (
+                storage.read(attr_name, slice(None)) if attr_name is not None else None
+            )
+            repuls_matrices: np.ndarray | None = (
+                storage.read(repuls_name, slice(None)) if repuls_name is not None else None
+            )
 
-        _logger.debug("Loaded arrays: attr shape=%s dtype=%s; repuls shape=%s dtype=%s",
-                      getattr(attr_matrices, "shape", None), getattr(attr_matrices, "dtype", None),
-                      getattr(repuls_matrices, "shape", None), getattr(repuls_matrices, "dtype", None))
+        _logger.debug(
+            "Loaded matrices | attr: shape=%s dtype=%s | repuls: shape=%s dtype=%s",
+            getattr(attr_matrices, "shape", None), getattr(attr_matrices, "dtype", None),
+            getattr(repuls_matrices, "shape", None), getattr(repuls_matrices, "dtype", None),
+        )
 
-        # shape & consistency checks (expect (T, N, N))
-        if attr_matrices.ndim != 3 or repuls_matrices.ndim != 3:
-            _logger.error("Bad ranks: attr.ndim=%s repuls.ndim=%s; expected both 3", attr_matrices.ndim, repuls_matrices.ndim)
-            raise ValueError(f"Expected (T,N,N) arrays; got {attr_matrices.shape} and {repuls_matrices.shape}")
-        if attr_matrices.shape != repuls_matrices.shape:
-            _logger.error("Shape mismatch: attr=%s repuls=%s", attr_matrices.shape, repuls_matrices.shape)
-            raise RuntimeError(f"ATTR/REPULS shapes must match exactly; got {attr_matrices.shape} vs {repuls_matrices.shape}")
-        T, N1, N2 = attr_matrices.shape
+        # Shape & consistency checks (expect (T, N, N))
+        if (attr_matrices is not None) and (repuls_matrices is not None):
+            if attr_matrices.ndim != 3 or repuls_matrices.ndim != 3:
+                _logger.error(
+                    "Bad ranks: attr.ndim=%s repuls.ndim=%s; expected both 3",
+                    getattr(attr_matrices, "ndim", None),
+                    getattr(repuls_matrices, "ndim", None),
+                )
+                raise ValueError(
+                    f"Expected (T,N,N) arrays; got {getattr(attr_matrices, 'shape', None)} "
+                    f"and {getattr(repuls_matrices, 'shape', None)}"
+                )
+            if attr_matrices.shape != repuls_matrices.shape:
+                _logger.error("Shape mismatch: attr=%s repuls=%s",
+                              attr_matrices.shape, repuls_matrices.shape)
+                raise RuntimeError(
+                    f"ATTR/REPULS shapes must match exactly; got {attr_matrices.shape} vs {repuls_matrices.shape}"
+                )
+            T, N1, N2 = attr_matrices.shape
+        elif attr_matrices is not None:
+            if attr_matrices.ndim != 3:
+                raise ValueError(f"Expected (T,N,N); got {attr_matrices.shape}")
+            T, N1, N2 = attr_matrices.shape
+        elif repuls_matrices is not None:
+            if repuls_matrices.ndim != 3:
+                raise ValueError(f"Expected (T,N,N); got {repuls_matrices.shape}")
+            T, N1, N2 = repuls_matrices.shape
+        else:
+            _logger.error("No transition matrices detected in %s", RIN_path)
+            raise ValueError("No transition matrices detected.")
+
         if N1 != N2:
             _logger.error("Non-square matrices along last two dims: (%s, %s)", N1, N2)
-            raise RuntimeError(f"Transition matrices must be square along last two dims; got ({N1}, {N2})")
+            raise RuntimeError(
+                f"Transition matrices must be square along last two dims; got ({N1}, {N2})"
+            )
+
         _logger.info("Transition stack OK: T=%d, N=%d", T, N1)
 
         # SHARED MEMORY ELEMENTS (read-only default views; fancy indexing via .array)
-        self.attr_matrices   = walker_util.SharedNDArray.create(
-            shape=attr_matrices.shape,
-            dtype=attr_matrices.dtype,
-            from_array=attr_matrices
+        self.attr_matrices: walker_util.SharedNDArray | None = (
+            walker_util.SharedNDArray.create(
+                shape=attr_matrices.shape,
+                dtype=attr_matrices.dtype,
+                from_array=attr_matrices,
+            ) if attr_matrices is not None else None
         )
-        self.repuls_matrices = walker_util.SharedNDArray.create(
-            shape=repuls_matrices.shape,
-            dtype=repuls_matrices.dtype,
-            from_array=repuls_matrices
+        self.repuls_matrices: walker_util.SharedNDArray | None = (
+            walker_util.SharedNDArray.create(
+                shape=repuls_matrices.shape,
+                dtype=repuls_matrices.dtype,
+                from_array=repuls_matrices,
+            ) if repuls_matrices is not None else None
         )
-        _logger.debug("SharedNDArray created: attr name=%r; repuls name=%r",
-                      getattr(self.attr_matrices, "name", None), getattr(self.repuls_matrices, "name", None))
+
+        _logger.debug(
+            "SharedNDArray created | attr name=%r; repuls name=%r",
+            getattr(self.attr_matrices, "name", None),
+            getattr(self.repuls_matrices, "name", None),
+        )
 
         # AUXILIARY NETWORK INFORMATION
         self.time_stamp_count = T
@@ -98,7 +146,10 @@ class Walker:
         # NETWORK ELEMENT
         self.nodes       = np.arange(0, self.node_count, 1, np.intp)
         self.time_stamps = np.arange(0, self.time_stamp_count, 1, np.intp)
-        _logger.debug("Index arrays built: nodes=%d, time_stamps=%d", self.nodes.size, self.time_stamps.size)
+        _logger.debug(
+            "Index arrays built: nodes=%d, time_stamps=%d",
+            self.nodes.size, self.time_stamps.size
+        )
 
         # INTERNAL
         self._memory_cleaned_up: bool = False
@@ -110,40 +161,32 @@ class Walker:
     def close(self) -> None:
         """Close shared-memory handles and (in main process) unlink segments.
 
-        This method is idempotent: if cleanup has already occurred, it returns
-        immediately. It always closes local handles in the current process.
-        If the caller is the main process (as determined by
-        ``sawnergy_util.is_main_process()``), it will also attempt to unlink
-        the underlying shared-memory segments. Unlink attempts are best-effort
-        and ignore ``FileNotFoundError`` (e.g., if already unlinked elsewhere).
-
-        Args:
-            None
-
-        Returns:
-            None
-
-        Notes:
-            Use a context manager (``with``) or call ``close()`` explicitly for
-            deterministic cleanup. In multi-process usage, only the main process
-            will perform unlinking; worker processes will only close their handles.
+        Idempotent: if cleanup already occurred, returns immediately. Always
+        closes local handles in the current process. If the caller is the main
+        process (per ``sawnergy_util.is_main_process()``), also attempts to
+        unlink the underlying shared-memory segments (best-effort; suppresses
+        ``FileNotFoundError`` if already unlinked elsewhere).
         """
         if self._memory_cleaned_up:
             _logger.debug("close(): already cleaned up; returning")
             return
         _logger.debug("Closing Walker resources (is_main=%s)", sawnergy_util.is_main_process())
         try:
-            self.attr_matrices.close()
-            self.repuls_matrices.close()
+            if self.attr_matrices is not None:
+                self.attr_matrices.close()
+            if self.repuls_matrices is not None:
+                self.repuls_matrices.close()
             _logger.debug("SharedNDArray handles closed")
             if sawnergy_util.is_main_process():
                 _logger.debug("Attempting to unlink shared memory segments (main process)")
                 try:
-                    self.attr_matrices.unlink()
+                    if self.attr_matrices is not None:
+                        self.attr_matrices.unlink()
                 except FileNotFoundError:
                     _logger.warning("attr SharedMemory already unlinked")
                 try:
-                    self.repuls_matrices.unlink()
+                    if self.repuls_matrices is not None:
+                        self.repuls_matrices.unlink()
                 except FileNotFoundError:
                     _logger.warning("repuls SharedMemory already unlinked")
             else:
@@ -153,32 +196,17 @@ class Walker:
             _logger.debug("Cleanup complete")
 
     def __enter__(self):
-        """Enter context manager scope.
-
-        Returns:
-            Walker: Self, to be used within a ``with`` block.
-        """
+        """Enter context manager scope."""
         _logger.debug("__enter__")
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        """Exit context manager scope and perform cleanup.
-
-        Args:
-            exc_type: Exception type, if any.
-            exc: Exception instance, if any.
-            tb: Traceback, if any.
-        """
+        """Exit context manager scope and perform cleanup."""
         _logger.debug("__exit__(exc_type=%s)", getattr(exc_type, "__name__", exc_type))
         self.close()
 
     def __del__(self):
-        """Best-effort destructor cleanup.
-
-        Notes:
-            Exceptions are suppressed; use explicit ``close()`` or a context
-            manager for deterministic cleanup.
-        """
+        """Best-effort destructor cleanup (exceptions suppressed)."""
         try:
             if not getattr(self, "_memory_cleaned_up", True):
                 _logger.debug("__del__: best-effort close")
@@ -190,92 +218,96 @@ class Walker:
     #                               PRIVATE
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
         
-    def _matrices_of_interaction_type(self, interaction_type: Literal["attr", "repuls"]):
+    def _matrices_of_interaction_type(
+        self, interaction_type: Literal["attr", "repuls"]
+    ) -> walker_util.SharedNDArray:
         """Return the shared array wrapper for the requested interaction type.
 
         Args:
             interaction_type: Either ``"attr"`` or ``"repuls"``.
 
         Returns:
-            SharedNDArray: Wrapper exposing the (T, N, N) stack for the chosen
-            interaction type.
+            SharedNDArray wrapper exposing the ``(T, N, N)`` stack.
 
         Raises:
-            ValueError: If ``interaction_type`` is not recognized.
+            ValueError: If the channel is missing or the type is invalid.
         """
         _logger.debug("_matrices_of_interaction_type(%s)", interaction_type)
         if interaction_type == "attr":
+            if self.attr_matrices is None:
+                raise ValueError(
+                    "Attractive transition matrices are not present in the RIN archive."
+                )
             return self.attr_matrices
-        elif interaction_type == "repuls":
+        if interaction_type == "repuls":
+            if self.repuls_matrices is None:
+                raise ValueError(
+                    "Repulsive transition matrices are not present in the RIN archive."
+                )
             return self.repuls_matrices
-        else:
-            _logger.error("interaction_type invalid: %r", interaction_type)
-            raise ValueError(f"`interaction_type` is expected to be `attr` or `repuls`. Instead, given: {interaction_type}")
+        _logger.error("interaction_type invalid: %r", interaction_type)
+        raise ValueError("`interaction_type` must be 'attr' or 'repuls'.")
 
-    def _extract_prob_vector(self,
-                             node: int,
-                             time_stamp: int,
-                             interaction_type: Literal["attr", "repuls"]):
-        """Extract a copy of the transition probabilities for a node at a time.
-
-        Args:
-            node: Zero-based node index.
-            time_stamp: Zero-based time index.
-            interaction_type: Either ``"attr"`` or ``"repuls"``.
+    def _extract_prob_vector(
+        self,
+        node: int,
+        time_stamp: int,
+        interaction_type: Literal["attr", "repuls"],
+    ) -> np.ndarray:
+        """Copy the transition row for ``node`` at ``time_stamp``.
 
         Returns:
-            np.ndarray: Copy of the row vector of transition weights
-            (shape ``(N,)``) for the specified node and time.
+            ``(N,)`` float array with transition probabilities/weights.
         """
-        _logger.debug("_extract_prob_vector(node=%d, t=%d, type=%s)", node, time_stamp, interaction_type)
+        _logger.debug("_extract_prob_vector(node=%d, t=%d, type=%s)",
+                      node, time_stamp, interaction_type)
         matrix = self._matrices_of_interaction_type(interaction_type)[time_stamp]
-        vec = matrix[node, :].copy()  # detach from shared buffer to avoid mutation
+        vec = matrix[node, :].copy()  # detach from shared buffer
         _logger.debug("prob vector extracted: shape=%s dtype=%s", vec.shape, vec.dtype)
         return vec
 
-    def _step_node(self,
-                   node: int,
-                   interaction_type: Literal["attr", "repuls"],
-                   time_stamp: int = 0,
-                   avoid: np.typing.ArrayLike | None = None
-                   ) -> tuple[int, np.ndarray | None]:
-        """Sample the next node given current node and optional avoidance set.
-
-        Args:
-            node: Current zero-based node index.
-            interaction_type: Either ``"attr"`` or ``"repuls"``.
-            time_stamp: Time index used to pick the transition row.
-            avoid: Optional iterable of node indices to exclude (self-avoid).
+    def _step_node(
+        self,
+        node: int,
+        interaction_type: Literal["attr", "repuls"],
+        time_stamp: int = 0,
+        avoid: np.typing.ArrayLike | None = None,
+    ) -> tuple[int, np.ndarray | None]:
+        """Sample next node given current node and optional avoidance set.
 
         Returns:
-            Tuple[int, Optional[np.ndarray]]: The sampled next node and the
-            updated avoidance array (or ``None`` if avoidance is disabled).
-
-        Raises:
-            RuntimeError: If the candidate set is empty or normalized mass is 0.
+            ``(next_node, updated_avoid)`` where ``updated_avoid`` is ``None`` if
+            avoidance is disabled.
         """
-        _logger.debug("_step_node(node=%d, t=%d, type=%s, avoid_len=%s)",
-                      node, time_stamp, interaction_type,
-                      None if avoid is None else np.asarray(avoid).size)
+        _logger.debug(
+            "_step_node(node=%d, t=%d, type=%s, avoid_len=%s)",
+            node, time_stamp, interaction_type,
+            None if avoid is None else np.asarray(avoid).size,
+        )
         prob_dist = self._extract_prob_vector(node, time_stamp, interaction_type)
 
         if avoid is None:
-            _logger.debug("_step_node: no-avoid branch; sampling from all nodes (raw probs sum=%.6f)",
-                          float(np.sum(prob_dist)))
+            mass = float(np.sum(prob_dist))
+            _logger.debug("_step_node: no-avoid branch; mass=%.6f", mass)
+            if mass <= 0.0:
+                _logger.error("_step_node: zero probability mass without avoidance")
+                raise RuntimeError("No valid node transitions: zero probability mass.")
             return int(self.rng.choice(self.nodes, p=prob_dist)), None
 
         to_avoid = np.asarray(avoid, dtype=np.intp)
         keep = np.setdiff1d(self.nodes, to_avoid, assume_unique=False)
-        _logger.debug("_step_node: keep.size=%d (after removing %d avoids)", keep.size, to_avoid.size)
+        _logger.debug("_step_node: keep.size=%d (after removing %d avoids)",
+                      keep.size, to_avoid.size)
         if keep.size == 0:
             _logger.error("_step_node: empty candidate set after avoidance")
-            raise RuntimeError("No available node transitions (avoiding all the nodes).")
+            raise RuntimeError("No available node transitions (avoiding all nodes).")
 
         probs = walker_util.l1_norm(prob_dist[keep])
-        _logger.debug("_step_node: normalized mass=%.6f", float(probs.sum()))
-        if probs.sum() <= 0.0:
+        mass = float(probs.sum())
+        _logger.debug("_step_node: normalized mass=%.6f", mass)
+        if mass <= 0.0:
             _logger.error("_step_node: zero probability mass after masking/normalization")
-            raise RuntimeError("No valid node transitions: probability mass is zero after masking/normalization.")
+            raise RuntimeError("No valid node transitions: probability mass is zero.")
 
         next_node = int(self.rng.choice(keep, p=probs))
         _logger.debug("_step_node: chosen next_node=%d", next_node)
@@ -283,63 +315,52 @@ class Walker:
 
         return next_node, to_avoid
 
-    def _step_time(self,
-                   time_stamp: int,
-                   interaction_type: Literal["attr", "repuls"],
-                   stickiness: float,
-                   on_no_options: Literal["raise", "loop"],
-                   avoid: np.typing.ArrayLike | None) -> tuple[int, np.ndarray | None]:
-        """Sample the next time stamp given stickiness and similarity.
-
-        Args:
-            time_stamp: Current zero-based time index.
-            interaction_type: Either ``"attr"`` or ``"repuls"``.
-            stickiness: Probability of remaining at the current time.
-            on_no_options: Behavior when no alternative times are available.
-                - ``"raise"``: raise an error.
-                - ``"loop"``: consider all except the current one.
-            avoid: Optional iterable of time indices to exclude.
-
-        Returns:
-            Tuple[int, Optional[np.ndarray]]: The sampled next time index and
-            the updated avoidance array (or ``None`` if avoidance is disabled).
+    def _step_time(
+        self,
+        time_stamp: int,
+        interaction_type: Literal["attr", "repuls"],
+        stickiness: float,
+        on_no_options: Literal["raise", "loop"],
+        avoid: np.typing.ArrayLike | None,
+    ) -> tuple[int, np.ndarray | None]:
+        """Sample next time stamp given stickiness and similarity.
 
         Raises:
-            ValueError: If ``stickiness`` is outside ``[0, 1]`` or
-                ``on_no_options`` is invalid.
-            RuntimeError: If no candidates are available or probability mass is 0.
+            ValueError: If ``stickiness`` not in ``[0,1]`` or ``on_no_options`` invalid.
+            RuntimeError: If no candidates or zero probability mass.
         """
-        _logger.debug("_step_time(t=%d, type=%s, stickiness=%.3f, on_no_options=%s, avoid_len=%s)",
-                      time_stamp, interaction_type, stickiness, on_no_options,
-                      None if avoid is None else np.asarray(avoid).size)
+        _logger.debug(
+            "_step_time(t=%d, type=%s, stickiness=%.3f, on_no_options=%s, avoid_len=%s)",
+            time_stamp, interaction_type, stickiness, on_no_options,
+            None if avoid is None else np.asarray(avoid).size,
+        )
         if not (0.0 <= stickiness <= 1.0):
             _logger.error("stickiness out of range: %r", stickiness)
             raise ValueError("stickiness must be in [0,1]")
         
         to_avoid = np.array([], dtype=np.intp) if avoid is None else np.asarray(avoid, dtype=np.intp)
 
-        # with probability = stickiness, remain at the same time stamp
+        # With probability `stickiness`, remain at the same time stamp
         r = float(self.rng.random())
         _logger.debug("_step_time: rand=%.6f vs stickiness=%.6f", r, float(stickiness))
         if r < float(stickiness):
             _logger.debug("_step_time: sticking at t=%d", time_stamp)
             return int(time_stamp), to_avoid
 
-        # exclude current time since we chose not to stick
-        to_avoid = np.unique(np.append(to_avoid, time_stamp).astype(np.intp, copy=False)) # if intp already -- no new buffer
+        # Exclude current time since we chose not to stick
+        to_avoid = np.unique(np.append(to_avoid, time_stamp).astype(np.intp, copy=False))
         keep = np.setdiff1d(self.time_stamps, to_avoid, assume_unique=True)
         _logger.debug("_step_time: keep.size=%d (to_avoid.size=%d)", keep.size, to_avoid.size)
 
         matrices = self._matrices_of_interaction_type(interaction_type)
-        current_matrix = matrices[time_stamp]  # axis-0 basic indexing is ok on the sham wrapper
+        current_matrix = matrices[time_stamp]  # axis-0 basic indexing returns a view
 
         if keep.size == 0:
             if on_no_options == "raise":
                 _logger.error("_step_time: no available timestamps (avoid=%s)", np.unique(to_avoid))
                 raise RuntimeError(f"No available time stamps (avoid={np.unique(to_avoid)})")
-            elif on_no_options == "loop":
+            if on_no_options == "loop":
                 _logger.warning("_step_time: looping over all except current (t=%d)", time_stamp)
-                # avoid current; consider all other timestamps
                 to_avoid = np.array([time_stamp], dtype=np.intp)
                 keep = self.time_stamps[self.time_stamps != time_stamp]
                 if keep.size == 0:
@@ -350,18 +371,19 @@ class Walker:
                 _logger.error("_step_time: invalid on_no_options=%r", on_no_options)
                 raise ValueError("on_no_options must be 'raise' or 'loop'")
         else:
-            matrices_stack = matrices.array[keep]      # fancy indexing on ndarray, not wrapper
+            matrices_stack = matrices.array[keep]  # fancy indexing on ndarray, not wrapper
 
         sims = walker_util.apply_on_axis0(matrices_stack, walker_util.cosine_similarity(current_matrix))
         probs = walker_util.l1_norm(sims)
         mass = float(probs.sum())
         _logger.debug("_step_time: candidates=%d, mass=%.6f", keep.size, mass)
         if mass <= 0.0:
-            _logger.error("_step_time: zero probability mass (t=%d, type=%s, candidates=%d)",
-                          time_stamp, interaction_type, keep.size)
+            _logger.error(
+                "_step_time: zero probability mass (t=%d, type=%s, candidates=%d)",
+                time_stamp, interaction_type, keep.size
+            )
             raise RuntimeError(
-                f"No valid time stamps to sample: probability mass is zero after masking/normalization. "
-                f"time_stamp={time_stamp}, interaction_type={interaction_type}, candidates={len(keep)}."
+                "No valid time stamps to sample: probability mass is zero after masking/normalization."
             )
 
         next_time_stamp = int(self.rng.choice(keep, p=probs))
@@ -381,34 +403,37 @@ class Walker:
              time_aware: bool = False,
              stickiness: float | None = None,
              on_no_options: Literal["raise", "loop"] | None = None) -> np.ndarray:
-        """Generate a single walk path.
+        """Generate one walk path.
+
+        Indexing contract:
+            Public API is **1-based** for both nodes and time stamps to match
+            residue numbering in biomolecular contexts. Internally everything is
+            0-based. The returned path is 1-based.
 
         Args:
-            start_node: 1-based start node index; if ``None``, sampled uniformly.
-            start_time_stamp: 1-based start time index; if ``None``, sampled uniformly.
-            length: Number of transition steps to simulate.
-            interaction_type: Either ``"attr"`` or ``"repuls"``.
-            self_avoid: If ``True``, the walk will not revisit nodes within the
-                same path (SAW).
-            time_aware: If ``True``, advance time using ``_step_time`` each step.
+            start_node: 1-based start node; if ``None``, sampled uniformly.
+            start_time_stamp: 1-based start time; if ``None``, sampled uniformly.
+            length: Number of transition **steps** to simulate.
+            interaction_type: ``"attr"`` or ``"repuls"``.
+            self_avoid: If ``True``, path will not revisit nodes within the same walk.
+            time_aware: If ``True``, advance time with :meth:`_step_time` each step.
             stickiness: Required when ``time_aware=True``; probability of staying
                 at the current time.
             on_no_options: Required when ``time_aware=True``; behavior when no
                 time candidates are available (``"raise"`` or ``"loop"``).
 
         Returns:
-            np.ndarray: Array of node indices (dtype ``intp``) representing the
-            path, including the start node. Shape is ``(length + 1,)``.
-            Note: 1-based indexed.
+            ``(length + 1,)`` array of dtype ``intp`` with **1-based** node indices.
 
         Raises:
-            ValueError: If provided start indices are out of range or required
-                time-aware parameters are missing.
-            RuntimeError: Propagated from stepping functions when no valid
-                transitions are available.
+            ValueError: Bad start indices (after 1-based→0-based) or missing
+                time-aware parameters.
+            RuntimeError: Propagated from step routines when no valid choices exist.
         """
-        _logger.debug("walk(start_node=%r, start_time_stamp=%r, length=%d, type=%s, self_avoid=%s, time_aware=%s)",
-                      start_node, start_time_stamp, length, interaction_type, self_avoid, time_aware)
+        _logger.debug(
+            "walk(start_node=%r, start_time_stamp=%r, length=%d, type=%s, self_avoid=%s, time_aware=%s)",
+            start_node, start_time_stamp, length, interaction_type, self_avoid, time_aware
+        )
 
         # 1-based external API preserved, so validate ranges after conversion
         if start_node is not None:
@@ -436,7 +461,7 @@ class Walker:
 
         if time_aware and (stickiness is None or on_no_options is None):
             _logger.error("time_aware=True but stickiness/on_no_options missing")
-            raise ValueError("time_aware=True requires both `stickiness` and `on_no_options` to be provided.")
+            raise ValueError("time_aware=True requires both `stickiness` and `on_no_options`.")
 
         for _ in range(length):
             if self_avoid:
@@ -450,7 +475,7 @@ class Walker:
                     time_stamp, interaction_type, stickiness, on_no_options, time_stamps_to_avoid
                 )
         
-        pth += 1 # ensure 1-based indexing output
+        pth += 1  # ensure 1-based indexing in the output
 
         _logger.debug("walk: finished path of len=%d", pth.size)
         return pth
@@ -460,32 +485,23 @@ class Walker:
         """Worker: seed RNG and generate a batch of walks for a set of start nodes.
 
         Args:
-            work_item: Tuple of ``(start_nodes, seed_obj)`` where ``start_nodes`` is
-                an iterable of node indices and ``seed_obj`` is either an
-                ``np.random.SeedSequence`` or an ``int`` seed.
-            num_walks_from_each: Number of walks to generate per start node. If this
-                is 0, the worker returns an empty array (see Returns).
-            *args: Positional args forwarded to ``walk`` (excluding ``start_node``).
-            **kwargs: Keyword args forwarded to ``walk``. Expected to include
-                ``length`` (int) so that the function can shape an empty result
-                when no walks are generated. If absent, ``length`` defaults to 0.
+            work_item: Tuple ``(start_nodes, seed_obj)`` where ``start_nodes`` is
+                an iterable of **0-based** node indices and ``seed_obj`` is an
+                ``np.random.SeedSequence`` or an ``int``.
+            num_walks_from_each: Number of walks to generate per start node. If 0,
+                returns an empty array with the correct width.
 
         Returns:
-            np.ndarray: If at least one walk is generated, returns a stack with
-            shape ``(len(start_nodes) * num_walks_from_each, L+1)`` and dtype
-            ``uint16`` (1-based node indices), where ``L`` is the provided
-            ``length`` in ``kwargs``. If no walks are requested/generated
-            (e.g., ``num_walks_from_each == 0`` or ``start_nodes`` is empty),
-            returns an empty array with shape ``(0, L+1)`` and dtype ``uint16``.
-
-        Notes:
-            - This function is deterministic given ``seed_obj`` and inputs.
-            - Empty-batch behavior prevents ``np.stack([])`` from raising
-            ``ValueError('need at least one array to stack')``.
+            ``(M, L+1)`` array of dtype ``uint16`` with 1-based node indices,
+            where ``M = len(start_nodes) * num_walks_from_each`` and ``L`` is
+            ``kwargs["length"]`` (defaults to 0 if absent). If no walks are
+            generated, returns ``(0, L+1)``.
         """
         start_nodes, seed_obj = work_item
-        _logger.debug("_walk_batch_with_seed: batch_size=%d, walks_each=%d",
-                    np.asarray(start_nodes).size, int(num_walks_from_each))
+        _logger.debug(
+            "_walk_batch_with_seed: batch_size=%d, walks_each=%d",
+            np.asarray(start_nodes).size, int(num_walks_from_each)
+        )
         self.rng = np.random.default_rng(seed_obj)  # SeedSequence or int OK
         start_nodes = np.asarray(start_nodes, dtype=np.intp)
         out = []
@@ -501,67 +517,59 @@ class Walker:
         _logger.debug("_walk_batch_with_seed: produced walks shape=%s dtype=%s", arr.shape, arr.dtype)
         return arr
 
-
     def sample_walks(self,
-                    # walks
-                    walk_length: int,
-                    walks_per_node: int,
-                    saw_frac: float,
-                    # time aware params
-                    time_aware: bool = False,
-                    stickiness: float | None = None,
-                    on_no_options: Literal["raise", "loop"] | None = None,
-                    # output
-                    output_path: str | Path | None = None,
-                    *,
-                    # computation
-                    in_parallel: bool,
-                    # storage
-                    attractive_dataset_name: str = "ATTRACTIVE",
-                    repulsive_dataset_name: str = "REPULSIVE",
-                    RW_suffix: str = "_RWs",
-                    SAW_suffix: str = "_SAWs",
-                    compression_level: int = 3,
-                    num_walk_matrices_in_compressed_blocks: int | None = None
-                    ) -> str:
-        """Generate and persist random walks for all nodes.
+                     # walks
+                     walk_length: int,
+                     walks_per_node: int,
+                     saw_frac: float = 0.0,
+                     include_attractive: bool = True,
+                     include_repulsive: bool = False,
+                     # time aware params
+                     time_aware: bool = False,
+                     stickiness: float | None = None,
+                     on_no_options: Literal["raise", "loop"] | None = None,
+                     # output
+                     output_path: str | Path | None = None,
+                     *,
+                     # computation
+                     in_parallel: bool,
+                     # storage
+                     compression_level: int = 3,
+                     num_walk_matrices_in_compressed_blocks: int | None = None
+                     ) -> str:
+        """Generate and persist random walks for **all** nodes.
 
-        For each node, produces both RWs and SAWs according to ``saw_frac``,
-        optionally time-aware, and writes them into blocks under the provided
-        dataset names.
+        For each node, produces ``walks_per_node`` paths split between RW and
+        SAW according to ``saw_frac``. Optionally enables time-aware stepping.
+        Results are chunk-written to a new compressed archive.
 
         Args:
-            walk_length: Number of steps per walk.
-            walks_per_node: Total walks to generate per node (split into RW/SAW).
-            saw_frac: Fraction of ``walks_per_node`` that are SAWs per node
-                (the remainder are RWs).
-            time_aware: If ``True``, enable time evolution via ``_step_time``.
-            stickiness: Required when ``time_aware=True``; probability of
-                staying at the current time step.
-            on_no_options: Required when ``time_aware=True``; behavior when no
-                alternative time stamps are available (``"raise"`` or ``"loop"``).
-            output_path: Destination path (with or without ``.zip``). Defaults to
+            walk_length: Number of steps per walk (path length is ``walk_length+1``).
+            walks_per_node: Total walks per node (integer).
+            saw_frac: Fraction in ``[0,1]`` of per-node walks that are SAWs
+                (remainder are RWs).
+            include_attractive: If ``True``, generate walks on the attractive channel.
+            include_repulsive: If ``True``, generate walks on the repulsive channel.
+            time_aware: If ``True``, enable time evolution via :meth:`_step_time`.
+            stickiness: Required when ``time_aware=True``; probability of staying
+                at the current time step.
+            on_no_options: Required when ``time_aware=True``; when no alternative
+                time stamps are available, either ``"raise"`` or ``"loop"``.
+            output_path: Destination (with or without ``.zip``). Defaults to
                 ``WALKS_<timestamp>.zip`` in the current working directory.
-            in_parallel: If ``True``, process batches with ``ProcessPoolExecutor``.
-            attractive_dataset_name: Base dataset name for attractive walks.
-            repulsive_dataset_name: Base dataset name for repulsive walks.
-            RW_suffix: Suffix for random-walk datasets.
-            SAW_suffix: Suffix for self-avoiding-walk datasets.
-            compression_level: Compression level passed to storage.
-            num_walk_matrices_in_compressed_blocks:
-                Optional chunking hint for the writer. If provided, the writer
-                groups at most this many walk matrices per compressed chunk when
-                calling ``storage.write(..., arrays_per_chunk=...)``. When ``None``,
-                it defaults to the number of node batches (i.e., ``len(node_batches)``).
+            in_parallel: Use :class:`ProcessPoolExecutor` to parallelize over
+                node batches (requires main-process guard).
+            compression_level: Compression level for the output archive.
+            num_walk_matrices_in_compressed_blocks: Max number of walk matrices
+                per compressed chunk when writing. Defaults to number of batches.
 
         Returns:
-            str: The string form of ``output_path`` where data were written.
+            String path to the written archive.
 
         Raises:
-            ValueError: If ``saw_frac`` outside ``[0,1]``.
-            RuntimeError: If called in parallel without a main-process guard,
-                or propagated from the stepping routines when no valid choices
-                are available.
+            ValueError: If ``saw_frac`` is outside ``[0,1]``.
+            RuntimeError: If run in parallel without a main-process guard, or when
+                no valid transitions are available during stepping.
         """
         _logger.info(
             "sample_walks: L=%d, per_node=%d, saw_frac=%.3f, time_aware=%s, out=%s, "
@@ -570,15 +578,17 @@ class Walker:
             num_walk_matrices_in_compressed_blocks,
         )
 
+        current_time = sawnergy_util.current_time()
+        
         output_path = Path((output_path or (Path(os.getcwd()) /
-                        f"WALKS_{sawnergy_util.current_time()}"))).with_suffix(".zip")
+                        f"WALKS_{current_time}"))).with_suffix(".zip")
         _logger.debug("Output archive path: %s", output_path)
 
         if not (0.0 <= saw_frac <= 1.0):
             _logger.error("saw_frac out of range: %r", saw_frac)
             raise ValueError("saw_frac must be in [0, 1]")
 
-        # deterministic integer split
+        # Deterministic integer split
         num_SAWs = int(round(walks_per_node * float(saw_frac)))
         num_RWs  = int(walks_per_node) - num_SAWs
         _logger.info("Per-node counts: SAWs=%d, RWs=%d", num_SAWs, num_RWs)
@@ -605,106 +615,131 @@ class Walker:
         _logger.debug("Building node batches via sawnergy_util.batches_of (batch_size_nodes=%d)", batch_size_nodes)
         node_batches = list(sawnergy_util.batches_of(self.nodes, batch_size=batch_size_nodes))
         _logger.debug("Built %d node batches", len(node_batches))
+
         # Derive deterministic child seeds from master seed — stable per batch
         master_ss = np.random.SeedSequence(self._seed)
         child_seeds = master_ss.spawn(len(node_batches))
         work_items = list(zip(node_batches, child_seeds))
         _logger.debug("Prepared %d work_items with child seeds", len(work_items))
 
-        num_walk_matrices_in_compressed_blocks = num_walk_matrices_in_compressed_blocks or len(node_batches)
-        _logger.info(
-            "arrays_per_chunk resolved to: %d", num_walk_matrices_in_compressed_blocks
+        num_walk_matrices_in_compressed_blocks = (
+            num_walk_matrices_in_compressed_blocks or len(node_batches)
         )
+        _logger.info("arrays_per_chunk resolved to: %d", num_walk_matrices_in_compressed_blocks)
+
+        attractive_RWs_name  = "ATTRACTIVE_RWs"
+        attractive_SAWs_name = "ATTRACTIVE_SAWs"
+        repulsive_RWs_name   = "REPULSIVE_RWs"
+        repulsive_SAWs_name  = "REPULSIVE_SAWs"
 
         with sawnergy_util.ArrayStorage.compress_and_cleanup(output_path, compression_level) as storage:
-            # --- ATTR RWs ---
-            _logger.info("Generating ATTR RWs ...")
-            chunks = processor(
-                work_items,
-                self._walk_batch_with_seed,
-                num_RWs,
-                start_time_stamp=None,
-                length=walk_length,
-                interaction_type="attr",
-                self_avoid=False,
-                time_aware=time_aware,
-                stickiness=stickiness,
-                on_no_options=on_no_options,
-            )
-            if chunks:
-                all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
-                _logger.info("ATTR RWs: concatenated shape=%s", all_walks.shape)
-                storage.write(list(all_walks), to_block_named=attractive_dataset_name + RW_suffix,
-                            arrays_per_chunk=num_walk_matrices_in_compressed_blocks)
+            if include_attractive:
+                # --- ATTR RWs ---
+                _logger.info("Generating ATTR RWs ...")
+                chunks = processor(
+                    work_items,
+                    self._walk_batch_with_seed,
+                    num_RWs,
+                    start_time_stamp=None,
+                    length=walk_length,
+                    interaction_type="attr",
+                    self_avoid=False,
+                    time_aware=time_aware,
+                    stickiness=stickiness,
+                    on_no_options=on_no_options,
+                )
+                if chunks:
+                    all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
+                    _logger.info("ATTR RWs: concatenated shape=%s", all_walks.shape)
+                    storage.write(
+                        list(all_walks),
+                        to_block_named=attractive_RWs_name,
+                        arrays_per_chunk=num_walk_matrices_in_compressed_blocks
+                    )
 
-            # --- ATTR SAWs ---
-            _logger.info("Generating ATTR SAWs ...")
-            chunks = processor(
-                work_items,
-                self._walk_batch_with_seed,
-                num_SAWs,
-                start_time_stamp=None,
-                length=walk_length,
-                interaction_type="attr",
-                self_avoid=True,
-                time_aware=time_aware,
-                stickiness=stickiness,
-                on_no_options=on_no_options,
-            )
-            if chunks:
-                all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
-                _logger.info("ATTR SAWs: concatenated shape=%s", all_walks.shape)
-                storage.write(list(all_walks), to_block_named=attractive_dataset_name + SAW_suffix,
-                            arrays_per_chunk=num_walk_matrices_in_compressed_blocks)
+                # --- ATTR SAWs ---
+                _logger.info("Generating ATTR SAWs ...")
+                chunks = processor(
+                    work_items,
+                    self._walk_batch_with_seed,
+                    num_SAWs,
+                    start_time_stamp=None,
+                    length=walk_length,
+                    interaction_type="attr",
+                    self_avoid=True,
+                    time_aware=time_aware,
+                    stickiness=stickiness,
+                    on_no_options=on_no_options,
+                )
+                if chunks:
+                    all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
+                    _logger.info("ATTR SAWs: concatenated shape=%s", all_walks.shape)
+                    storage.write(
+                        list(all_walks),
+                        to_block_named=attractive_SAWs_name,
+                        arrays_per_chunk=num_walk_matrices_in_compressed_blocks
+                    )
+            
+            if include_repulsive:
+                # --- REPULS RWs ---
+                _logger.info("Generating REPULS RWs ...")
+                chunks = processor(
+                    work_items,
+                    self._walk_batch_with_seed,
+                    num_RWs,
+                    start_time_stamp=None,
+                    length=walk_length,
+                    interaction_type="repuls",
+                    self_avoid=False,
+                    time_aware=time_aware,
+                    stickiness=stickiness,
+                    on_no_options=on_no_options,
+                )
+                if chunks:
+                    all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
+                    _logger.info("REPULS RWs: concatenated shape=%s", all_walks.shape)
+                    storage.write(
+                        list(all_walks),
+                        to_block_named=repulsive_RWs_name,
+                        arrays_per_chunk=num_walk_matrices_in_compressed_blocks
+                    )
 
-            # --- REPULS RWs ---
-            _logger.info("Generating REPULS RWs ...")
-            chunks = processor(
-                work_items,
-                self._walk_batch_with_seed,
-                num_RWs,
-                start_time_stamp=None,
-                length=walk_length,
-                interaction_type="repuls",
-                self_avoid=False,
-                time_aware=time_aware,
-                stickiness=stickiness,
-                on_no_options=on_no_options,
-            )
-            if chunks:
-                all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
-                _logger.info("REPULS RWs: concatenated shape=%s", all_walks.shape)
-                storage.write(list(all_walks), to_block_named=repulsive_dataset_name + RW_suffix,
-                            arrays_per_chunk=num_walk_matrices_in_compressed_blocks)
+                # --- REPULS SAWs ---
+                _logger.info("Generating REPULS SAWs ...")
+                chunks = processor(
+                    work_items,
+                    self._walk_batch_with_seed,
+                    num_SAWs,
+                    start_time_stamp=None,
+                    length=walk_length,
+                    interaction_type="repuls",
+                    self_avoid=True,
+                    time_aware=time_aware,
+                    stickiness=stickiness,
+                    on_no_options=on_no_options,
+                )
+                if chunks:
+                    all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
+                    _logger.info("REPULS SAWs: concatenated shape=%s", all_walks.shape)
+                    storage.write(
+                        list(all_walks),
+                        to_block_named=repulsive_SAWs_name,
+                        arrays_per_chunk=num_walk_matrices_in_compressed_blocks
+                    )
 
-            # --- REPULS SAWs ---
-            _logger.info("Generating REPULS SAWs ...")
-            chunks = processor(
-                work_items,
-                self._walk_batch_with_seed,
-                num_SAWs,
-                start_time_stamp=None,
-                length=walk_length,
-                interaction_type="repuls",
-                self_avoid=True,
-                time_aware=time_aware,
-                stickiness=stickiness,
-                on_no_options=on_no_options,
-            )
-            if chunks:
-                all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
-                _logger.info("REPULS SAWs: concatenated shape=%s", all_walks.shape)
-                storage.write(list(all_walks), to_block_named=repulsive_dataset_name + SAW_suffix,
-                            arrays_per_chunk=num_walk_matrices_in_compressed_blocks)
-
-            # useful metadata for reproducibility
+            # useful metadata
+            storage.add_attr("time_created", current_time)
             storage.add_attr("seed", int(self._seed))
             storage.add_attr("rng_scheme", "SeedSequence.spawn_per_batch_v1")
             storage.add_attr("num_workers", int(num_workers))
             storage.add_attr("in_parallel", bool(in_parallel))
             storage.add_attr("batch_size_nodes", int(batch_size_nodes))
-            _logger.info("Wrote metadata: seed=%d, workers=%d, parallel=%s, batch=%d",
-                        int(self._seed), int(num_workers), bool(in_parallel), int(batch_size_nodes))
+            storage.add_attr("attractive_RWs_name", attractive_RWs_name if include_attractive else None)
+            storage.add_attr("repulsive_RWs_name", repulsive_RWs_name if include_repulsive else None)
+            storage.add_attr("attractive_SAWs_name", attractive_SAWs_name if include_attractive else None)
+            storage.add_attr("repulsive_SAWs_name", repulsive_SAWs_name if include_repulsive else None)
+
+            _logger.info("Wrote metadata")
 
         _logger.info("sample_walks complete -> %s", str(output_path))
         return str(output_path)
