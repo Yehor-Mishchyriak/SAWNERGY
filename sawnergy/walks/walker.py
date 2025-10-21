@@ -773,6 +773,7 @@ class Walker:
             storage.add_attr("node_count", self.node_count)
             storage.add_attr("walk_length", walk_length)
             storage.add_attr("walks_per_node", walks_per_node)
+            storage.add_attr("time_stamp_count", self.time_stamp_count)
             # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
             storage.add_attr("attractive_RWs_name", attractive_RWs_name if include_attractive else None)
             storage.add_attr("repulsive_RWs_name", repulsive_RWs_name if include_repulsive else None)
