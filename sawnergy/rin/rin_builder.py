@@ -843,6 +843,8 @@ class RINBuilder:
 
         with sawnergy_util.ArrayStorage.compress_and_cleanup(output_path, compression_level) as storage:
             _logger.debug("Opened temporary store for writing")
+            com_avgs: list[np.ndarray] = []
+
             for frame_batch in sawnergy_util.batches_of(
                 frames, batch_size=simul_cpptraj_instances if parallel_cpptraj else 1
             ):
@@ -858,10 +860,7 @@ class RINBuilder:
                     timeout=cpptraj_run_time_limit,
                 )
 
-                interaction_matrices = matrix_processor(
-                    atomic_matrices,
-                    pipeline
-                )
+                interaction_matrices = matrix_processor(atomic_matrices, pipeline)
 
                 if keep_prenormalized_energies:
                     _logger.debug("Writing absolute energy channels")
@@ -874,10 +873,7 @@ class RINBuilder:
                             repulsive_energies_name if include_repulsive else None
                         )
 
-                transition_matrices = matrix_processor(
-                    interaction_matrices,
-                    self._L1_normalize
-                )
+                transition_matrices = matrix_processor(interaction_matrices, self._L1_normalize)
 
                 _logger.debug("Writing normalized transition channels")
                 for arr in transition_matrices:
@@ -889,39 +885,48 @@ class RINBuilder:
                         repulsive_transitions_name if include_repulsive else None
                     )
 
-            _logger.debug(
-                "Computing COMs for frames [%d..%d] (residues=%d)", start_frame, end_frame, number_residues
-            )
-            COMs = self._get_residue_COMs_per_frame(
-                frame_range=(start_frame, end_frame),
-                topology_file=topology_file,
-                trajectory_file=trajectory_file,
-                molecule_id=molecule_of_interest,
-                number_residues=number_residues,
-                timeout=cpptraj_run_time_limit,
-            )
-            _logger.debug("Writing %d COM frames (chunk=%d)", len(COMs), num_matrices_in_compressed_blocks)
+                _logger.debug("Computing batch COMs for this frame batch (len=%d)", len(frame_batch))
+                com_lists_per_range = frame_processor(
+                    frame_batch,
+                    self._get_residue_COMs_per_frame,
+                    topology_file,
+                    trajectory_file,
+                    molecule_of_interest,
+                    number_residues,
+                    timeout=cpptraj_run_time_limit,
+                )
+
+                for i, com_frames in enumerate(com_lists_per_range):
+                    avg = np.stack(com_frames, axis=0).mean(axis=0).astype(np.float32, copy=False)
+                    com_avgs.append(avg)
+                    _logger.debug("Batch %d: COM avg shape=%s", i, avg.shape)
+
+            _logger.debug("Writing %d batch-averaged COM snapshots (chunk=%d)",
+                        len(com_avgs), num_matrices_in_compressed_blocks)
+
             storage.write(
-                COMs,
+                com_avgs,
                 to_block_named="COM",
                 arrays_per_chunk=num_matrices_in_compressed_blocks,
             )
-            # ----------------------------------- ADD META-DATA ------------------------------------
+
+            # ----------------------------- META-DATA --------------------------------
             storage.add_attr("time_created", current_time)
-
             storage.add_attr("com_name", "COM")
-
+            storage.add_attr("molecule_of_interest", molecule_of_interest)
+            storage.add_attr("frame_range", frame_range)
+            storage.add_attr("frame_batch_size", frame_batch_size)
+            storage.add_attr("prune_low_energies_frac", prune_low_energies_frac)
             storage.add_attr("attractive_transitions_name", attractive_transitions_name if include_attractive else None)
             storage.add_attr("repulsive_transitions_name", repulsive_transitions_name if include_repulsive else None)
-
-            storage.add_attr("attractive_energies_name", attractive_energies_name if include_attractive and keep_prenormalized_energies else None)
-            storage.add_attr("repulsive_energies_name", repulsive_energies_name if include_repulsive and keep_prenormalized_energies else None)            
-            # --------------------------------------------------------------------------------------
-        # --------------------------------------------------------------------------------------
+            storage.add_attr("attractive_energies_name",
+                            attractive_energies_name if include_attractive and keep_prenormalized_energies else None)
+            storage.add_attr("repulsive_energies_name",
+                            repulsive_energies_name if include_repulsive and keep_prenormalized_energies else None)
+            # ------------------------------------------------------------------------
 
         _logger.info("RIN build complete -> %s", output_path)
         return str(output_path)
-
 
 __all__ = [
     "RINBuilder"
