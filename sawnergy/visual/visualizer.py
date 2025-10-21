@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Iterable, Literal
 import logging
 # local
-from .. import sawnergy_util
 from . import visualizer_util
+from .. import sawnergy_util
 
 # *----------------------------------------------------*
 #                        GLOBALS

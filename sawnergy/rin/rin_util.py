@@ -7,7 +7,7 @@ import os, shutil, subprocess
 from pathlib import Path
 import re
 # local
-from ..sawnergy_util import read_lines
+from .. import sawnergy_util
 
 # *----------------------------------------------------*
 #                        GLOBALS
@@ -336,7 +336,7 @@ class CpptrajMaskParser:
             RuntimeError: If the input file is empty.
             ValueError: If required columns are missing or a row is malformed.
         """
-        lines = read_lines(mol_compositions_file, skip_header=False)
+        lines = sawnergy_util.read_lines(mol_compositions_file, skip_header=False)
         if not lines:
             raise RuntimeError(f"0 lines were read from {mol_compositions_file}")
 
