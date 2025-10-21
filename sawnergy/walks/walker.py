@@ -734,6 +734,13 @@ class Walker:
             storage.add_attr("num_workers", int(num_workers))
             storage.add_attr("in_parallel", bool(in_parallel))
             storage.add_attr("batch_size_nodes", int(batch_size_nodes))
+            # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+            storage.add_attr("num_RWs",  num_RWs)
+            storage.add_attr("num_SAWs", num_SAWs)
+            storage.add_attr("node_count", self.node_count)
+            storage.add_attr("walk_length", walk_length)
+            storage.add_attr("walks_per_node", walks_per_node)
+            # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
             storage.add_attr("attractive_RWs_name", attractive_RWs_name if include_attractive else None)
             storage.add_attr("repulsive_RWs_name", repulsive_RWs_name if include_repulsive else None)
             storage.add_attr("attractive_SAWs_name", attractive_SAWs_name if include_attractive else None)

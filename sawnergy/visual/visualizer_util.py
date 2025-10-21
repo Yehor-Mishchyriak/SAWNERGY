@@ -380,7 +380,7 @@ __all__ = [
 "SKY",
 "SLATE",
 "HEAT",
-"COLD",
+"COLD"
 ]
 
 if __name__ == "__main__":
