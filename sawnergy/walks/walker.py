@@ -517,6 +517,49 @@ class Walker:
         _logger.debug("_walk_batch_with_seed: produced walks shape=%s dtype=%s", arr.shape, arr.dtype)
         return arr
 
+    def _walks_per_time(self,
+                        work_items,
+                        processor,
+                        num_walks_from_each: int,
+                        *,
+                        walk_length: int,
+                        interaction_type: Literal["attr", "repuls"],
+                        self_avoid: bool,
+                        time_aware: bool,
+                        stickiness: float | None,
+                        on_no_options: Literal["raise", "loop"] | None) -> np.ndarray:
+        """
+        Generate walks separately for each start time stamp and stack as (T, M, L+1).
+
+        - If time_aware=False: each layer t contains walks constrained to time t.
+        - If time_aware=True: each layer t contains walks that *start* at t and
+          may traverse time via _step_time during the walk.
+        """
+        per_time: list[np.ndarray] = []
+        for t in range(self.time_stamp_count):
+            chunks = processor(
+                work_items,
+                self._walk_batch_with_seed,
+                int(num_walks_from_each),
+                start_time_stamp=int(t + 1),
+                length=walk_length,
+                interaction_type=interaction_type,
+                self_avoid=self_avoid,
+                time_aware=bool(time_aware),
+                stickiness=stickiness,
+                on_no_options=on_no_options,
+            )
+            if chunks:
+                all_walks_2d = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
+            else:
+                all_walks_2d = np.empty((0, walk_length + 1), dtype=np.uint16)
+            per_time.append(all_walks_2d)
+        arr_3d = (np.stack(per_time, axis=0)
+                  if per_time else np.empty((self.time_stamp_count, 0, walk_length + 1), dtype=np.uint16))
+        _logger.info("_walks_per_time: produced (T,M,L+1)=%s for type=%s, self_avoid=%s, time_aware=%s",
+                     arr_3d.shape, interaction_type, self_avoid, time_aware)
+        return arr_3d
+
     def sample_walks(self,
                      # walks
                      walk_length: int,
@@ -541,6 +584,15 @@ class Walker:
 
         For each node, produces ``walks_per_node`` paths split between RW and
         SAW according to ``saw_frac``. Optionally enables time-aware stepping.
+
+        Output layout:
+            Walk arrays are written as **3-D** with shape ``(T, M, L+1)``, where:
+                - ``T`` is the number of time stamps,
+                - ``M`` is the total number of walks produced per layer (sum over requested nodes),
+                - ``L+1`` is the path length including the start node.
+            If ``time_aware=False``, each layer t contains walks constrained to time t.
+            If ``time_aware=True``, each layer t contains walks that **start** at time t but may evolve in time.
+
         Results are chunk-written to a new compressed archive.
 
         Args:
@@ -636,96 +688,77 @@ class Walker:
             if include_attractive:
                 # --- ATTR RWs ---
                 _logger.info("Generating ATTR RWs ...")
-                chunks = processor(
-                    work_items,
-                    self._walk_batch_with_seed,
-                    num_RWs,
-                    start_time_stamp=None,
-                    length=walk_length,
+
+                attr_RWs_3d = self._walks_per_time(
+                    work_items, processor, num_RWs,
+                    walk_length=walk_length,
                     interaction_type="attr",
                     self_avoid=False,
                     time_aware=time_aware,
                     stickiness=stickiness,
                     on_no_options=on_no_options,
                 )
-                if chunks:
-                    all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
-                    _logger.info("ATTR RWs: concatenated shape=%s", all_walks.shape)
-                    storage.write(
-                        list(all_walks),
-                        to_block_named=attractive_RWs_name,
-                        arrays_per_chunk=num_walk_matrices_in_compressed_blocks
-                    )
+                _logger.info("ATTR RWs (per-time): shape=%s", attr_RWs_3d.shape)
+                storage.write(
+                    [attr_RWs_3d],   # write one 3-D array
+                    to_block_named=attractive_RWs_name,
+                    arrays_per_chunk=1
+                )
 
                 # --- ATTR SAWs ---
                 _logger.info("Generating ATTR SAWs ...")
-                chunks = processor(
-                    work_items,
-                    self._walk_batch_with_seed,
-                    num_SAWs,
-                    start_time_stamp=None,
-                    length=walk_length,
+                attr_SAWs_3d = self._walks_per_time(
+                    work_items, processor, num_SAWs,
+                    walk_length=walk_length,
                     interaction_type="attr",
                     self_avoid=True,
                     time_aware=time_aware,
                     stickiness=stickiness,
                     on_no_options=on_no_options,
                 )
-                if chunks:
-                    all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
-                    _logger.info("ATTR SAWs: concatenated shape=%s", all_walks.shape)
-                    storage.write(
-                        list(all_walks),
-                        to_block_named=attractive_SAWs_name,
-                        arrays_per_chunk=num_walk_matrices_in_compressed_blocks
-                    )
+                _logger.info("ATTR SAWs (per-time): shape=%s", attr_SAWs_3d.shape)
+                storage.write(
+                    [attr_SAWs_3d],
+                    to_block_named=attractive_SAWs_name,
+                    arrays_per_chunk=1
+                )
             
             if include_repulsive:
                 # --- REPULS RWs ---
                 _logger.info("Generating REPULS RWs ...")
-                chunks = processor(
-                    work_items,
-                    self._walk_batch_with_seed,
-                    num_RWs,
-                    start_time_stamp=None,
-                    length=walk_length,
+                repuls_RWs_3d = self._walks_per_time(
+                    work_items, processor, num_RWs,
+                    walk_length=walk_length,
                     interaction_type="repuls",
                     self_avoid=False,
                     time_aware=time_aware,
                     stickiness=stickiness,
                     on_no_options=on_no_options,
                 )
-                if chunks:
-                    all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
-                    _logger.info("REPULS RWs: concatenated shape=%s", all_walks.shape)
-                    storage.write(
-                        list(all_walks),
-                        to_block_named=repulsive_RWs_name,
-                        arrays_per_chunk=num_walk_matrices_in_compressed_blocks
-                    )
+                _logger.info("REPULS RWs (per-time): shape=%s", repuls_RWs_3d.shape)
+                storage.write(
+                    [repuls_RWs_3d],
+                    to_block_named=repulsive_RWs_name,
+                    arrays_per_chunk=1
+                )
 
                 # --- REPULS SAWs ---
                 _logger.info("Generating REPULS SAWs ...")
-                chunks = processor(
-                    work_items,
-                    self._walk_batch_with_seed,
-                    num_SAWs,
-                    start_time_stamp=None,
-                    length=walk_length,
+                repuls_SAWs_3d = self._walks_per_time(
+                    work_items, processor, num_SAWs,
+                    walk_length=walk_length,
                     interaction_type="repuls",
                     self_avoid=True,
                     time_aware=time_aware,
                     stickiness=stickiness,
                     on_no_options=on_no_options,
                 )
-                if chunks:
-                    all_walks = np.concatenate(chunks, axis=0).astype(np.uint16, copy=False)
-                    _logger.info("REPULS SAWs: concatenated shape=%s", all_walks.shape)
-                    storage.write(
-                        list(all_walks),
-                        to_block_named=repulsive_SAWs_name,
-                        arrays_per_chunk=num_walk_matrices_in_compressed_blocks
-                    )
+                _logger.info("REPULS SAWs (per-time): shape=%s", repuls_SAWs_3d.shape)
+                storage.write(
+                    [repuls_SAWs_3d],
+                    to_block_named=repulsive_SAWs_name,
+                    arrays_per_chunk=1
+                )
 
             # useful metadata
             storage.add_attr("time_created", current_time)
@@ -745,6 +778,7 @@ class Walker:
             storage.add_attr("repulsive_RWs_name", repulsive_RWs_name if include_repulsive else None)
             storage.add_attr("attractive_SAWs_name", attractive_SAWs_name if include_attractive else None)
             storage.add_attr("repulsive_SAWs_name", repulsive_SAWs_name if include_repulsive else None)
+            storage.add_attr("walks_layout", "time_leading_3d")  # (T, M, L+1) for all modes
 
             _logger.info("Wrote metadata")
 
