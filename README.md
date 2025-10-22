@@ -92,14 +92,16 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 
 ## Archive Layouts
 
-| Archive                | Key datasets                                            | Important attributes                                                                 |
-|------------------------|---------------------------------------------------------|---------------------------------------------------------------------------------------|
-| **RIN**                | `ATTRACTIVE_transitions`, `ATTRACTIVE_energies`, `COM`  | `time_created`, `frame_range`, `frame_batch_size`, `prune_low_energies_frac`, `molecule_of_interest` |
-| **Walks**              | `ATTRACTIVE_RWs`, `ATTRACTIVE_SAWs` (optional)          | `walk_length`, `walks_per_node`, `num_RWs`, `num_SAWs`, `node_count`, `time_stamp_count`, RNG seed |
-| **Embeddings**         | `FRAME_EMBEDDINGS`                                      | `model_base`, `frames_written`, `frame_count`, `window_size`, `num_negative_samples`, RNG seed |
+| Archive | Key datasets (name → shape, dtype) | Important attributes (root `attrs`) |
+|---|---|---|
+| **RIN** | `ATTRACTIVE_transitions` → **(T, N, N)**, float32  •  `REPULSIVE_transitions` → **(T, N, N)**, float32 (optional)  •  `ATTRACTIVE_energies` → **(T, N, N)**, float32 (optional)  •  `REPULSIVE_energies` → **(T, N, N)**, float32 (optional)  •  `COM` → **(T, N, 3)**, float32 | `time_created` (ISO) • `com_name` = `"COM"` • `molecule_of_interest` (int) • `frame_range` = `(start, end)` inclusive • `frame_batch_size` (int) • `prune_low_energies_frac` (float in [0,1]) • `attractive_transitions_name` / `repulsive_transitions_name` (dataset names or `None`) • `attractive_energies_name` / `repulsive_energies_name` (dataset names or `None`) |
+| **Walks** | `ATTRACTIVE_RWs` → **(T, N·num_RWs, L+1)**, int32 (optional)  •  `REPULSIVE_RWs` → **(T, N·num_RWs, L+1)**, int32 (optional)  •  `ATTRACTIVE_SAWs` → **(T, N·num_SAWs, L+1)**, int32 (optional)  •  `REPULSIVE_SAWs` → **(T, N·num_SAWs, L+1)**, int32 (optional)  <br/>_Note:_ node IDs are **1-based**.| `time_created` (ISO) • `seed` (int) • `rng_scheme` = `"SeedSequence.spawn_per_batch_v1"` • `num_workers` (int) • `in_parallel` (bool) • `batch_size_nodes` (int) • `num_RWs` / `num_SAWs` (ints) • `node_count` (N) • `time_stamp_count` (T) • `walk_length` (L) • `walks_per_node` (int) • `attractive_RWs_name` / `repulsive_RWs_name` / `attractive_SAWs_name` / `repulsive_SAWs_name` (dataset names or `None`) • `walks_layout` = `"time_leading_3d"` |
+| **Embeddings** | `FRAME_EMBEDDINGS` → **(frames_written, vocab_size, D)**, typically float32 | `time_created` (ISO) • `seed` (int) • `rng_scheme` = `"SeedSequence.spawn_per_frame_v1"` • `source_walks_path` (str) • `model_base` = `"torch"` or `"pureml"` • `rin_type` = `"attr"` or `"repuls"` • `using_mode` = `"RW"|"SAW"|"merged"` • `window_size` (int) • `alpha` (float; noise exponent) • `dimensionality` = D • `num_negative_samples` (int) • `num_epochs` (int) • `batch_size` (int) • `shuffle_data` (bool) • `frames_written` (int) • `vocab_size` (int) • `frame_count` (int) • `embedding_dtype` (str) • `frame_embeddings_name` = `"FRAME_EMBEDDINGS"` • `arrays_per_chunk` (int) • `compression_level` (int) |
 
-All archives are Zarr groups wrapped into `.zip` files by default, making them easy to distribute and inspect with
-standard tools.
+**Notes**
+
+- In **RIN**, `T` equals the number of frame **batches** written (i.e., `frame_range` swept in steps of `frame_batch_size`). `ATTRACTIVE/REPULSIVE_energies` are **pre-normalised** absolute energies (written only when `keep_prenormalized_energies=True`), whereas `ATTRACTIVE/REPULSIVE_transitions` are the **row-wise L1-normalised** versions used for sampling.
+- All archives are Zarr v3 groups. ArrayStorage also maintains per-block metadata in root attrs: `array_chunk_size_in_block`, `array_shape_in_block`, and `array_dtype_in_block` (dicts keyed by dataset name). You’ll see these in every archive.
 
 ---
 
