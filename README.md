@@ -99,9 +99,9 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 
 | Archive                | Key datasets                                            | Important attributes                                                                 |
 |------------------------|---------------------------------------------------------|---------------------------------------------------------------------------------------|
-| **RIN**                | `ATTRACTIVE_transitions`, `ATTRACTIVE_energies`, `COM`  | `frame_range`, `node_count`, `time_stamp_count`, `prune_low_energies_frac`, RNG seed  |
-| **Walks**              | `ATTRACTIVE_RWs`, `ATTRACTIVE_SAWs` (optional)          | `walk_length`, `walks_per_node`, `num_RWs`, `num_SAWs`, `SeedSequence.spawn_per_batch`|
-| **Embeddings**         | `FRAME_EMBEDDINGS`                                      | `model_base`, `dimensionality`, `frames_written`, `rng_scheme`, training hyperparams  |
+| **RIN**                | `ATTRACTIVE_transitions`, `ATTRACTIVE_energies`, `COM`  | `time_created`, `frame_range`, `frame_batch_size`, `prune_low_energies_frac`, `molecule_of_interest` |
+| **Walks**              | `ATTRACTIVE_RWs`, `ATTRACTIVE_SAWs` (optional)          | `walk_length`, `walks_per_node`, `num_RWs`, `num_SAWs`, `node_count`, `time_stamp_count`, RNG seed |
+| **Embeddings**         | `FRAME_EMBEDDINGS`                                      | `model_base`, `frames_written`, `frame_count`, `window_size`, `num_negative_samples`, RNG seed |
 
 All archives are Zarr groups wrapped into `.zip` files by default, making them easy to distribute and inspect with
 standard tools.
@@ -174,7 +174,9 @@ walker.sample_walks(
 )
 walker.close()
 
-# 3. Train embeddings per frame
+# 3. Train embeddings per frame (PyTorch backend)
+import torch
+
 embedder = Embedder(walks_path, base="torch", seed=999)
 embeddings_path = embedder.embedd_all(
     RIN_type="attr",
@@ -186,10 +188,19 @@ embeddings_path = embedder.embedd_all(
     dimensionality=128,
     shuffle_data=True,
     output_path="./EMBEDDINGS_demo.zip",
-    sgns_kwargs={"device": "cuda"},
+    sgns_kwargs={
+        "optim": torch.optim.Adam,
+        "optim_kwargs": {"lr": 1e-3},
+        "lr_sched": torch.optim.lr_scheduler.LambdaLR,
+        "lr_sched_kwargs": {"lr_lambda": lambda _: 1.0},
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+    },
 )
 print("Embeddings written to", embeddings_path)
 ```
+
+> For the PureML backend, supply the relevant optimiser and scheduler via `sgns_kwargs`
+> (for example `optim=pureml.optimizers.Adam`, `lr_sched=pureml.optimizers.ConstantLR`).
 
 ---
 
@@ -199,9 +210,8 @@ print("Embeddings written to", embeddings_path)
 from sawnergy.visual import Visualizer
 
 viz = Visualizer("./RIN_demo.zip", show=False)
-viz.update_frame(0)            # first frame
-viz.highlight_nodes([1, 10])   # optional helpers
-viz.save("frame0.png")
+viz.build_frame(frame_id=1, title="Frame 1")
+viz._plt.savefig("frame1.png", dpi=200)
 ```
 
 `Visualizer` lazily loads datasets and works even in headless environments (falls back to the `Agg` backend).
@@ -212,8 +222,8 @@ viz.save("frame0.png")
 
 - **Time-aware walks**: Set `time_aware=True`, provide `stickiness` and `on_no_options` when calling `Walker.sample_walks`.
 - **Shared memory lifecycle**: Always call `Walker.close()` (or use a context manager) to release shared-memory segments.
-- **PureML vs PyTorch**: The `Embedder` factory automatically imports the requested backend; helpful error messages guide
-  installation when a backend is missing.
+- **PureML vs PyTorch**: Choose the backend via `Embedder(..., base="pureml"|"torch")` and provide backend-specific
+  constructor kwargs through `sgns_kwargs` (optimizer, scheduler, device).
 - **ArrayStorage utilities**: Use `ArrayStorage` directly to peek into archives, append arrays, or manage metadata.
 
 ---
@@ -271,4 +281,3 @@ Feel free to open issues for feature requests, questions, or bug reports.
 
 Sawnergy builds on the AmberTools `cpptraj` ecosystem, NumPy/SciPy tooling, Zarr for storage, PureML, and PyTorch. Big
 thanks to the upstream communities whose work makes this toolkit possible.
-
