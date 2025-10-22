@@ -274,7 +274,7 @@ class ArrayStorage:
             _logger.error("Write attempted in read-only mode")
             raise RuntimeError("Cannot write to a read-only ArrayStorage")
 
-        if not these_arrays:
+        if len(these_arrays) == 0:
             _logger.info("write() called with empty input for block '%s'; no-op", to_block_named)
             return
 
