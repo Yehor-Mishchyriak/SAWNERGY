@@ -700,7 +700,7 @@ class Walker:
                 )
                 _logger.info("ATTR RWs (per-time): shape=%s", attr_RWs_3d.shape)
                 storage.write(
-                    attr_RWs_3d, # Note: this expects a list, so we are violating the signature (if causes problems, will fix it)
+                    attr_RWs_3d,
                     to_block_named=attractive_RWs_name,
                     arrays_per_chunk=num_walk_matrices_in_compressed_blocks
                 )
@@ -718,7 +718,7 @@ class Walker:
                 )
                 _logger.info("ATTR SAWs (per-time): shape=%s", attr_SAWs_3d.shape)
                 storage.write(
-                    attr_SAWs_3d, # Note: this expects a list, so we are violating the signature (if causes problems, will fix it)
+                    attr_SAWs_3d,
                     to_block_named=attractive_SAWs_name,
                     arrays_per_chunk=num_walk_matrices_in_compressed_blocks
                 )
@@ -737,7 +737,7 @@ class Walker:
                 )
                 _logger.info("REPULS RWs (per-time): shape=%s", repuls_RWs_3d.shape)
                 storage.write(
-                    repuls_RWs_3d, # Note: this expects a list, so we are violating the signature (if causes problems, will fix it)
+                    repuls_RWs_3d,
                     to_block_named=repulsive_RWs_name,
                     arrays_per_chunk=num_walk_matrices_in_compressed_blocks
                 )
@@ -755,7 +755,7 @@ class Walker:
                 )
                 _logger.info("REPULS SAWs (per-time): shape=%s", repuls_SAWs_3d.shape)
                 storage.write(
-                    repuls_SAWs_3d, # Note: this expects a list, so we are violating the signature (if causes problems, will fix it)
+                    repuls_SAWs_3d,
                     to_block_named=repulsive_SAWs_name,
                     arrays_per_chunk=num_walk_matrices_in_compressed_blocks
                 )
