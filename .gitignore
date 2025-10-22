@@ -19,9 +19,11 @@
 # ----------------------------
 !tests/
 !tests/*.py
+!tests/*.txt
 # ----------------------------
-!deployment/
-!deployment/*.py
+!CICD/
+!CICD/*.py
+!CICD/*.sh
 # ----------------------------
 !.gitignore
 !README.md
