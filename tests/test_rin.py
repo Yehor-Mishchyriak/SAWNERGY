@@ -5,33 +5,12 @@ import numpy as np
 from sawnergy import sawnergy_util
 from sawnergy.rin import rin_builder
 
-from .conftest import COM_COORDS, PAIRWISE_MATRICES, RESIDUE_COUNT
-
-
-def _expected_transition(matrix: np.ndarray) -> np.ndarray:
-    residue = matrix.copy().astype(np.float32)
-    attr = np.where(residue <= 0, -residue, 0.0).astype(np.float32)
-    rep = np.where(residue > 0, residue, 0.0).astype(np.float32)
-
-    attr_threshold = np.quantile(attr, 1.0, axis=1, keepdims=True)
-    attr = np.where(attr < attr_threshold, 0.0, attr)
-    rep_threshold = np.quantile(rep, 1.0, axis=1, keepdims=True)
-    rep = np.where(rep < rep_threshold, 0.0, rep)
-
-    np.fill_diagonal(attr, 0.0)
-    np.fill_diagonal(rep, 0.0)
-
-    attr = 0.5 * (attr + attr.T)
-    rep = 0.5 * (rep + rep.T)
-
-    row_sums = attr.sum(axis=1, keepdims=True)
-    normalized_attr = np.divide(
-        attr,
-        np.clip(row_sums, 1e-12, None),
-        out=np.zeros_like(attr),
-        where=row_sums > 0,
-    )
-    return normalized_attr
+from .conftest import (
+    COM_COORDS,
+    PAIRWISE_MATRICES,
+    RESIDUE_COUNT,
+    compute_processed_channels,
+)
 
 
 def test_cpptraj_regex_parsing(patched_cpptraj):
@@ -51,14 +30,28 @@ def test_cpptraj_regex_parsing(patched_cpptraj):
 
 def test_rin_archive_preserves_frame_order(rin_archive_path):
     with sawnergy_util.ArrayStorage(rin_archive_path, mode="r") as storage:
-        attr_name = storage.get_attr("attractive_transitions_name")
-        rep_name = storage.get_attr("repulsive_transitions_name")
+        attrs = dict(storage.root.attrs)
+        assert attrs["prune_low_energies_frac"] == 1.0
+        assert attrs["molecule_of_interest"] == 1
+        assert tuple(attrs["frame_range"]) == (1, len(PAIRWISE_MATRICES))
+
+        attr_name = attrs["attractive_transitions_name"]
+        rep_name = attrs["repulsive_transitions_name"]
         transitions = storage.read(attr_name, slice(None))
-        assert transitions.shape[0] == 2
+        assert transitions.shape[0] == len(PAIRWISE_MATRICES)
         assert rep_name is None
 
-    expected_first = _expected_transition(PAIRWISE_MATRICES[1])
-    expected_second = _expected_transition(PAIRWISE_MATRICES[2])
+        energies_name = attrs["attractive_energies_name"]
+        energies = storage.read(energies_name, slice(None))
+        assert energies.shape == transitions.shape
 
-    np.testing.assert_allclose(transitions[0], expected_first)
-    np.testing.assert_allclose(transitions[1], expected_second)
+        com_name = attrs["com_name"]
+        com = storage.read(com_name, slice(None))
+        assert com.shape == (len(PAIRWISE_MATRICES), RESIDUE_COUNT, 3)
+
+    for idx, frame_id in enumerate(sorted(PAIRWISE_MATRICES)):
+        frame_matrix = PAIRWISE_MATRICES[frame_id]
+        attr_energy, _, attr_transition = compute_processed_channels(frame_matrix)
+        np.testing.assert_allclose(energies[idx], attr_energy)
+        np.testing.assert_allclose(transitions[idx], attr_transition)
+        np.testing.assert_allclose(com[idx], COM_COORDS[frame_id])

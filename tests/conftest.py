@@ -78,6 +78,32 @@ COM_COORDS: Dict[int, np.ndarray] = {
     2: np.array([[0.0, 1.0, 0.0], [1.0, 1.0, 0.0], [2.0, 1.0, 0.0]], dtype=np.float32),
 }
 
+
+def compute_processed_channels(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    residue = matrix.copy().astype(np.float32)
+    attr = np.where(residue <= 0, -residue, 0.0).astype(np.float32)
+    rep = np.where(residue > 0, residue, 0.0).astype(np.float32)
+
+    attr_threshold = np.quantile(attr, 1.0, axis=1, keepdims=True)
+    attr = np.where(attr < attr_threshold, 0.0, attr)
+    rep_threshold = np.quantile(rep, 1.0, axis=1, keepdims=True)
+    rep = np.where(rep < rep_threshold, 0.0, rep)
+
+    np.fill_diagonal(attr, 0.0)
+    np.fill_diagonal(rep, 0.0)
+
+    attr = 0.5 * (attr + attr.T)
+    rep = 0.5 * (rep + rep.T)
+
+    row_sums = attr.sum(axis=1, keepdims=True)
+    normalized_attr = np.divide(
+        attr,
+        np.clip(row_sums, 1e-12, None),
+        out=np.zeros_like(attr),
+        where=row_sums > 0,
+    )
+    return attr, rep, normalized_attr
+
 COMPOSITION_TEXT = "\n".join(
     [
         "[AtNum] [Rnum] [Mnum]",
@@ -413,7 +439,18 @@ class _DummyFigure:
 
 class _DummyLineCollection:
     def __init__(self, *_, **__):
-        pass
+        self._segments = None
+        self._colors = None
+        self._alpha = None
+
+    def set_segments(self, segs):
+        self._segments = np.array(segs, copy=True)
+
+    def set_colors(self, colors):
+        self._colors = np.array(colors, copy=True)
+
+    def set_alpha(self, alpha):
+        self._alpha = alpha
 
 
 class _DummyNormalize:
