@@ -12,6 +12,7 @@ from pureml.base import NN
 
 # built-in
 import logging
+from typing import Type
 
 # *----------------------------------------------------*
 #                        GLOBALS
@@ -31,9 +32,9 @@ class SGNS_PureML(NN):
                 D: int,
                 *,
                 seed: int | None = None,
-                optim: Optim,
+                optim: Type[Optim],
                 optim_kwargs: dict,
-                lr_sched: LRScheduler,
+                lr_sched: Type[LRScheduler],
                 lr_sched_kwargs: dict):
         """
         Args:
