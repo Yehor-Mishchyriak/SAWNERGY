@@ -15,8 +15,14 @@ def __getattr__(name: str):
         return SGNS_Torch
 
     if name == "SGNS_PureML":
-        from .SGNS_pml import SGNS_PureML
-        return SGNS_PureML
+            try:
+                from .SGNS_pml import SGNS_PureML
+                return SGNS_PureML
+            except Exception as exc:
+                raise ImportError(
+                    "PureML is not installed. "
+                    "Install PureML first via `pip install ym-pure-ml` "
+                ) from exc
 
     raise AttributeError(name)
 
