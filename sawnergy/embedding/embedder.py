@@ -121,8 +121,8 @@ class Embedder:
         )
 
         # expected shapes
-        RWs_expected  = (time_stamp_count, num_RWs,  walk_length) if (num_RWs  > 0) else None
-        SAWs_expected = (time_stamp_count, num_SAWs, walk_length) if (num_SAWs > 0) else None
+        RWs_expected  = (time_stamp_count, node_count * num_RWs,  walk_length+1) if (num_RWs  > 0) else None
+        SAWs_expected = (time_stamp_count, node_count * num_SAWs, walk_length+1) if (num_SAWs > 0) else None
 
         self.vocab_size = int(node_count)
         self.frame_count = int(time_stamp_count)
@@ -321,7 +321,7 @@ class Embedder:
 
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= PUBLIC -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= 
 
-    def embedd_frame(self,
+    def embed_frame(self,
               frame_id: int,
               RIN_type: Literal["attr", "repuls"],
               using: Literal["RW", "SAW", "merged"],
@@ -375,11 +375,11 @@ class Embedder:
         if RIN_type == "attr":
             if self.attractive_RWs is None and self.attractive_SAWs is None:
                 raise ValueError("Attractive random walks are missing")
-            pairs, noise_probs = self._attractive_corpus_and_prob(using=using, window_size=window_size, alpha=alpha)
+            pairs, noise_probs = self._attractive_corpus_and_prob(frame_id=frame_id, using=using, window_size=window_size, alpha=alpha)
         elif RIN_type == "repuls":
             if self.repulsive_RWs is None and self.repulsive_SAWs is None:
                 raise ValueError("Repulsive random walks are missing")
-            pairs, noise_probs = self._repulsive_corpus_and_prob(using=using, window_size=window_size, alpha=alpha)
+            pairs, noise_probs = self._repulsive_corpus_and_prob(frame_id=frame_id, using=using, window_size=window_size, alpha=alpha)
         else:
             raise ValueError(f"Unknown RIN_type: {RIN_type!r}")
 
@@ -444,7 +444,7 @@ class Embedder:
         _logger.info("Frame %d embeddings ready: shape=%s dtype=%s", frame_id, embeddings.shape, embeddings.dtype)
         return embeddings
 
-    def embedd_all(
+    def embed_all(
         self,
         RIN_type: Literal["attr", "repuls"],
         using: Literal["RW", "SAW", "merged"],
@@ -479,7 +479,7 @@ class Embedder:
             alpha: Noise distribution exponent (``Pn ∝ f^alpha``).
             device: Optional device string for Torch backend.
             sgns_kwargs: Extra constructor kwargs for the SGNS backend (see
-                :meth:`embedd_frame` for PureML requirements).
+                :meth:`embed_frame` for PureML requirements).
             output_path: Destination path. If ``None``, a new file named
                 ``EMBEDDINGS_<timestamp>.zip`` is created next to the source
                 WALKS archive. If the provided path lacks a suffix, ``.zip`` is
@@ -522,7 +522,7 @@ class Embedder:
             child_seed = int(seed_seq.generate_state(1, dtype=np.uint32)[0])
             _logger.info("Processing frame %d/%d (child_seed=%d entropy=%d)", frame_idx, self.frame_count, child_seed, seed_seq.entropy)
             embeddings.append(
-                self.embedd_frame(
+                self.embed_frame(
                     frame_idx,
                     RIN_type,
                     using,
