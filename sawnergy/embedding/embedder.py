@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+"""
+Embedding orchestration for Skip-Gram with Negative Sampling (SGNS).
+
+This module consumes attractive/repulsive walk corpora produced by the walker
+pipeline and trains per-frame embeddings using either the PyTorch or PureML
+implementations of SGNS. The resulting embeddings can be persisted back into
+an ``ArrayStorage`` archive along with rich metadata describing the training
+configuration.
+"""
+
 # third-pary
 import numpy as np
 
@@ -22,6 +32,7 @@ _logger = logging.getLogger(__name__)
 # *----------------------------------------------------*
 
 class Embedder:
+    """Skip-gram embedder over attractive/repulsive walk corpora."""
 
     def __init__(self,
                  WALKS_path: str | Path,
@@ -29,7 +40,9 @@ class Embedder:
                  *,
                  seed: int | None = None
                 ) -> None:
-        _logger.info("Initializing Embedder from %s", WALKS_path)
+        """Load walk tensors and prepare an SGNS backend."""
+        self._walks_path = Path(WALKS_path)
+        _logger.info("Initializing Embedder from %s (base=%s)", self._walks_path, base)
 
         # placeholders for optional walk collections
         self.attractive_RWs : np.ndarray | None = None
@@ -38,7 +51,7 @@ class Embedder:
         self.repulsive_SAWs : np.ndarray | None = None
 
         # Load numpy arrays from read-only storage
-        with sawnergy_util.ArrayStorage(WALKS_path, mode="r") as storage:
+        with sawnergy_util.ArrayStorage(self._walks_path, mode="r") as storage:
             attractive_RWs_name   = storage.get_attr("attractive_RWs_name")
             repulsive_RWs_name    = storage.get_attr("repulsive_RWs_name")
             attractive_SAWs_name  = storage.get_attr("attractive_SAWs_name")
@@ -76,7 +89,7 @@ class Embedder:
              " | ATTR SAWs: %s %s"
              " | REP  SAWs: %s %s"
              " | num_RWs=%d num_SAWs=%d V=%d L=%d T=%d"),
-            WALKS_path,
+            self._walks_path,
             getattr(attractive_RWs, "shape", None), getattr(attractive_RWs, "dtype", None),
             getattr(repulsive_RWs, "shape", None),  getattr(repulsive_RWs, "dtype", None),
             getattr(attractive_SAWs, "shape", None), getattr(attractive_SAWs, "dtype", None),
@@ -119,7 +132,9 @@ class Embedder:
         _logger.info("RNG initialized from seed=%d", self._seed)
 
         # MODEL HANDLE
+        self.model_base: Literal["torch", "pureml"] = base
         self.model_constructor = self._get_SGNS_constructor_from(base)
+        _logger.info("SGNS backend resolved: %s", getattr(self.model_constructor, "__name__", repr(self.model_constructor)))
 
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=- PRIVATE -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
@@ -127,6 +142,7 @@ class Embedder:
 
     @staticmethod
     def _get_SGNS_constructor_from(base: Literal["torch", "pureml"]):
+        """Resolve the SGNS implementation class for the selected backend."""
         if base == "torch":
             try:
                 from .SGNS_torch import SGNS_Torch
@@ -282,8 +298,8 @@ class Embedder:
 
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= PUBLIC -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= 
 
-    def embed_frame(self,
-              frame_id: int, # 1-based
+    def embedd_frame(self,
+              frame_id: int,
               RIN_type: Literal["attr", "repuls"],
               using: Literal["RW", "SAW", "merged"],
               window_size: int,
@@ -298,6 +314,11 @@ class Embedder:
               sgns_kwargs: dict[str, object] | None = None,
               _seed: int | None = None
               ) -> np.ndarray:
+        """Train embeddings for a single frame and return the input embedding matrix."""
+        _logger.info(
+            "Preparing frame %d (rin=%s using=%s window=%d neg=%d epochs=%d batch=%d)",
+            frame_id, RIN_type, using, window_size, num_negative_samples, num_epochs, batch_size
+        )
 
         if RIN_type == "attr":
             if self.attractive_RWs is None and self.attractive_SAWs is None:
@@ -317,21 +338,35 @@ class Embedder:
         contexts = pairs[:, 1].astype(np.int64, copy=False)
 
         model_kwargs: dict[str, object] = dict(sgns_kwargs or {})
+        if self.model_base == "pureml":
+            required = {"optim", "optim_kwargs", "lr_sched", "lr_sched_kwargs"}
+            missing = required.difference(model_kwargs)
+            if missing:
+                raise ValueError(f"PureML backend requires {sorted(missing)} in sgns_kwargs.")
+
+        child_seed = int(self._seed if _seed is None else _seed)
         model_kwargs.update({
             "V": self.vocab_size,
             "D": dimensionality,
-            "seed": _seed
+            "seed": child_seed
         })
 
-        if self.model_constructor == "torch" and device is not None:
+        if self.model_base == "torch" and device is not None:
             model_kwargs["device"] = device
 
         self.model = self.model_constructor(**model_kwargs)
 
         _logger.info(
-            "Training SGNS constructor=%s frame=%d rin=%s pairs=%d dim=%d epochs=%d batch=%d neg=%d shuffle=%s",
-            self.model_constructor.__name__, frame_id, RIN_type, pairs.shape[0], dimensionality,
-            num_epochs, batch_size, num_negative_samples, shuffle_data
+            "Training SGNS base=%s constructor=%s frame=%d pairs=%d dim=%d epochs=%d batch=%d neg=%d shuffle=%s",
+            self.model_base,
+            getattr(self.model_constructor, "__name__", repr(self.model_constructor)),
+            frame_id,
+            pairs.shape[0],
+            dimensionality,
+            num_epochs,
+            batch_size,
+            num_negative_samples,
+            shuffle_data
         )
 
         self.model.fit(
@@ -344,9 +379,19 @@ class Embedder:
             shuffle_data,
             lr_step_per_batch=False
         )
-        
-        return self.model.embeddings
-    
+
+        embeddings = getattr(self.model, "embeddings", None)
+        if embeddings is None:
+            params = getattr(self.model, "parameters", None)
+            if isinstance(params, tuple) and params:
+                embeddings = params[0]
+        if embeddings is None:
+            raise AttributeError("SGNS model does not expose embeddings via '.embeddings' or '.parameters[0]'")
+
+        embeddings = np.asarray(embeddings)
+        _logger.info("Frame %d embeddings ready: shape=%s dtype=%s", frame_id, embeddings.shape, embeddings.dtype)
+        return embeddings
+
     def embedd_all(
         self,
         RIN_type: Literal["attr", "repuls"],
@@ -364,15 +409,31 @@ class Embedder:
         output_path: str | Path | None = None,
         num_matrices_in_compressed_blocks: int = 20,
         compression_level: int = 3):
+        """Train embeddings for every frame and persist them to compressed storage."""
+
+        current_time = sawnergy_util.current_time()
+        if output_path is None:
+            output_path = self._walks_path.with_name(f"EMBEDDINGS_{current_time}").with_suffix(".zip")
+        else:
+            output_path = Path(output_path)
+            if output_path.suffix == "":
+                output_path = output_path.with_suffix(".zip")
+
+        _logger.info(
+            "Embedding all frames -> %s | frames=%d dim=%d base=%s",
+            output_path, self.frame_count, dimensionality, self.model_base
+        )
 
         master_ss = np.random.SeedSequence(self._seed)
         child_seeds = master_ss.spawn(self.frame_count)
 
         embeddings = []
-        for frame, seed in zip(range(1, self.frame_count+1), child_seeds):
+        for frame_idx, seed_seq in enumerate(child_seeds, start=1):
+            child_seed = int(seed_seq.generate_state(1, dtype=np.uint32)[0])
+            _logger.info("Processing frame %d/%d (child_seed=%d entropy=%d)", frame_idx, self.frame_count, child_seed, seed_seq.entropy)
             embeddings.append(
-                self.embed_frame(
-                    frame,
+                self.embedd_frame(
+                    frame_idx,
                     RIN_type,
                     using,
                     window_size,
@@ -384,18 +445,42 @@ class Embedder:
                     alpha=alpha,
                     device=device,
                     sgns_kwargs=sgns_kwargs,
-                    _seed=seed
+                    _seed=child_seed
                 )
             )
-        
+
+        embeddings = [np.asarray(e) for e in embeddings]
+        block_name = "FRAME_EMBEDDINGS"
         with sawnergy_util.ArrayStorage.compress_and_cleanup(output_path, compression_level=compression_level) as storage:
-            storage.write(these_arrays=embeddings,
-                        to_block_named="frame_embeddings",
-                        arrays_per_chunk=num_matrices_in_compressed_blocks
-                    )
-        
+            storage.write(
+                these_arrays=embeddings,
+                to_block_named=block_name,
+                arrays_per_chunk=num_matrices_in_compressed_blocks
+            )
+            storage.add_attr("time_created", current_time)
+            storage.add_attr("seed", int(self._seed))
+            storage.add_attr("rng_scheme", "SeedSequence.spawn_per_frame_v1")
+            storage.add_attr("source_walks_path", str(self._walks_path))
+            storage.add_attr("model_base", self.model_base)
+            storage.add_attr("rin_type", RIN_type)
+            storage.add_attr("using_mode", using)
+            storage.add_attr("window_size", int(window_size))
+            storage.add_attr("alpha", float(alpha))
+            storage.add_attr("dimensionality", int(dimensionality))
+            storage.add_attr("num_negative_samples", int(num_negative_samples))
+            storage.add_attr("num_epochs", int(num_epochs))
+            storage.add_attr("batch_size", int(batch_size))
+            storage.add_attr("shuffle_data", bool(shuffle_data))
+            storage.add_attr("frames_written", int(len(embeddings)))
+            storage.add_attr("vocab_size", int(self.vocab_size))
+            storage.add_attr("frame_count", int(self.frame_count))
+            storage.add_attr("embedding_dtype", str(embeddings[0].dtype))
+            storage.add_attr("frame_embeddings_name", block_name)
+            storage.add_attr("arrays_per_chunk", int(num_matrices_in_compressed_blocks))
+            storage.add_attr("compression_level", int(compression_level))
+
+        _logger.info("Embedding archive written to %s", output_path)
         return str(output_path)
-        
 
 __all__ = ["Embedder"]
 
