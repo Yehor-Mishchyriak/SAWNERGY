@@ -700,9 +700,9 @@ class Walker:
                 )
                 _logger.info("ATTR RWs (per-time): shape=%s", attr_RWs_3d.shape)
                 storage.write(
-                    [attr_RWs_3d],   # write one 3-D array
+                    attr_RWs_3d,   # write one 3-D array
                     to_block_named=attractive_RWs_name,
-                    arrays_per_chunk=1
+                    arrays_per_chunk=num_walk_matrices_in_compressed_blocks
                 )
 
                 # --- ATTR SAWs ---
@@ -718,9 +718,9 @@ class Walker:
                 )
                 _logger.info("ATTR SAWs (per-time): shape=%s", attr_SAWs_3d.shape)
                 storage.write(
-                    [attr_SAWs_3d],
+                    attr_SAWs_3d,
                     to_block_named=attractive_SAWs_name,
-                    arrays_per_chunk=1
+                    arrays_per_chunk=num_walk_matrices_in_compressed_blocks
                 )
             
             if include_repulsive:
@@ -737,9 +737,9 @@ class Walker:
                 )
                 _logger.info("REPULS RWs (per-time): shape=%s", repuls_RWs_3d.shape)
                 storage.write(
-                    [repuls_RWs_3d],
+                    repuls_RWs_3d,
                     to_block_named=repulsive_RWs_name,
-                    arrays_per_chunk=1
+                    arrays_per_chunk=num_walk_matrices_in_compressed_blocks
                 )
 
                 # --- REPULS SAWs ---
@@ -755,9 +755,9 @@ class Walker:
                 )
                 _logger.info("REPULS SAWs (per-time): shape=%s", repuls_SAWs_3d.shape)
                 storage.write(
-                    [repuls_SAWs_3d],
+                    repuls_SAWs_3d,
                     to_block_named=repulsive_SAWs_name,
-                    arrays_per_chunk=1
+                    arrays_per_chunk=num_walk_matrices_in_compressed_blocks
                 )
 
             # useful metadata
