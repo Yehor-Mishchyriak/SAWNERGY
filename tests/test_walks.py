@@ -32,8 +32,6 @@ def test_walks_preserve_order(walks_archive_path):
         saw_name = storage.get_attr("attractive_SAWs_name")
         if saw_name is not None:
             saws = storage.read(saw_name, slice(None))
-            if saws.ndim == 4:
-                saws = saws[0]
             assert saws.shape[1] == 0  # no SAWs generated when saw_frac=0
 
     assert walks.shape[0] == FRAME_COUNT

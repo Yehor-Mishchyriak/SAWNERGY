@@ -157,12 +157,17 @@ def test_sgns_torch_smoke():
 
     centers = np.array([0, 1, 2, 3], dtype=np.int64)
     contexts = np.array([1, 2, 3, 0], dtype=np.int64)
+    negatives = np.array([[2, 3], [3, 0], [0, 1], [1, 2]], dtype=np.int64)
     noise = np.full(model.V, 1 / model.V, dtype=np.float64)
 
     bce = torch.nn.BCEWithLogitsLoss(reduction="mean")
 
     def _loss(model_obj):
-        pos_logits, neg_logits = model_obj.predict(centers, contexts, np.array([[2, 3], [3, 0], [0, 1], [1, 2]], dtype=np.int64))
+        pos_logits, neg_logits = model_obj.predict(
+            torch.as_tensor(centers, dtype=torch.long),
+            torch.as_tensor(contexts, dtype=torch.long),
+            torch.as_tensor(negatives, dtype=torch.long),
+        )
         y_pos = torch.ones_like(pos_logits)
         y_neg = torch.zeros_like(neg_logits)
         loss = bce(pos_logits, y_pos) + bce(neg_logits, y_neg)

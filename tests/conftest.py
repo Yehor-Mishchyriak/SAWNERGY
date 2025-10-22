@@ -250,47 +250,6 @@ def walks_archive_path(
     return out_path
 
 
-def _normalize_walk_archive(source_path: Path, dest_path: Path) -> Path:
-    with sawnergy_util.ArrayStorage(source_path, mode="r") as storage:
-        attr_name = storage.get_attr("attractive_RWs_name")
-        arr = storage.read(attr_name, slice(None)) if attr_name is not None else None
-        rep_name = storage.get_attr("repulsive_RWs_name")
-        saw_attr = storage.get_attr("attractive_SAWs_name")
-        saw_rep = storage.get_attr("repulsive_SAWs_name")
-        num_RWs = storage.get_attr("num_RWs")
-        num_SAWs = storage.get_attr("num_SAWs")
-        node_count = storage.get_attr("node_count")
-        time_stamp_count = storage.get_attr("time_stamp_count")
-        walk_length = storage.get_attr("walk_length")
-        seed = storage.get_attr("seed")
-
-    if arr is None:
-        raise RuntimeError("Attractive walks missing in archive")
-
-    arr = np.asarray(arr)
-    if arr.ndim == 4:
-        arr = arr[0]
-    if arr.shape[-1] == walk_length + 1:
-        arr = arr[..., 1:]
-
-    with sawnergy_util.ArrayStorage.compress_and_cleanup(dest_path, compression_level=0) as storage:
-        for frame in arr:
-            storage.write([frame], to_block_named=attr_name, arrays_per_chunk=1)
-
-        storage.add_attr("attractive_RWs_name", attr_name)
-        storage.add_attr("repulsive_RWs_name", rep_name)
-        storage.add_attr("attractive_SAWs_name", None)
-        storage.add_attr("repulsive_SAWs_name", None)
-        storage.add_attr("num_RWs", arr.shape[1])
-        storage.add_attr("num_SAWs", 0)
-        storage.add_attr("node_count", node_count)
-        storage.add_attr("time_stamp_count", arr.shape[0])
-        storage.add_attr("walk_length", walk_length)
-        storage.add_attr("seed", seed)
-
-    return dest_path
-
-
 # ---------------------------------------------------------------------------
 # Stub SGNS implementation for embedding tests
 # ---------------------------------------------------------------------------
@@ -341,44 +300,12 @@ def embeddings_archive_path(
     walks_archive_path: Path,
     patched_sgns,
     tmp_path: Path,
-    monkeypatch,
 ) -> Path:
     _StubSGNS.call_log.clear()
-    normalized_walks = tmp_path / "normalized_walks.zip"
-    _normalize_walk_archive(walks_archive_path, normalized_walks)
 
-    original_attr = embedder_module.Embedder._attractive_corpus_and_prob
-    original_rep = embedder_module.Embedder._repulsive_corpus_and_prob
-
-    def _with_frame_attr(self, *, frame_id=None, **kwargs):
-        if frame_id is None:
-            frame_id = getattr(self, "_active_frame_id")
-        return original_attr(self, frame_id=frame_id, **kwargs)
-
-    def _with_frame_rep(self, *, frame_id=None, **kwargs):
-        if frame_id is None:
-            frame_id = getattr(self, "_active_frame_id")
-        return original_rep(self, frame_id=frame_id, **kwargs)
-
-    monkeypatch.setattr(embedder_module.Embedder, "_attractive_corpus_and_prob", _with_frame_attr)
-    monkeypatch.setattr(embedder_module.Embedder, "_repulsive_corpus_and_prob", _with_frame_rep)
-
-    original_embed_frame = embedder_module.Embedder.embedd_frame
-
-    def _embed_frame_wrapper(self, *args, **kwargs):
-        frame_id = args[0] if args else kwargs["frame_id"]
-        self._active_frame_id = frame_id
-        try:
-            return original_embed_frame(self, *args, **kwargs)
-        finally:
-            if hasattr(self, "_active_frame_id"):
-                delattr(self, "_active_frame_id")
-
-    monkeypatch.setattr(embedder_module.Embedder, "embedd_frame", _embed_frame_wrapper)
-
-    emb = embedder_module.Embedder(normalized_walks, base="torch", seed=999)
+    emb = embedder_module.Embedder(walks_archive_path, base="torch", seed=999)
     out_path = tmp_path / "synthetic_embeddings.zip"
-    emb.embedd_all(
+    emb.embed_all(
         RIN_type="attr",
         using="RW",
         window_size=1,
