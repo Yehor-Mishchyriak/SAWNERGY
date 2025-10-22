@@ -4,9 +4,10 @@ from __future__ import annotations
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
 
 # built-in
-from typing import Any, Literal
 import logging
 
 # *----------------------------------------------------*
@@ -20,30 +21,50 @@ _logger = logging.getLogger(__name__)
 # *----------------------------------------------------*
 
 class SGNS_Torch:
+    """PyTorch implementation of Skip-Gram with Negative Sampling."""
 
     def __init__(self,
                  V: int,
                  D: int,
                  *,
                 seed: int | None = None,
-                optim: Optim,
+                optim: Optimizer,
                 optim_kwargs: dict,
-                lr_sched: LRScheduler,
-                lr_sched_kwargs: dict,
-                device: str):
-
+                lr_sched: LRScheduler | None = None,
+                lr_sched_kwargs: dict | None = None,
+                device: str | None = None):
+        """
+        Args:
+            V: Vocabulary size (number of nodes).
+            D: Embedding dimensionality.
+            seed: Optional RNG seed for PyTorch.
+            optim: Optimizer class to instantiate.
+            optim_kwargs: Keyword arguments for the optimizer.
+            lr_sched: Optional learning-rate scheduler class.
+            lr_sched_kwargs: Keyword arguments for the scheduler.
+            device: Target device string (e.g. ``"cuda"``). Defaults to CUDA if available, else CPU.
+        """
+        if optim_kwargs is None:
+            raise ValueError("optim_kwargs must be provided")
+        if lr_sched is not None and lr_sched_kwargs is None:
+            raise ValueError("lr_sched_kwargs required when lr_sched is provided")
         self.V, self.D = int(V), int(D)
-        self.device = torch.device(device if device is not None else ("cuda" if torch.cuda.is_available() else "cpu"))
+        resolved_device = device if device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(resolved_device)
+        _logger.info("SGNS_Torch init: V=%d D=%d device=%s seed=%s", self.V, self.D, self.device, seed)
 
         if seed is not None:
             torch.manual_seed(int(seed))
+            if self.device.type == "cuda":
+                torch.cuda.manual_seed_all(int(seed))
 
         # two embeddings as in/out matrices
         self.in_emb  = nn.Embedding(self.V, self.D)
         self.out_emb = nn.Embedding(self.V, self.D)
 
-        # simple optimizer; schedulers can be layered externally if you like
-        self.opt = torch.optim.Adam(list(self.in_emb.parameters()) + list(self.out_emb.parameters()), lr=lr)
+        params = list(self.in_emb.parameters()) + list(self.out_emb.parameters())
+        self.opt = optim(params=params, **optim_kwargs)
+        self.lr_sched = lr_sched(**lr_sched_kwargs) if lr_sched is not None else None
 
         self.to(self.device)
 
@@ -69,8 +90,13 @@ class SGNS_Torch:
             noise_dist: np.ndarray,
             shuffle_data: bool,
             lr_step_per_batch: bool):
-        _require_torch()
-        
+        """Train SGNS on the provided center/context pairs."""
+        if noise_dist.ndim != 1 or noise_dist.size != self.V:
+            raise ValueError(f"noise_dist must be 1-D with length {self.V}; got {noise_dist.shape}")
+        _logger.info(
+            "SGNS_Torch fit: epochs=%d batch=%d negatives=%d shuffle=%s",
+            num_epochs, batch_size, num_negative_samples, shuffle_data
+        )
         bce = nn.BCEWithLogitsLoss(reduction="mean")
 
         N = centers.shape[0]
@@ -79,7 +105,9 @@ class SGNS_Torch:
         # torch noise distribution once
         noise_probs = torch.as_tensor(noise_dist, dtype=torch.float32, device=self.device)
 
-        for _ in range(int(num_epochs)):
+        for epoch in range(1, int(num_epochs) + 1):
+            epoch_loss = 0.0
+            batches = 0
             if shuffle_data:
                 np.random.shuffle(idx)
 
@@ -110,11 +138,23 @@ class SGNS_Torch:
                 loss.backward()
                 self.opt.step()
 
-        # (no scheduler here; add if you want)
+                if lr_step_per_batch and self.lr_sched is not None:
+                    self.lr_sched.step()
+
+                epoch_loss += float(loss.detach().cpu().item())
+                batches += 1
+                _logger.debug("Epoch %d batch %d loss=%.6f", epoch, batches, loss.item())
+
+            if not lr_step_per_batch and self.lr_sched is not None:
+                self.lr_sched.step()
+
+            mean_loss = epoch_loss / max(batches, 1)
+            _logger.info("Epoch %d/%d mean_loss=%.6f", epoch, num_epochs, mean_loss)
 
     @property
-    def parameters(self) -> Tuple[np.ndarray, np.ndarray]:
-        return (_to_numpy(self.in_emb.weight), _to_numpy(self.out_emb.weight))
+    def embeddings(self) -> np.ndarray:
+        """Return the input embedding matrix as a NumPy array."""
+        return self.in_emb.weight.detach().cpu().numpy()
 
     # tiny helper for device move
     def to(self, device):
@@ -123,7 +163,7 @@ class SGNS_Torch:
         return self
 
 
-__all__ = ["SGNS_PureML"]
+__all__ = ["SGNS_Torch"]
 
 if __name__ == "__main__":
     pass
