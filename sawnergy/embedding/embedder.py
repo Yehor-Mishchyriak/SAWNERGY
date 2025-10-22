@@ -2,12 +2,13 @@ from __future__ import annotations
 
 # third-pary
 import numpy as np
+
 # built-in
 from pathlib import Path
 from typing import Literal
 import logging
+
 # local
-from . import embedder_util
 from .. import sawnergy_util
 
 # *----------------------------------------------------*
@@ -24,11 +25,17 @@ class Embedder:
 
     def __init__(self,
                  WALKS_path: str | Path,
-                 based_on: Literal["torch", "pureml"],
+                 base: Literal["torch", "pureml"],
                  *,
                  seed: int | None = None
                 ) -> None:
         _logger.info("Initializing Embedder from %s", WALKS_path)
+
+        # placeholders for optional walk collections
+        self.attractive_RWs : np.ndarray | None = None
+        self.repulsive_RWs  : np.ndarray | None = None
+        self.attractive_SAWs: np.ndarray | None = None
+        self.repulsive_SAWs : np.ndarray | None = None
 
         # Load numpy arrays from read-only storage
         with sawnergy_util.ArrayStorage(WALKS_path, mode="r") as storage:
@@ -59,6 +66,9 @@ class Embedder:
             time_stamp_count = storage.get_attr("time_stamp_count")
             walk_length      = storage.get_attr("walk_length")
 
+        if node_count is None or time_stamp_count is None or walk_length is None:
+            raise ValueError("WALKS metadata missing one of node_count, time_stamp_count, walk_length")
+
         _logger.debug(
             ("Loaded WALKS from %s"
              " | ATTR RWs: %s %s"
@@ -78,7 +88,9 @@ class Embedder:
         RWs_expected  = (time_stamp_count, num_RWs,  walk_length) if (num_RWs  > 0) else None
         SAWs_expected = (time_stamp_count, num_SAWs, walk_length) if (num_SAWs > 0) else None
 
-        self.vocab_size = node_count
+        self.vocab_size = int(node_count)
+        self.frame_count = int(time_stamp_count)
+        self.walk_length = int(walk_length)
 
         # store walks if present
         if attractive_RWs is not None:
@@ -107,11 +119,35 @@ class Embedder:
         _logger.info("RNG initialized from seed=%d", self._seed)
 
         # MODEL HANDLE
-        self.model_base: Literal["torch", "pureml"] = based_on
+        self.model_constructor = self._get_SGNS_constructor_from(base)
 
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=- PRIVATE -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
     # HELPERS:
+
+    @staticmethod
+    def _get_SGNS_constructor_from(base: Literal["torch", "pureml"]):
+        if base == "torch":
+            try:
+                from .SGNS_torch import SGNS_Torch
+                return SGNS_Torch
+            except Exception:
+                raise ImportError(
+                    "PyTorch is not installed, but based_on='torch' was requested. "
+                    "Install PyTorch first, e.g.: `pip install torch` "
+                    "(see https://pytorch.org/get-started for platform-specific wheels)."
+                )
+        elif base == "pureml":
+            try:
+                from .SGNS_pml import SGNS_PureML
+                return SGNS_PureML
+            except Exception:
+                raise ImportError(
+                    "PureML is not installed, but based_on='pureml' was requested. "
+                    "Install PureML first via `pip install ym-pure-ml` "
+                )
+        else:
+            raise NameError(f"Expected `base` in (\"torch\", \"pureml\"); Instead got: {base}")
 
     @staticmethod
     def _as_zerobase_intp(walks: np.ndarray, *, V: int) -> np.ndarray:
@@ -182,25 +218,33 @@ class Embedder:
             raise ValueError("invalid unigram mass")
         return p / s
 
-    def _materialize_walks(self, rin: Literal["attr", "repuls"],
+    def _materialize_walks(self, frame_id: int, rin: Literal["attr", "repuls"],
                            using: Literal["RW", "SAW", "merged"]) -> np.ndarray:
-        """Pick and merge the requested walk arrays (still 1-based here)."""
+        if not 1 <= frame_id <= int(self.frame_count):
+            raise IndexError(f"frame_id must be in [1, {self.frame_count}]; got {frame_id}")
+
+        frame_id -= 1
+
         if rin == "attr":
             parts = []
             if using in ("RW", "merged"):
                 arr = getattr(self, "attractive_RWs", None)
-                if arr is not None: parts.append(arr)
+                if arr is not None:
+                    parts.append(arr[frame_id])
             if using in ("SAW", "merged"):
                 arr = getattr(self, "attractive_SAWs", None)
-                if arr is not None: parts.append(arr)
+                if arr is not None:
+                    parts.append(arr[frame_id])
         else:
             parts = []
             if using in ("RW", "merged"):
                 arr = getattr(self, "repulsive_RWs", None)
-                if arr is not None: parts.append(arr)
+                if arr is not None:
+                    parts.append(arr[frame_id])
             if using in ("SAW", "merged"):
                 arr = getattr(self, "repulsive_SAWs", None)
-                if arr is not None: parts.append(arr)
+                if arr is not None:
+                    parts.append(arr[frame_id])
 
         if not parts:
             raise ValueError(f"No walks available for {rin=} with {using=}")
@@ -211,10 +255,11 @@ class Embedder:
     # INTERFACES: (private)
 
     def _attractive_corpus_and_prob(self, *,
+                                    frame_id: int,
                                     using: Literal["RW", "SAW", "merged"],
                                     window_size: int,
                                     alpha: float = 0.75) -> tuple[np.ndarray, np.ndarray]:
-        walks = self._materialize_walks("attr", using)
+        walks = self._materialize_walks(frame_id, "attr", using)
         walks0 = self._as_zerobase_intp(walks, V=self.vocab_size)
         attractive_corpus = self._pairs_from_walks(walks0, window_size)
         attractive_noise_probs = self._soft_unigram(self._freq_from_walks(walks0, V=self.vocab_size), power=alpha)
@@ -223,10 +268,11 @@ class Embedder:
         return attractive_corpus, attractive_noise_probs
 
     def _repulsive_corpus_and_prob(self, *,
+                                   frame_id: int,
                                    using: Literal["RW", "SAW", "merged"],
                                    window_size: int,
                                    alpha: float = 0.75) -> tuple[np.ndarray, np.ndarray]:
-        walks = self._materialize_walks("repuls", using)
+        walks = self._materialize_walks(frame_id, "repuls", using)
         walks0 = self._as_zerobase_intp(walks, V=self.vocab_size)
         repulsive_corpus = self._pairs_from_walks(walks0, window_size)
         repulsive_noise_probs = self._soft_unigram(self._freq_from_walks(walks0, V=self.vocab_size), power=alpha)
@@ -237,18 +283,20 @@ class Embedder:
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= PUBLIC -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= 
 
     def embed_frame(self,
-              *,
+              frame_id: int, # 1-based
               RIN_type: Literal["attr", "repuls"],
-              frame_id: int,
               using: Literal["RW", "SAW", "merged"],
-              alpha: float = 0.75,
               window_size: int,
-              dimensionality: int,
               num_negative_samples: int,
               num_epochs: int,
               batch_size: int,
-              shuffle_data: bool,
-              device: str | None = None
+              *,
+              shuffle_data: bool = True,
+              dimensionality: int = 128,
+              alpha: float = 0.75,
+              device: str | None = None,
+              sgns_kwargs: dict[str, object] | None = None,
+              _seed: int | None = None
               ) -> np.ndarray:
 
         if RIN_type == "attr":
@@ -260,21 +308,94 @@ class Embedder:
                 raise ValueError("Repulsive random walks are missing")
             pairs, noise_probs = self._repulsive_corpus_and_prob(using=using, window_size=window_size, alpha=alpha)
         else:
-            raise NameError(...)
+            raise ValueError(f"Unknown RIN_type: {RIN_type!r}")
+
+        if pairs.size == 0:
+            raise ValueError("No training pairs generated for the requested configuration")
 
         centers  = pairs[:, 0].astype(np.int64, copy=False)
         contexts = pairs[:, 1].astype(np.int64, copy=False)
 
-        self.model = embedder_util.SGNS(V=self.vocab_size, D=dimensionality, base=self.model_base)
+        model_kwargs: dict[str, object] = dict(sgns_kwargs or {})
+        model_kwargs.update({
+            "V": self.vocab_size,
+            "D": dimensionality,
+            "seed": _seed
+        })
 
-        _logger.info(...)
+        if self.model_constructor == "torch" and device is not None:
+            model_kwargs["device"] = device
 
-        self.model.fit(centers, contexts, num_epochs, batch_size, num_negative_samples, shuffle_data, device)
+        self.model = self.model_constructor(**model_kwargs)
+
+        _logger.info(
+            "Training SGNS constructor=%s frame=%d rin=%s pairs=%d dim=%d epochs=%d batch=%d neg=%d shuffle=%s",
+            self.model_constructor.__name__, frame_id, RIN_type, pairs.shape[0], dimensionality,
+            num_epochs, batch_size, num_negative_samples, shuffle_data
+        )
+
+        self.model.fit(
+            centers,
+            contexts,
+            num_epochs,
+            batch_size,
+            num_negative_samples,
+            noise_probs,
+            shuffle_data,
+            lr_step_per_batch=False
+        )
         
-        in_emb, out_emb = self.model.parameters
+        return self.model.embeddings
+    
+    def embedd_all(
+        self,
+        RIN_type: Literal["attr", "repuls"],
+        using: Literal["RW", "SAW", "merged"],
+        window_size: int,
+        num_negative_samples: int,
+        num_epochs: int,
+        batch_size: int,
+        *,
+        shuffle_data: bool = True,
+        dimensionality: int = 128,
+        alpha: float = 0.75,
+        device: str | None = None,
+        sgns_kwargs: dict[str, object] | None = None,
+        output_path: str | Path | None = None,
+        num_matrices_in_compressed_blocks: int = 20,
+        compression_level: int = 3):
 
-        return in_emb
+        master_ss = np.random.SeedSequence(self._seed)
+        child_seeds = master_ss.spawn(self.frame_count)
 
+        embeddings = []
+        for frame, seed in zip(range(1, self.frame_count+1), child_seeds):
+            embeddings.append(
+                self.embed_frame(
+                    frame,
+                    RIN_type,
+                    using,
+                    window_size,
+                    num_negative_samples,
+                    num_epochs,
+                    batch_size,
+                    shuffle_data=shuffle_data,
+                    dimensionality=dimensionality,
+                    alpha=alpha,
+                    device=device,
+                    sgns_kwargs=sgns_kwargs,
+                    _seed=seed
+                )
+            )
+        
+        with sawnergy_util.ArrayStorage.compress_and_cleanup(output_path, compression_level=compression_level) as storage:
+            storage.write(these_arrays=embeddings,
+                        to_block_named="frame_embeddings",
+                        arrays_per_chunk=num_matrices_in_compressed_blocks
+                    )
+        
+        return str(output_path)
+        
 
 __all__ = ["Embedder"]
 
