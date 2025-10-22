@@ -172,7 +172,7 @@ class Embedder:
                 return SGNS_Torch
             except Exception:
                 raise ImportError(
-                    "PyTorch is not installed, but based_on='torch' was requested. "
+                    "PyTorch is not installed, but base='torch' was requested. "
                     "Install PyTorch first, e.g.: `pip install torch` "
                     "(see https://pytorch.org/get-started for platform-specific wheels)."
                 )
@@ -182,7 +182,7 @@ class Embedder:
                 return SGNS_PureML
             except Exception:
                 raise ImportError(
-                    "PureML is not installed, but based_on='pureml' was requested. "
+                    "PureML is not installed, but base='pureml' was requested. "
                     "Install PureML first via `pip install ym-pure-ml` "
                 )
         else:
