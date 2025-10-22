@@ -967,7 +967,7 @@ def temporary_file(prefix: str, suffix: str) -> Path:
       The file is created on the default temporary directory for the system.
       The file handle is closed before returning, so only the path is kept.
     """
-    ntf = tempfile.NamedTemporaryFile(prefix=prefix, suffix=suffix, delete="False")
+    ntf = tempfile.NamedTemporaryFile(prefix=prefix, suffix=suffix, delete=False)
     ntf.close()
     return Path(ntf.name)
 
