@@ -40,7 +40,30 @@ class Embedder:
                  *,
                  seed: int | None = None
                 ) -> None:
-        """Load walk tensors and prepare an SGNS backend."""
+        """Initialize the embedder and load walk tensors.
+
+        Args:
+            WALKS_path: Path to a ``WALKS_*.zip`` (or ``.zarr``) archive created
+                by the walker pipeline. The archive's root attrs must include:
+                ``attractive_RWs_name``, ``repulsive_RWs_name``,
+                ``attractive_SAWs_name``, ``repulsive_SAWs_name`` (each may be
+                ``None`` if that collection is absent), and the metadata
+                ``num_RWs``, ``num_SAWs``, ``node_count``, ``time_stamp_count``,
+                ``walk_length``.
+            base: Which SGNS backend to use, either ``"torch"`` or ``"pureml"``.
+            seed: Optional seed for the embedder's RNG. If ``None``, a random
+                32-bit seed is chosen.
+
+        Raises:
+            ValueError: If required metadata is missing or any loaded walk array
+                has an unexpected shape.
+            ImportError: If the requested backend is not installed.
+            NameError: If ``base`` is not one of ``{"torch","pureml"}``.
+
+        Notes:
+            - Walks in storage are 1-based (residue indexing). Internally, this
+              class normalizes to 0-based indices for training utilities.
+        """
         self._walks_path = Path(WALKS_path)
         _logger.info("Initializing Embedder from %s (base=%s)", self._walks_path, base)
 
@@ -314,7 +337,36 @@ class Embedder:
               sgns_kwargs: dict[str, object] | None = None,
               _seed: int | None = None
               ) -> np.ndarray:
-        """Train embeddings for a single frame and return the input embedding matrix."""
+        """Train embeddings for a single frame and return the input embedding matrix.
+
+        Args:
+            frame_id: 1-based frame index to train on.
+            RIN_type: Interaction channel to use: ``"attr"`` (attractive) or
+                ``"repuls"`` (repulsive).
+            using: Which walk collections to include: ``"RW"``, ``"SAW"``, or
+                ``"merged"`` (concatenates both if available).
+            window_size: Symmetric skip-gram window size ``k``.
+            num_negative_samples: Number of negative samples per positive pair.
+            num_epochs: Number of passes over the pair dataset.
+            batch_size: Mini-batch size for training.
+            shuffle_data: Whether to shuffle pairs each epoch.
+            dimensionality: Embedding dimensionality ``D``.
+            alpha: Noise distribution exponent (``Pn ∝ f^alpha``).
+            device: Optional device string for the Torch backend (e.g., ``"cuda"``).
+            sgns_kwargs: Extra keyword arguments forwarded to the backend SGNS
+                constructor. For PureML, required keys are:
+                ``{"optim", "optim_kwargs", "lr_sched", "lr_sched_kwargs"}``.
+            _seed: Optional child seed for this frame's model initialization.
+
+        Returns:
+            np.ndarray: Learned **input** embedding matrix of shape ``(V, D)``.
+
+        Raises:
+            ValueError: If requested walks are missing, if no training pairs are
+                generated, or if required ``sgns_kwargs`` for PureML are absent.
+            AttributeError: If the SGNS model does not expose embeddings via
+                ``.embeddings`` or ``.parameters[0]``.
+        """
         _logger.info(
             "Preparing frame %d (rin=%s using=%s window=%d neg=%d epochs=%d batch=%d)",
             frame_id, RIN_type, using, window_size, num_negative_samples, num_epochs, batch_size
@@ -409,8 +461,46 @@ class Embedder:
         output_path: str | Path | None = None,
         num_matrices_in_compressed_blocks: int = 20,
         compression_level: int = 3):
-        """Train embeddings for every frame and persist them to compressed storage."""
+        """Train embeddings for all frames and persist them to compressed storage.
 
+        Iterates through all frames (``1..frame_count``), trains an SGNS model
+        per frame using the configured backend, collects the resulting input
+        embeddings, and writes them into a new compressed ``ArrayStorage`` archive.
+
+        Args:
+            RIN_type: Interaction channel to use: ``"attr"`` or ``"repuls"``.
+            using: Walk collections: ``"RW"``, ``"SAW"``, or ``"merged"``.
+            window_size: Symmetric skip-gram window size ``k``.
+            num_negative_samples: Number of negative samples per positive pair.
+            num_epochs: Number of epochs for each frame.
+            batch_size: Mini-batch size used during training.
+            shuffle_data: Whether to shuffle pairs each epoch.
+            dimensionality: Embedding dimensionality ``D``.
+            alpha: Noise distribution exponent (``Pn ∝ f^alpha``).
+            device: Optional device string for Torch backend.
+            sgns_kwargs: Extra constructor kwargs for the SGNS backend (see
+                :meth:`embedd_frame` for PureML requirements).
+            output_path: Destination path. If ``None``, a new file named
+                ``EMBEDDINGS_<timestamp>.zip`` is created next to the source
+                WALKS archive. If the provided path lacks a suffix, ``.zip`` is
+                appended.
+            num_matrices_in_compressed_blocks: Number of per-frame matrices to
+                store per compressed chunk in the output archive.
+            compression_level: Blosc Zstd compression level (0-9).
+
+        Returns:
+            str: Filesystem path to the written embeddings archive (``.zip``).
+
+        Raises:
+            ValueError: If configuration produces no pairs for a frame or if
+                PureML kwargs are incomplete.
+            RuntimeError: Propagated from storage operations on failure.
+
+        Notes:
+            - A deterministic child seed is spawned per frame from the master
+              seed using ``np.random.SeedSequence`` to ensure reproducibility
+              across runs.
+        """
         current_time = sawnergy_util.current_time()
         if output_path is None:
             output_path = self._walks_path.with_name(f"EMBEDDINGS_{current_time}").with_suffix(".zip")
