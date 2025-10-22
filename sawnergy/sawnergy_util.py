@@ -8,6 +8,7 @@ import numpy as np
 # built-in
 import re
 import logging
+from collections.abc import Sequence
 from math import ceil
 from datetime import datetime, date
 import multiprocessing as mp
@@ -248,7 +249,7 @@ class ArrayStorage:
 
     def write(
         self,
-        these_arrays: list[np.ndarray],
+        these_arrays: Sequence[np.ndarray] | np.ndarray,
         to_block_named: str,
         *,
         arrays_per_chunk: int | None = None,
@@ -260,19 +261,24 @@ class ArrayStorage:
         resolved per-block and stored in group attrs.
 
         Args:
-          these_arrays: List of NumPy arrays to append; all must share
-            `these_arrays[0].shape` and `these_arrays[0].dtype`.
-          to_block_named: Name of the target block (array) inside the root group.
-          arrays_per_chunk: Optional chunk length along axis 0. If unset and the
+        these_arrays: A sequence of NumPy arrays **or** a stacked ndarray with
+            shape `(k, *item_shape)`. If a generic iterable is provided, it will be
+            consumed into a list. All items must share the same shape and dtype.
+        to_block_named: Name of the target block (array) inside the root group.
+        arrays_per_chunk: Optional chunk length along axis 0. If unset and the
             block is new, defaults to 10 with a warning.
 
         Raises:
-          RuntimeError: If the storage is opened read-only.
-          ValueError: If any array's shape or dtype differs from the first element.
+        RuntimeError: If the storage is opened read-only.
+        ValueError: If any array's shape or dtype differs from the first element.
         """
         if self.mode == "r":
             _logger.error("Write attempted in read-only mode")
             raise RuntimeError("Cannot write to a read-only ArrayStorage")
+
+        # Normalize to something indexable (list/tuple/ndarray)
+        if not isinstance(these_arrays, (list, tuple, np.ndarray)):
+            these_arrays = list(these_arrays)
 
         if len(these_arrays) == 0:
             _logger.info("write() called with empty input for block '%s'; no-op", to_block_named)
@@ -280,7 +286,7 @@ class ArrayStorage:
 
         arr0 = np.asarray(these_arrays[0])
         _logger.info("Appending %d arrays to block '%s' (item_shape=%s, dtype=%s)",
-                     len(these_arrays), to_block_named, arr0.shape, arr0.dtype)
+                    len(these_arrays), to_block_named, arr0.shape, arr0.dtype)
         block = self._setdefault(
             to_block_named, tuple(arr0.shape), arr0.dtype, arrays_per_chunk
         )
