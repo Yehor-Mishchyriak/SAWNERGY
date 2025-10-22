@@ -9,6 +9,7 @@ from torch.optim.lr_scheduler import LRScheduler
 
 # built-in
 import logging
+from typing import Type
 
 # *----------------------------------------------------*
 #                        GLOBALS
@@ -28,9 +29,9 @@ class SGNS_Torch:
                  D: int,
                  *,
                 seed: int | None = None,
-                optim: Optimizer,
+                optim: Type[Optimizer],
                 optim_kwargs: dict,
-                lr_sched: LRScheduler | None = None,
+                lr_sched: Type[LRScheduler] | None = None,
                 lr_sched_kwargs: dict | None = None,
                 device: str | None = None):
         """
@@ -55,6 +56,7 @@ class SGNS_Torch:
 
         if seed is not None:
             torch.manual_seed(int(seed))
+            np.random.seed(int(seed))
             if self.device.type == "cuda":
                 torch.cuda.manual_seed_all(int(seed))
 
@@ -62,21 +64,28 @@ class SGNS_Torch:
         self.in_emb  = nn.Embedding(self.V, self.D)
         self.out_emb = nn.Embedding(self.V, self.D)
 
-        params = list(self.in_emb.parameters()) + list(self.out_emb.parameters())
-        self.opt = optim(params=params, **optim_kwargs)
-        self.lr_sched = lr_sched(**lr_sched_kwargs) if lr_sched is not None else None
-
         self.to(self.device)
 
-    # keep the same name used by PureML's NN (predict) so Embedder can call self(...)
-    def predict(self, center: np.ndarray, pos: np.ndarray, neg: np.ndarray):
-        # center: (B,), pos: (B,), neg: (B,K)
-        c  = self.in_emb(torch.as_tensor(center, dtype=torch.long, device=self.device))          # (B, D)
-        pe = self.out_emb(torch.as_tensor(pos,     dtype=torch.long, device=self.device))        # (B, D)
-        ne = self.out_emb(torch.as_tensor(neg,     dtype=torch.long, device=self.device))        # (B, K, D)
+        params = list(self.in_emb.parameters()) + list(self.out_emb.parameters())
+        self.opt = optim(params=params, **optim_kwargs)
+        self.lr_sched = lr_sched(self.opt, **lr_sched_kwargs) if lr_sched is not None else None
 
-        pos_logits = (c * pe).sum(dim=-1)                               # (B,)
-        neg_logits = (c.unsqueeze(1) * ne).sum(dim=-1)                  # (B, K)
+    def predict(self,
+                center: torch.Tensor,
+                pos: torch.Tensor,
+                neg: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+
+        center = center.to(self.device, dtype=torch.long)
+        pos    = pos.to(self.device, dtype=torch.long)
+        neg    = neg.to(self.device, dtype=torch.long)
+
+        c  = self.in_emb(center)  # (B, D)
+        pe = self.out_emb(pos)    # (B, D)
+        ne = self.out_emb(neg)    # (B, K, D)
+
+        pos_logits = (c * pe).sum(dim=-1)              # (B,)
+        neg_logits = (c.unsqueeze(1) * ne).sum(dim=-1) # (B, K)
+
         return pos_logits, neg_logits
 
     __call__ = predict
@@ -102,7 +111,6 @@ class SGNS_Torch:
         N = centers.shape[0]
         idx = np.arange(N)
 
-        # torch noise distribution once
         noise_probs = torch.as_tensor(noise_dist, dtype=torch.float32, device=self.device)
 
         for epoch in range(1, int(num_epochs) + 1):
@@ -115,12 +123,12 @@ class SGNS_Torch:
                 take = idx[s:s+int(batch_size)]
                 if take.size == 0:
                     continue
+                K = int(num_negative_samples)
+                B = len(take)
 
-                cen = centers[take]
-                pos = contexts[take]
-                # negatives: sample with replacement using torch (GPU friendly)
-                neg = torch.multinomial(noise_probs, num_samples=int(num_negative_samples * take.size), replacement=True)
-                neg = neg.view(len(take), int(num_negative_samples)).detach().cpu().numpy()
+                cen = torch.as_tensor(centers[take],  dtype=torch.long, device=self.device)  # (B,)
+                pos = torch.as_tensor(contexts[take], dtype=torch.long, device=self.device)  # (B,)
+                neg = torch.multinomial(noise_probs, num_samples=B * K, replacement=True).view(B, K)  # (B,K) on device
 
                 pos_logits, neg_logits = self(cen, pos, neg)
 
@@ -128,7 +136,7 @@ class SGNS_Torch:
                 y_pos = torch.ones_like(pos_logits)
                 loss_pos = bce(pos_logits, y_pos)
 
-                # BCE(-): flatten (B,K) -> (B*K,)
+                # BCE(-):
                 y_neg = torch.zeros_like(neg_logits)
                 loss_neg = bce(neg_logits, y_neg)
 
