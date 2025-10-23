@@ -40,9 +40,9 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 
 ---
 ## Small Visual Example (constructed fully from a trajectory and topology files)
-![rin](https://github.com/Yehor-Mishchyriak/SAWNERGY-Development/blob/main/assets/rin.png?raw=true)
+![rin](https://github.com/Yehor-Mishchyriak/SAWNERGY-Development/blob/main/assets/rin.png)
 
-![embedding](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/embedding.png)
+![embedding](https://github.com/Yehor-Mishchyriak/SAWNERGY-Development/blob/main/assets/embedding.png)
 
 ---
 
