@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+title: "SAWNERGY: Residue Interaction Networks, Random Walks, and node2vec Embeddings for Molecular Dynamics"
+message: "If you use SAWNERGY in your work, please cite this software."
+type: software
+authors:
+  - family-names: Mishchyriak
+    given-names: Yehor
+repository-code: https://github.com/Yehor-Mishchyriak/SAWNERGY
+url: https://github.com/Yehor-Mishchyriak/SAWNERGY
+license: Apache-2.0
+version: 1.0.0
+date-released: 2025-10-22
+keywords:
+  - molecular dynamics
+  - residue interaction networks
+  - random walks
+  - self-avoiding walks
+  - skip-gram
+  - node2vec
+  - negative sampling
+  - embeddings
+  - graph ML
+  - zarr
+  - python
+abstract: >
+  SAWNERGY is a modular Python toolkit that converts MD trajectories into residue
+  interaction networks (RINs), samples random and self-avoiding walks (including
+  time-aware variants), and trains per-frame skip-gram embeddings using PureML or
+  PyTorch backends. Artifacts are stored as compressed Zarr archives with rich metadata
+  for reproducibility and downstream analysis.
+preferred-citation:
+  type: software
+  title: "SAWNERGY"
+  authors:
+    - family-names: Mishchyriak
+      given-names: Yehor
+  url: https://github.com/Yehor-Mishchyriak/SAWNERGY
+  version: 1.0.0

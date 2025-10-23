@@ -26,4 +26,5 @@
 # ----------------------------
 !.gitignore
 !README.md
+!CITATION.cff
 !requirements.txt
