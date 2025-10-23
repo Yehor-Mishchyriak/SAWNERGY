@@ -40,9 +40,8 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 
 ---
 ## Small Visual Example (constructed fully from a trajectory and topology files)
-![rin](https://github.com/Yehor-Mishchyriak/SAWNERGY-Development/blob/main/assets/rin.png)
-
-![embedding](https://github.com/Yehor-Mishchyriak/SAWNERGY-Development/blob/main/assets/embedding.png)
+![Residue interaction network rendering for a single frame](assets/rin.png)
+![2D projection of learned residue embeddings across frames](assets/embedding.png)
 
 ---
 
