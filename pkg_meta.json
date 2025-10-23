@@ -33,5 +33,9 @@
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent"
-  ]
+  ],
+    "project_urls": {
+    "Source": "https://github.com/Yehor-Mishchyriak/SAWNERGY",
+    "Tracker": "https://github.com/Yehor-Mishchyriak/SAWNERGY/issues"
+  }
 }
