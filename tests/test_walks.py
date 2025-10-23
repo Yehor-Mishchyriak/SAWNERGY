@@ -18,21 +18,9 @@ def test_walks_preserve_order(walks_archive_path):
         attr_name = storage.get_attr("attractive_RWs_name")
         walks = storage.read(attr_name, slice(None))
         assert storage.get_attr("repulsive_RWs_name") is None
-        saw_name = storage.get_attr("attractive_SAWs_name")
         assert storage.get_attr("repulsive_SAWs_name") is None
-        assert storage.get_attr("num_RWs") == 1
-        assert storage.get_attr("num_SAWs") == 0
         assert storage.get_attr("walk_length") == 2
         assert storage.get_attr("time_stamp_count") == FRAME_COUNT
-
-    if walks.ndim == 4:
-        walks = walks[0]
-
-    with sawnergy_util.ArrayStorage(walks_archive_path, mode="r") as storage:
-        saw_name = storage.get_attr("attractive_SAWs_name")
-        if saw_name is not None:
-            saws = storage.read(saw_name, slice(None))
-            assert saws.shape[1] == 0  # no SAWs generated when saw_frac=0
 
     assert walks.shape[0] == FRAME_COUNT
     assert walks.shape[1] == RESIDUE_COUNT

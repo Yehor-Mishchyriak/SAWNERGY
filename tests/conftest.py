@@ -57,17 +57,17 @@ def _com_output(frame_indices: Iterable[int], coords_lookup: Dict[int, np.ndarra
 PAIRWISE_MATRICES: Dict[int, np.ndarray] = {
     1: np.array(
         [
-            [0.0, -2.0, -1.0],
-            [-2.0, 0.0, -1.5],
-            [-1.0, -1.5, 0.0],
+            [0.0, -2.0, 1.5],
+            [-2.0, 0.0, 3.0],
+            [1.5, -1.5, 0.0],
         ],
         dtype=np.float32,
     ),
     2: np.array(
         [
-            [0.0, -1.0, -0.5],
-            [-1.0, 0.0, -2.0],
-            [-0.5, -2.0, 0.0],
+            [0.0, -1.0, 2.5],
+            [-1.0, 0.0, 1.0],
+            [2.5, -0.5, 0.0],
         ],
         dtype=np.float32,
     ),
@@ -349,6 +349,24 @@ class _DummyAxes:
     def set_axis_off(self):
         pass
 
+    def text(self, *args, **kwargs):
+        return None
+
+    def text2D(self, *args, **kwargs):
+        return None
+
+    def set_xlim(self, *_):
+        pass
+
+    def set_ylim(self, *_):
+        pass
+
+    def set_zlim(self, *_):
+        pass
+
+    def set_box_aspect(self, *_):
+        pass
+
     def scatter(self, *_, **__):
         return _DummyScatter()
 
@@ -388,6 +406,28 @@ class _DummyNormalize:
         return value
 
 
+class _DummyCMap:
+    def __call__(self, values):
+        arr = np.asarray(values)
+        if arr.ndim == 0:
+            arr = arr[None]
+        return np.tile(np.array([1.0, 0.0, 0.0, 1.0]), (len(arr), 1))
+
+
+class _DummyPlt:
+    def get_cmap(self, name):
+        return _DummyCMap()
+
+    def isinteractive(self):
+        return False
+
+    def show(self, *_, **__):
+        pass
+
+    def pause(self, *_, **__):
+        pass
+
+
 @pytest.fixture
 def patched_visualizer(monkeypatch):
     def fake_init(
@@ -415,6 +455,85 @@ def patched_visualizer(monkeypatch):
         self.N = self.COM_coords.shape[1]
         self._residue_norm = _DummyNormalize()
         self.default_node_color = "#cccccc"
+        self._plt = _DummyPlt()
 
     monkeypatch.setattr(visualizer_module.Visualizer, "__init__", fake_init)
     return None
+
+
+@pytest.fixture
+def rin_archive_path_both(patched_cpptraj: Path) -> Path:
+    """RIN archive including both attractive and repulsive channels (energies+transitions)."""
+    output_path = patched_cpptraj / "synthetic_rin_both.zip"
+    builder = rin_builder.RINBuilder(cpptraj_path="cpptraj")
+    builder.build_rin(
+        topology_file="top.prmtop",
+        trajectory_file="traj.nc",
+        molecule_of_interest=1,
+        frame_range=(1, FRAME_COUNT),
+        frame_batch_size=1,
+        prune_low_energies_frac=1.0,
+        output_path=output_path,
+        keep_prenormalized_energies=True,
+        include_attractive=True,
+        include_repulsive=True,
+        compression_level=0,
+        num_matrices_in_compressed_blocks=1,
+    )
+    return output_path
+
+
+@pytest.fixture
+def walks_archive_path_full(
+    rin_archive_path_both: Path,
+    tmp_path: Path,
+    patched_shared_ndarray,
+) -> Path:
+    """Walks archive with both channels + SAWs present."""
+    w = walker.Walker(rin_archive_path_both, seed=321)
+    out_path = tmp_path / "synthetic_walks_full.zip"
+    try:
+        w.sample_walks(
+            walk_length=8,
+            walks_per_node=6,
+            saw_frac=0.5,                       # both RW and SAW
+            include_attractive=True,
+            include_repulsive=True,             # repulsive channel path
+            time_aware=False,
+            output_path=out_path,
+            in_parallel=False,
+            compression_level=0,
+            num_walk_matrices_in_compressed_blocks=1,
+        )
+    finally:
+        w.close()
+    return out_path
+
+
+@pytest.fixture
+def timeaware_walks_archive_path(
+    rin_archive_path_both: Path,
+    tmp_path: Path,
+    patched_shared_ndarray,
+) -> Path:
+    """Walks archive sampled in time-aware mode (stickiness set)."""
+    w = walker.Walker(rin_archive_path_both, seed=777)
+    out_path = tmp_path / "synthetic_walks_timeaware.zip"
+    try:
+        w.sample_walks(
+            walk_length=6,
+            walks_per_node=3,
+            saw_frac=0.0,
+            include_attractive=True,
+            include_repulsive=False,
+            time_aware=True,                    # exercise _step_time path
+            stickiness=0.75,
+            on_no_options="loop",
+            output_path=out_path,
+            in_parallel=False,
+            compression_level=0,
+            num_walk_matrices_in_compressed_blocks=1,
+        )
+    finally:
+        w.close()
+    return out_path
