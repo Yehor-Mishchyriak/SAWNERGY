@@ -228,7 +228,6 @@ v.build_frame(1,
 │   ├── visual/        # Visualizer and palette utilities
 │   ├── logging_util.py
 │   └── sawnergy_util.py
-├── tests/             # Synthetic end-to-end tests (pytest)
 │
 └── README.md
 ```
