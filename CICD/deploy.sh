@@ -139,6 +139,7 @@ CANDIDATES=(
   NOTICE NOTICE.txt
   README.md README.MD
   CREDITS.md CREDITS.MD
+  assets
 )
 SELECTED=()
 for p in "${CANDIDATES[@]}"; do
