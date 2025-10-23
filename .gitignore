@@ -25,6 +25,9 @@
 !CICD/*.sh
 !CICD/*.txt
 # ----------------------------
+!assets/
+!assets/*.png
+# ----------------------------
 !.gitignore
 !pkg_meta.json
 !README.md

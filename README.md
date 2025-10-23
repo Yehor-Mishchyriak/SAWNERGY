@@ -39,6 +39,12 @@ Each stage consumes the archive produced by the previous one. Metadata embedded 
 node indexing, and RNG seeds stay consistent across the toolchain.
 
 ---
+## Small Visual Example (constructed fully from a trajectory and topology files)
+![rin](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/rin.png)
+
+![embedding](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/embedding.png)
+
+---
 
 ## Core Components
 
