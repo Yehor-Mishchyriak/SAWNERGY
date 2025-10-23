@@ -1,5 +1,9 @@
 # SAWNERGY
 
+[![PyPI](https://img.shields.io/pypi/v/sawnergy)](https://pypi.org/project/sawnergy/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Yehor-Mishchyriak/SAWNERGY/blob/main/LICENSE)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+
 A toolkit for transforming molecular dynamics (MD) trajectories into rich graph representations, sampling
 random and self-avoiding walks, learning node embeddings, and visualising residue interaction networks (RINs). SAWNERGY
 keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2vec approach) — inside Python, backed by efficient Zarr-based archives and optional GPU acceleration.
