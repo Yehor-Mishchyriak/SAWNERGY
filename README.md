@@ -218,24 +218,6 @@ v.build_frame(1,
 
 ---
 
-## Testing & Quality Assurance
-
-The automated test suite (`pytest`) synthesises deterministic cpptraj outputs and exercises the entire workflow:
-
-- RIN parsing, residue aggregation, and metadata verification.
-- Random/self-avoiding walk sampling and probability consistency with the RIN.
-- Embedding orchestration, frame ordering, SGNS pair generation property tests.
-- PureML and PyTorch SGNS smoke tests verifying finite weights and decreasing loss.
-- Visualiser smoke tests that cover data loading and artist updates.
-
-Run the suite (inside the project virtualenv):
-
-```bash
-python -m pytest
-```
-
----
-
 ## Project Structure
 
 ```
