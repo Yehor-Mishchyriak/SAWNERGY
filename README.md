@@ -1,12 +1,12 @@
-# Sawnergy
+# SAWNERGY
 
-A modular pipeline for transforming molecular dynamics (MD) trajectories into rich graph representations, sampling
-random and self-avoiding walks, learning node embeddings, and visualising residue interaction networks (RINs). Sawnergy
+A toolkit for transforming molecular dynamics (MD) trajectories into rich graph representations, sampling
+random and self-avoiding walks, learning node embeddings, and visualising residue interaction networks (RINs). SAWNERGY
 keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2vec approach) — inside Python, backed by efficient Zarr-based archives and optional GPU acceleration.
 
 ---
 
-## Why Sawnergy?
+## Why SAWNERGY?
 
 - **Bridge simulations and graph ML**: Convert raw MD trajectories into residue interaction networks ready for graph
   algorithms and downstream machine learning tasks.
@@ -255,5 +255,5 @@ python -m pytest
 
 ## Acknowledgements
 
-Sawnergy builds on the AmberTools `cpptraj` ecosystem, NumPy, Matplotlib, Zarr, and PyTorch (for GPU acceleration if necessary; PureML is available by default).
+SAWNERGY builds on the AmberTools `cpptraj` ecosystem, NumPy, Matplotlib, Zarr, and PyTorch (for GPU acceleration if necessary; PureML is available by default).
 Big thanks to the upstream communities whose work makes this toolkit possible.
