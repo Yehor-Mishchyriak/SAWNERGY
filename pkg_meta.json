@@ -1,6 +1,6 @@
 {
   "name": "sawnergy",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Toolkit for transforming molecular dynamics (MD) trajectories into rich graph representations",
   "long_description": "[PLACE_HOLDER]",
   "long_description_content_type": "text/markdown",
@@ -34,7 +34,7 @@
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent"
   ],
-    "project_urls": {
+  "project_urls": {
     "Source": "https://github.com/Yehor-Mishchyriak/SAWNERGY",
     "Tracker": "https://github.com/Yehor-Mishchyriak/SAWNERGY/issues"
   }
