@@ -330,6 +330,7 @@ class Embedder:
               num_epochs: int,
               batch_size: int,
               *,
+              lr_step_per_batch: bool = False,
               shuffle_data: bool = True,
               dimensionality: int = 128,
               alpha: float = 0.75,
@@ -355,7 +356,8 @@ class Embedder:
             device: Optional device string for the Torch backend (e.g., ``"cuda"``).
             sgns_kwargs: Extra keyword arguments forwarded to the backend SGNS
                 constructor. For PureML, required keys are:
-                ``{"optim", "optim_kwargs", "lr_sched", "lr_sched_kwargs"}``.
+                ``{"optim", "optim_kwargs"}``; ``lr_sched`` is optional, but if
+                provided then ``lr_sched_kwargs`` must also be provided.
             _seed: Optional child seed for this frame's model initialization.
 
         Returns:
@@ -391,10 +393,14 @@ class Embedder:
 
         model_kwargs: dict[str, object] = dict(sgns_kwargs or {})
         if self.model_base == "pureml":
-            required = {"optim", "optim_kwargs", "lr_sched", "lr_sched_kwargs"}
+            required = {"optim", "optim_kwargs"}
             missing = required.difference(model_kwargs)
             if missing:
                 raise ValueError(f"PureML backend requires {sorted(missing)} in sgns_kwargs.")
+            has_sched = ("lr_sched" in model_kwargs and model_kwargs["lr_sched"] is not None)
+            has_sched_kwargs = ("lr_sched_kwargs" in model_kwargs and model_kwargs["lr_sched_kwargs"] is not None)
+            if has_sched and not has_sched_kwargs:
+                raise ValueError("When providing lr_sched for PureML, you must also provide lr_sched_kwargs.")
 
         child_seed = int(self._seed if _seed is None else _seed)
         model_kwargs.update({
@@ -429,7 +435,7 @@ class Embedder:
             num_negative_samples,
             noise_probs,
             shuffle_data,
-            lr_step_per_batch=False
+            lr_step_per_batch
         )
 
         embeddings = getattr(self.model, "embeddings", None)
