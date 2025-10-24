@@ -25,7 +25,7 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 ## v1.0.7 — What’s new:
 - **Added plain SkipGram model**
-  - Now, the user can choose if they want to apply the negative sampling technique, which implies training two binary classifiers, or train a signle classifier over the vocabulary (for more detail, please see: [node2vec](https://arxiv.org/pdf/1607.00653), [word2vec](https://arxiv.org/pdf/1301.3781), and[negative_sampling](https://arxiv.org/pdf/1402.3722)
+  - Now, the user can choose if they want to apply the negative sampling technique, which implies training two binary classifiers, or train a signle classifier over the vocabulary (for more detail, please see: [node2vec](https://arxiv.org/pdf/1607.00653), [word2vec](https://arxiv.org/pdf/1301.3781), and [negative_sampling](https://arxiv.org/pdf/1402.3722).
 
 ---
 
