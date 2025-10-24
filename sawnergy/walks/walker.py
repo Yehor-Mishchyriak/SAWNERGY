@@ -63,7 +63,7 @@ class Walker:
 
         # Load numpy arrays from read-only storage
         with sawnergy_util.ArrayStorage(RIN_path, mode="r") as storage:
-            attr_name   = storage.get_attr("attractive_transitions_name")
+            attr_name = storage.get_attr("attractive_transitions_name")
             repuls_name = storage.get_attr("repulsive_transitions_name")
             attr_matrices  : np.ndarray | None = (
                 storage.read(attr_name, slice(None)) if attr_name is not None else None
@@ -133,6 +133,9 @@ class Walker:
             ) if repuls_matrices is not None else None
         )
 
+        self._attr_owner_pid   = os.getpid() if self.attr_matrices  is not None else None
+        self._repuls_owner_pid = os.getpid() if self.repuls_matrices is not None else None
+
         _logger.debug(
             "SharedNDArray created | attr name=%r; repuls name=%r",
             getattr(self.attr_matrices, "name", None),
@@ -159,38 +162,56 @@ class Walker:
 
     # explicit resource cleanup
     def close(self) -> None:
-        """Close shared-memory handles and (in main process) unlink segments.
+        """Release shared-memory resources used by this Walker.
 
-        Idempotent: if cleanup already occurred, returns immediately. Always
-        closes local handles in the current process. If the caller is the main
-        process (per ``sawnergy_util.is_main_process()``), also attempts to
-        unlink the underlying shared-memory segments (best-effort; suppresses
-        ``FileNotFoundError`` if already unlinked elsewhere).
+        This method:
+        - Closes local handles to the shared-memory backed arrays
+        (`self.attr_matrices`, `self.repuls_matrices`) in **the current process**.
+        - If the current process is the **creator** of a segment (its PID matches
+        `_attr_owner_pid` / `_repuls_owner_pid`), it also **unlinks** that segment
+        so the OS can reclaim it once all handles are closed.
+
+        Behavior & guarantees
+        ---------------------
+        - **Idempotent:** safe to call multiple times; subsequent calls are no-ops.
+        - **Multi-process aware:** non-creator processes only close their handles;
+        creators close **and** unlink. This prevents `resource_tracker` “leaked
+        shared_memory” warnings when using `ProcessPoolExecutor`/spawn.
+        - **Best-effort unlink:** `FileNotFoundError` during unlink (already unlinked
+        elsewhere) is swallowed.
+        - Invoked automatically by the context manager (`__exit__`) and destructor
+        (`__del__`), but it's fine to call explicitly.
+
+        After calling `close()`, any operation that relies on the shared arrays may
+        fail; treat the instance as finalized.
+
+        Returns:
+            None
         """
         if self._memory_cleaned_up:
             _logger.debug("close(): already cleaned up; returning")
             return
-        _logger.debug("Closing Walker resources (is_main=%s)", sawnergy_util.is_main_process())
+        _logger.debug("Closing Walker resources (pid=%s)", os.getpid())
         try:
             if self.attr_matrices is not None:
                 self.attr_matrices.close()
             if self.repuls_matrices is not None:
                 self.repuls_matrices.close()
             _logger.debug("SharedNDArray handles closed")
-            if sawnergy_util.is_main_process():
-                _logger.debug("Attempting to unlink shared memory segments (main process)")
-                try:
-                    if self.attr_matrices is not None:
-                        self.attr_matrices.unlink()
-                except FileNotFoundError:
-                    _logger.warning("attr SharedMemory already unlinked")
-                try:
-                    if self.repuls_matrices is not None:
-                        self.repuls_matrices.unlink()
-                except FileNotFoundError:
-                    _logger.warning("repuls SharedMemory already unlinked")
-            else:
-                _logger.debug("Not main process; skipping unlink")
+
+            # Unlink in whichever process actually CREATED the segment(s)
+            try:
+                if self.attr_matrices is not None and getattr(self, "_attr_owner_pid", None) == os.getpid():
+                    self.attr_matrices.unlink()
+            except FileNotFoundError:
+                _logger.debug("attr SharedMemory already unlinked elsewhere")
+
+            try:
+                if self.repuls_matrices is not None and getattr(self, "_repuls_owner_pid", None) == os.getpid():
+                    self.repuls_matrices.unlink()
+            except FileNotFoundError:
+                _logger.debug("repuls SharedMemory already unlinked elsewhere")
+
         finally:
             self._memory_cleaned_up = True
             _logger.debug("Cleanup complete")
