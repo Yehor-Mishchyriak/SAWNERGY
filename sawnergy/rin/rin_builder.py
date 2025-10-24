@@ -690,9 +690,9 @@ class RINBuilder:
 
         2. For each frame batch:
             
-            a) Run cpptraj `pairwise` on atoms → EMAP + VMAP → sum (atomic matrix).
+            a) Run cpptraj 'pairwise' on atoms → EMAP + VMAP → sum (atomic matrix).
             
-            b) Project atomic → residue with ``R = Pᵀ @ A @ P``.
+            b) Project atomic → residue with 'R = Pᵀ @ A @ P'.
             
             c) Post-process residue matrix:
                 split into (attractive, repulsive) channels,
@@ -700,7 +700,7 @@ class RINBuilder:
                 remove self-interactions,
                 symmetrize.
 
-            d. Optionally store **pre-normalized energies** (attractive or repulsive or both, depending on `include_<kind>`).
+            d. Optionally store **pre-normalized energies** (attractive or repulsive or both, depending on 'include_<kind>').
             
             e. Row-wise L1 normalize (directed transition probabilities) and store.
 
