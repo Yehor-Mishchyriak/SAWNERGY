@@ -10,6 +10,25 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 ---
 
+## Installation
+
+   ```bash
+   pip install sawnergy
+   ```
+
+> **Note:** RIN building requires `cpptraj` (AmberTools). Ensure it is discoverable via `$PATH` or the `CPPTRAJ`
+> environment variable.
+
+---
+
+# UPDATES:
+
+## v1.0.7 — What’s new:
+- **Added plain SkipGram model**
+  - Now, the user can choose if they want to apply the negative sampling technique, which implies training two binary classifiers, or train a signle classifier over the vocabulary (for more detail, please see:![node2vec](https://arxiv.org/pdf/1607.00653), ![word2vec](https://arxiv.org/pdf/1301.3781), and ![negative_sampling](https://arxiv.org/pdf/1402.3722)
+
+---
+
 ## Why SAWNERGY?
 
 - **Bridge simulations and graph ML**: Convert raw MD trajectories into residue interaction networks ready for graph
@@ -112,17 +131,6 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 
 - In **RIN**, `T` equals the number of frame **batches** written (i.e., `frame_range` swept in steps of `frame_batch_size`). `ATTRACTIVE/REPULSIVE_energies` are **pre-normalised** absolute energies (written only when `keep_prenormalized_energies=True`), whereas `ATTRACTIVE/REPULSIVE_transitions` are the **row-wise L1-normalised** versions used for sampling.
 - All archives are Zarr v3 groups. ArrayStorage also maintains per-block metadata in root attrs: `array_chunk_size_in_block`, `array_shape_in_block`, and `array_dtype_in_block` (dicts keyed by dataset name). You’ll see these in every archive.
-
----
-
-## Installation
-
-   ```bash
-   pip install sawnergy
-   ```
-
-> **Note:** RIN building requires `cpptraj` (AmberTools). Ensure it is discoverable via `$PATH` or the `CPPTRAJ`
-> environment variable.
 
 ---
 
