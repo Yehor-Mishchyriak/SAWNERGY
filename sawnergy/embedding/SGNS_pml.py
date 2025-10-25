@@ -181,18 +181,50 @@ class SGNS_PureML(NN):
         return 0.5 * (self.in_embeddings + self.out_embeddings)
 
 class SG_PureML(NN):
+    """Plain Skip-Gram (full softmax) in PureML.
+
+    Trains two affine layers to emulate the classic Skip-Gram objective with a
+    **full** softmax over the vocabulary (no negative sampling):
+
+        x = one_hot(center, V)                 # (B, V)
+        y = x @ W_in + b_in                    # (B, D)
+        logits = y @ W_out + b_out             # (B, V)
+        loss = CCE(one_hot(context, V), logits, from_logits=True)
+
+    The learnable “input” embeddings are the rows of `W_in` (shape `(V, D)`), and
+    the “output” embeddings are the rows of `W_outᵀ` (also `(V, D)`).
+    """
 
     def __init__(self,
-                V: int,
-                D: int,
-                *,
-                seed: int | None = None,
-                optim: Type[Optim],
-                optim_kwargs: dict,
-                lr_sched: Type[LRScheduler] | None = None,
-                lr_sched_kwargs: dict | None = None,
-                device: str | None = None):
+                 V: int,
+                 D: int,
+                 *,
+                 seed: int | None = None,
+                 optim: Type[Optim],
+                 optim_kwargs: dict,
+                 lr_sched: Type[LRScheduler] | None = None,
+                 lr_sched_kwargs: dict | None = None,
+                 device: str | None = None):
+        """Initialize the plain Skip-Gram model (full softmax).
 
+        Args:
+            V: Vocabulary size (number of nodes/tokens).
+            D: Embedding dimensionality.
+            seed: Optional RNG seed (kept for API parity; not used in layer init).
+            optim: Optimizer class to instantiate (e.g., `Adam`, `SGD`).
+            optim_kwargs: Keyword arguments passed to the optimizer constructor.
+            lr_sched: Optional learning-rate scheduler class.
+            lr_sched_kwargs: Keyword arguments for the scheduler
+                (required if `lr_sched` is provided).
+            device: Device string (e.g., `"cuda"`). Accepted for parity, ignored
+                by PureML (CPU-only).
+
+        Notes:
+            The encoder/decoder are implemented as:
+              • `in_emb = Affine(V, D)` (acts on a one-hot center index)
+              • `out_emb = Affine(D, V)`
+            so forward pass produces vocabulary-sized logits.
+        """
         if optim_kwargs is None:
             raise ValueError("optim_kwargs must be provided")
         if lr_sched is not None and lr_sched_kwargs is None:
@@ -200,6 +232,7 @@ class SG_PureML(NN):
 
         self.V, self.D = int(V), int(D)
 
+        # input/output “embedding” projections
         self.in_emb  = Affine(self.V, self.D)
         self.out_emb = Affine(self.D, self.V)
 
@@ -220,9 +253,17 @@ class SG_PureML(NN):
         )
 
     def predict(self, center: Tensor) -> Tensor:
-        c = one_hot(dims=self.V, label=center)
-        y = self.in_emb(c)
-        z = self.out_emb(y)
+        """Return vocabulary logits for each center index.
+
+        Args:
+            center: Tensor of center indices with shape `(B,)` and integer dtype.
+
+        Returns:
+            Tensor: Logits over the vocabulary with shape `(B, V)`.
+        """
+        c = one_hot(dims=self.V, label=center)  # (B, V)
+        y = self.in_emb(c)                      # (B, D)
+        z = self.out_emb(y)                     # (B, V)
         return z
 
     def fit(self,
@@ -233,7 +274,22 @@ class SG_PureML(NN):
             shuffle_data: bool,
             lr_step_per_batch: bool,
             **_ignore):
-        """Train SG on the provided center/context pairs."""
+        """Train Skip-Gram with full softmax on center/context pairs.
+
+        Args:
+            centers: Array of center indices, shape `(N,)`, dtype integer in `[0, V)`.
+            contexts: Array of context (target) indices, shape `(N,)`, dtype integer.
+            num_epochs: Number of passes over the dataset.
+            batch_size: Mini-batch size.
+            shuffle_data: Whether to shuffle pairs each epoch.
+            lr_step_per_batch: If True, call `lr_sched.step()` after every batch
+                (when a scheduler is provided). If False, step once per epoch.
+            **_ignore: Ignored kwargs for API compatibility with SGNS.
+
+        Optimization:
+            Uses `CCE(one_hot(context), logits, from_logits=True)` where
+            `logits = predict(center)`. Scheduler stepping obeys `lr_step_per_batch`.
+        """
         _logger.info(
             "SG_PureML fit: epochs=%d batch=%d shuffle=%s",
             num_epochs, batch_size, shuffle_data
@@ -245,9 +301,9 @@ class SG_PureML(NN):
             batches = 0
 
             for cen, ctx in DataLoader(data, batch_size=batch_size, shuffle=shuffle_data):
-                logits = self(cen)
-                y = one_hot(self.V, label=ctx)
-                loss = CCE(y, logits, from_logits=True)
+                logits = self(cen)                          # (B, V)
+                y = one_hot(self.V, label=ctx)             # (B, V)
+                loss = CCE(y, logits, from_logits=True)    # scalar
 
                 self.optim.zero_grad()
                 loss.backward()
@@ -269,17 +325,25 @@ class SG_PureML(NN):
 
     @property
     def in_embeddings(self) -> np.ndarray:
+        """Input embeddings matrix `W_in` of shape `(V, D)` (copy, read-only)."""
         W = self.in_emb.parameters[0]  # (V, D)
         return W.numpy(copy=True, readonly=True)
     
     @property
     def out_embeddings(self) -> np.ndarray:
+        """Output embeddings matrix `W_outᵀ` as `(V, D)` (copy, read-only).
+
+        Note:
+            `out_emb.parameters[0]` stores a weight of shape `(D, V)` internally
+            (Affine stores `W` as `(in_dim, out_dim)`), so we return its transpose.
+        """
         W = self.out_emb.parameters[0]             # (D, V)
         return W.numpy(copy=True, readonly=True).T # (V, D)
     
     @property
     def avg_embeddings(self) -> np.ndarray:
-        return 0.5 * (self.in_embeddings + self.out_embeddings) # (V, D)
+        """Elementwise average of input/output embeddings, shape `(V, D)`."""
+        return 0.5 * (self.in_embeddings + self.out_embeddings)  # (V, D)
 
 
 __all__ = ["SGNS_PureML", "SG_PureML"]
