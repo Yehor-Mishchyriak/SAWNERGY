@@ -3,11 +3,11 @@ from __future__ import annotations
 # third party
 import numpy as np
 from pureml.machinery import Tensor
-from pureml.layers import Embedding
-from pureml.losses import BCE
+from pureml.layers import Embedding, Affine
+from pureml.losses import BCE, CCE
 from pureml.general_math import sum as t_sum
 from pureml.optimizers import Optim, LRScheduler
-from pureml.training_utils import TensorDataset, DataLoader
+from pureml.training_utils import TensorDataset, DataLoader, one_hot
 from pureml.base import NN
 
 # built-in
@@ -82,10 +82,17 @@ class SGNS_PureML(NN):
         )
 
     def _sample_neg(self, B: int, K: int, dist: np.ndarray) -> np.ndarray:
-        """Draw negative samples according to the provided unigram distribution."""
         if dist.ndim != 1 or dist.size != self.V:
             raise ValueError(f"noise_dist must be 1-D with length {self.V}; got {dist.shape}")
-        return self._rng.choice(self.V, size=(B, K), replace=True, p=dist)
+        p = np.asarray(dist, dtype=np.float64)
+        if np.any(p < 0):
+            raise ValueError("noise_dist has negative entries")
+        s = p.sum()
+        if not np.isfinite(s) or s <= 0:
+            raise ValueError("noise_dist must have positive finite sum")
+        if abs(s - 1.0) > 1e-6:
+            p = p / s
+        return self._rng.choice(self.V, size=(B, K), replace=True, p=p)
 
     def predict(self, center: Tensor, pos: Tensor, neg: Tensor) -> tuple[Tensor, Tensor]:
         """Compute positive/negative logits for SGNS.
@@ -133,8 +140,8 @@ class SGNS_PureML(NN):
                 neg = Tensor(neg_idx_np, requires_grad=False)
                 x_pos_logits, x_neg_logits = self(cen, pos, neg)
 
-                y_pos = Tensor(np.ones_like(x_pos_logits.data))
-                y_neg = Tensor(np.zeros_like(x_neg_logits.data))
+                y_pos = Tensor(np.ones_like(x_pos_logits.numpy(copy=False)), requires_grad=False)
+                y_neg = Tensor(np.zeros_like(x_neg_logits.numpy(copy=False)), requires_grad=False)
 
                 loss = (
                     BCE(y_pos, x_pos_logits, from_logits=True)
@@ -160,13 +167,122 @@ class SGNS_PureML(NN):
             _logger.info("Epoch %d/%d mean_loss=%.6f", epoch, num_epochs, mean_loss)
 
     @property
-    def embeddings(self) -> np.ndarray:
-        """Return the input embedding matrix as a NumPy array (V, D)."""
-        W: Tensor = self.in_emb.parameters[0]
-        return np.asarray(W.data)
+    def in_embeddings(self) -> np.ndarray:
+        W: Tensor = self.in_emb.parameters[0]   # (V, D)
+        return W.numpy(copy=True, readonly=True)
+
+    @property
+    def out_embeddings(self) -> np.ndarray:
+        W: Tensor = self.out_emb.parameters[0]  # (V, D)
+        return W.numpy(copy=True, readonly=True)
+
+    @property
+    def avg_embeddings(self) -> np.ndarray:
+        return 0.5 * (self.in_embeddings + self.out_embeddings)
+
+class SG_PureML(NN):
+
+    def __init__(self,
+                V: int,
+                D: int,
+                *,
+                seed: int | None = None,
+                optim: Type[Optim],
+                optim_kwargs: dict,
+                lr_sched: Type[LRScheduler] | None = None,
+                lr_sched_kwargs: dict | None = None,
+                device: str | None = None):
+
+        if optim_kwargs is None:
+            raise ValueError("optim_kwargs must be provided")
+        if lr_sched is not None and lr_sched_kwargs is None:
+            raise ValueError("lr_sched_kwargs required when lr_sched is provided")
+
+        self.V, self.D = int(V), int(D)
+
+        self.in_emb  = Affine(self.V, self.D)
+        self.out_emb = Affine(self.D, self.V)
+
+        self.seed = None if seed is None else int(seed)
+
+        # API compatibility: PureML is CPU-only
+        self.device = "cpu"
+
+        # optimizer / scheduler
+        self.optim: Optim = optim(self.parameters, **optim_kwargs)
+        self.lr_sched: LRScheduler | None = (
+            lr_sched(optim=self.optim, **lr_sched_kwargs) if lr_sched is not None else None
+        )
+
+        _logger.info(
+            "SG_PureML init: V=%d D=%d device=%s seed=%s",
+            self.V, self.D, self.device, self.seed
+        )
+
+    def predict(self, center: Tensor) -> Tensor:
+        c = one_hot(dims=self.V, label=center)
+        y = self.in_emb(c)
+        z = self.out_emb(y)
+        return z
+
+    def fit(self,
+            centers: np.ndarray,
+            contexts: np.ndarray,
+            num_epochs: int,
+            batch_size: int,
+            shuffle_data: bool,
+            lr_step_per_batch: bool,
+            **_ignore):
+        """Train SG on the provided center/context pairs."""
+        _logger.info(
+            "SG_PureML fit: epochs=%d batch=%d shuffle=%s",
+            num_epochs, batch_size, shuffle_data
+        )
+        data = TensorDataset(centers, contexts)
+
+        for epoch in range(1, num_epochs + 1):
+            epoch_loss = 0.0
+            batches = 0
+
+            for cen, ctx in DataLoader(data, batch_size=batch_size, shuffle=shuffle_data):
+                logits = self(cen)
+                y = one_hot(self.V, label=ctx)
+                loss = CCE(y, logits, from_logits=True)
+
+                self.optim.zero_grad()
+                loss.backward()
+                self.optim.step()
+
+                if lr_step_per_batch and self.lr_sched is not None:
+                    self.lr_sched.step()
+
+                loss_value = float(np.asarray(loss.data))
+                epoch_loss += loss_value
+                batches += 1
+                _logger.debug("Epoch %d batch %d loss=%.6f", epoch, batches, loss_value)
+
+            if (not lr_step_per_batch) and (self.lr_sched is not None):
+                self.lr_sched.step()
+
+            mean_loss = epoch_loss / max(batches, 1)
+            _logger.info("Epoch %d/%d mean_loss=%.6f", epoch, num_epochs, mean_loss)
+
+    @property
+    def in_embeddings(self) -> np.ndarray:
+        W = self.in_emb.parameters[0]  # (V, D)
+        return W.numpy(copy=True, readonly=True)
+    
+    @property
+    def out_embeddings(self) -> np.ndarray:
+        W = self.out_emb.parameters[0]             # (D, V)
+        return W.numpy(copy=True, readonly=True).T # (V, D)
+    
+    @property
+    def avg_embeddings(self) -> np.ndarray:
+        return 0.5 * (self.in_embeddings + self.out_embeddings) # (V, D)
 
 
-__all__ = ["SGNS_PureML"]
+__all__ = ["SGNS_PureML", "SG_PureML"]
 
 if __name__ == "__main__":
     pass
