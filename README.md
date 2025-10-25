@@ -25,7 +25,11 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 ## v1.0.7 — What’s new:
 - **Added plain SkipGram model**
-  - Now, the user can choose if they want to apply the negative sampling technique, which implies training two binary classifiers, or train a signle classifier over the vocabulary (for more detail, please see: [node2vec](https://arxiv.org/pdf/1607.00653), [word2vec](https://arxiv.org/pdf/1301.3781), and [negative_sampling](https://arxiv.org/pdf/1402.3722).
+  - Now, the user can choose if they want to apply the negative sampling technique, which implies training two binary classifiers, or train a signle classifier over the vocabulary (for more detail, please see: [node2vec](https://arxiv.org/pdf/1607.00653), [word2vec](https://arxiv.org/pdf/1301.3781), and [negative_sampling](https://arxiv.org/pdf/1402.3722)).
+- **Set a harsher default for low interaction energies pruning during RIN construction**
+  - Now we zero out 85% of the lowest interaction energies as opposed to the past 30% defualt, leading to more meaningful embeddings.
+- **BUG FIX: Visualizer**
+  - Previously, the visualizer would silently draw edges of 0 magnitude, meaning they were actually being drawn but were invisible due to full transperency and 0 width. As a result, the displayed image / animation would be very laggy. Now, this was fixed, and given high pruning default, the displayed interaction networks are clean and smooth under rotations, dragging, etc.
 
 ---
 
