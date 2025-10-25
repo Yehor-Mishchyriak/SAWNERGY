@@ -669,7 +669,7 @@ class RINBuilder:
         molecule_of_interest: int,
         frame_range: tuple[int, int] | None = None,
         frame_batch_size: int = -1,
-        prune_low_energies_frac: float = 0.3,
+        prune_low_energies_frac: float = 0.85,
         output_path: str | Path | None = None,
         keep_prenormalized_energies: bool = True,
         *,
