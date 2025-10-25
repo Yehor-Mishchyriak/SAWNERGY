@@ -319,6 +319,9 @@ def build_line_segments(
     kept = edge_weights >= thresh
     rows, cols = rows[kept], cols[kept]
 
+    nz = weights[rows, cols] > 0.0
+    rows, cols = rows[nz], cols[nz]
+
     if rows.size == 0:
         _logger.debug("build_line_segments: no edges kept after threshold; returning empties.")
         return (np.empty((0, 2, 3), dtype=float),
