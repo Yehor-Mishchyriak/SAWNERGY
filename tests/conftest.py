@@ -527,3 +527,30 @@ def timeaware_walks_archive_path(
     finally:
         w.close()
     return out_path
+
+@pytest.fixture
+def patched_embedding_visualizer(monkeypatch):
+    from sawnergy.embedding import visualizer as emb_vis_module
+
+    def fake_init(self, EMB_path: str | Path, *_, **__):
+        # Load embeddings exactly like the real class does
+        with sawnergy_util.ArrayStorage(EMB_path, mode="r") as storage:
+            name = storage.get_attr("frame_embeddings_name")
+            self.E = storage.read(name, slice(None))
+        if self.E.ndim != 3:
+            raise ValueError(f"Expected embeddings of shape (T,N,D); got {self.E.shape}")
+        self.T, self.N, self.D = map(int, self.E.shape)
+
+        # Wire the same dummy plotting objects used for the RIN visualizer
+        self._fig = _DummyFigure()
+        self._ax = _DummyAxes()
+        self._scatter = _DummyScatter()
+        self._marker_size = 30.0
+        self._init_elev = 20.0
+        self._init_azim = -60.0
+        self.default_node_color = "#cccccc"
+        self._residue_norm = _DummyNormalize()
+        self._plt = _DummyPlt()
+
+    monkeypatch.setattr(emb_vis_module.Visualizer, "__init__", fake_init)
+    return None
