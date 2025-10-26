@@ -107,7 +107,7 @@ class Visualizer:
         visualizer_util.ensure_backend(show)
         import matplotlib.pyplot as plt
         self._plt = plt
-    # ---------- WARM UP MPL ------------ #
+        # ---------- WARM UP MPL ------------ #
         _logger.debug("Visualizer.__init__ start | RIN_path=%s, figsize=%s, node_size=%s, edge_width=%s, depthshade=%s, antialiased=%s, init_view=(%s,%s)",
                       RIN_path, figsize, node_size, edge_width, depthshade, antialiased, init_elev, init_azim)
         if Visualizer.no_instances:
@@ -116,7 +116,7 @@ class Visualizer:
         else:
             _logger.debug("Skipping warm-start (no_instances=False).")
     
-    # ---------- LOAD THE DATA ---------- #
+        # ---------- LOAD THE DATA ---------- #
         with sawnergy_util.ArrayStorage(RIN_path, mode="r") as storage:
             com_name = storage.get_attr("com_name")
             attr_energies_name = storage.get_attr("attractive_energies_name")
@@ -135,7 +135,7 @@ class Visualizer:
         self.N = np.size(self.COM_coords[0], axis=0)
         _logger.debug("Computed N=%d", self.N)
 
-    # - SET UP THE CANVAS AND THE AXES - #
+        # - SET UP THE CANVAS AND THE AXES - #
         self._fig = plt.figure(figsize=figsize, num="SAWNERGY")
         self._ax  = self._fig.add_subplot(111, projection="3d")
         self._fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
@@ -145,14 +145,14 @@ class Visualizer:
         self._ax.set_axis_off()
         _logger.debug("Figure and 3D axes initialized.")
 
-    # ------ SET UP PLOT ELEMENTS ------ #
+        # ------ SET UP PLOT ELEMENTS ------ #
         self._scatter: PathCollection  = self._ax.scatter([], [], [], s=node_size, depthshade=depthshade, edgecolors="none")
         self._attr: Line3DCollection   = Line3DCollection(np.empty((0,2,3)), linewidths=edge_width, antialiased=antialiased)
         self._repuls: Line3DCollection = Line3DCollection(np.empty((0,2,3)), linewidths=edge_width, antialiased=antialiased)
         self._ax.add_collection3d(self._attr); self._ax.add_collection3d(self._repuls) # set pointers to the attractive and repulsive collections
         _logger.debug("Artists created | scatter(empty), attr_lines(empty), repuls_lines(empty).")
 
-    # ---------- HELPER FIELDS --------- #
+        # ---------- HELPER FIELDS --------- #
         # NOTE: 'under the hood' everything is 0-base indexed,
         # BUT, from the API point of view, the indexing is 1-base,
         # because amino acid residues are 1-base indexed.
@@ -160,7 +160,7 @@ class Visualizer:
         self.default_node_color = default_node_color
         _logger.debug("Helper fields set | residue_norm=[0,%d], default_node_color=%s", self.N-1, self.default_node_color)
 
-    # DISALLOW MPL WARM-UP IN THE FUTURE
+        # DISALLOW MPL WARM-UP IN THE FUTURE
         Visualizer.no_instances = False
         _logger.debug("Visualizer.no_instances set to False.")
 
