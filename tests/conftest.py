@@ -263,17 +263,7 @@ class _StubSGNS:
         self.seed = 0 if seed is None else int(seed)
         self._embeddings = np.zeros((V, D), dtype=np.float32)
 
-    def fit(
-        self,
-        centers: np.ndarray,
-        contexts: np.ndarray,
-        num_epochs: int,
-        batch_size: int,
-        num_negative_samples: int,
-        noise_dist: np.ndarray,
-        shuffle_data: bool,
-        lr_step_per_batch: bool,
-    ):
+    def fit(self, *_, **__):
         rng = np.random.default_rng(self.seed)
         base = rng.random()
         values = np.linspace(0.0, 1.0, self.D, dtype=np.float32)
@@ -290,7 +280,7 @@ def patched_sgns(monkeypatch):
     monkeypatch.setattr(
         embedder_module.Embedder,
         "_get_SGNS_constructor_from",
-        staticmethod(lambda base: _StubSGNS),
+        staticmethod(lambda base, objective: _StubSGNS),
     )
     return _StubSGNS
 

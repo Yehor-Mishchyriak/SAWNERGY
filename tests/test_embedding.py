@@ -124,7 +124,6 @@ def test_sgns_pureml_smoke(monkeypatch):
     centers = np.array([0, 1, 2, 3], dtype=np.int64)
     contexts = np.array([1, 2, 3, 0], dtype=np.int64)
     negatives = np.array([[2, 3], [3, 0], [0, 1], [1, 2]], dtype=np.int64)
-    noise = np.full(model.V, 1 / model.V, dtype=np.float64)
 
     def _loss(model_obj):
         pos_logits, neg_logits = model_obj.predict(
@@ -149,7 +148,10 @@ def test_sgns_pureml_smoke(monkeypatch):
         model.lr_sched.step()
     after = _loss(model)
     assert after <= before
-    embeddings = model.embeddings
+
+    # Prefer avg_embeddings when present; fall back to embeddings.
+    embeddings = getattr(model, "avg_embeddings", getattr(model, "embeddings", None))
+    assert embeddings is not None
     assert np.isfinite(embeddings).all()
 
 
@@ -199,5 +201,86 @@ def test_sgns_torch_smoke():
     )
     after = _loss(model)
     assert after <= before
-    weights = model.embeddings
+
+    weights = getattr(model, "avg_embeddings", getattr(model, "embeddings", None))
+    assert weights is not None
     assert np.isfinite(weights).all()
+
+
+def test_sg_pureml_smoke(monkeypatch):
+    """Plain SG (full softmax) with PureML — loss drops, embeddings finite."""
+    pureml = pytest.importorskip("pureml")
+    Tensor = pureml.machinery.Tensor
+    CCE = pureml.losses.CCE
+    one_hot = pureml.training_utils.one_hot
+    optim_cls = getattr(pureml.optimizers, "Adam", None)
+    if optim_cls is None:
+        pytest.skip("pureml optim.Adam unavailable")
+
+    from sawnergy.embedding.SGNS_pml import SG_PureML
+
+    if getattr(SG_PureML, "__call__", None) is not SG_PureML.predict:
+        monkeypatch.setattr(SG_PureML, "__call__", SG_PureML.predict)
+
+    model = SG_PureML(
+        V=5, D=4, seed=123,
+        optim=optim_cls, optim_kwargs=dict(lr=1e-2),
+        lr_sched=None, lr_sched_kwargs=None,
+        device=None,
+    )
+    rng = np.random.default_rng(0)
+    centers  = rng.integers(0, 5, size=20, dtype=np.int64)
+    contexts = rng.integers(0, 5, size=20, dtype=np.int64)
+
+    def _loss(m):
+        logits = m(Tensor(centers))
+        y = one_hot(5, label=Tensor(contexts))
+        return float(CCE(y, logits, from_logits=True).numpy())
+
+    before = _loss(model)
+    model.fit(
+        centers, contexts,
+        num_epochs=3, batch_size=5,
+        shuffle_data=False, lr_step_per_batch=False,
+    )
+    after = _loss(model)
+    assert after <= before
+    W = getattr(model, "avg_embeddings", getattr(model, "embeddings", None))
+    assert W is not None
+    assert np.isfinite(W).all()
+
+
+def test_sg_torch_smoke():
+    """Plain SG (full softmax) with Torch — loss drops, embeddings finite."""
+    torch = pytest.importorskip("torch")
+    from sawnergy.embedding.SGNS_torch import SG_Torch
+    optim_cls = getattr(torch.optim, "Adam", None)
+    if optim_cls is None:
+        pytest.skip("torch optim.Adam unavailable")
+
+    model = SG_Torch(
+        V=5, D=4, seed=123,
+        optim=optim_cls, optim_kwargs=dict(lr=1e-2),
+        lr_sched=None, lr_sched_kwargs=None,
+        device=None,
+    )
+    rng = np.random.default_rng(0)
+    centers  = torch.as_tensor(rng.integers(0, 5, size=20), dtype=torch.long)
+    contexts = torch.as_tensor(rng.integers(0, 5, size=20), dtype=torch.long)
+
+    cce = torch.nn.CrossEntropyLoss(reduction="mean")
+    def _loss(m):
+        logits = m(centers)
+        return float(cce(logits, contexts).item())
+
+    before = _loss(model)
+    model.fit(
+        centers.numpy(), contexts.numpy(),
+        num_epochs=3, batch_size=5,
+        shuffle_data=False, lr_step_per_batch=False,
+    )
+    after = _loss(model)
+    assert after <= before
+    W = getattr(model, "avg_embeddings", getattr(model, "embeddings", None))
+    assert W is not None
+    assert np.isfinite(W).all()
