@@ -8,6 +8,8 @@ import matplotlib as mpl
 from pathlib import Path
 from typing import Sequence
 import logging
+
+# local
 from ..visual import visualizer_util
 from .. import sawnergy_util
 
@@ -22,7 +24,7 @@ _logger = logging.getLogger(__name__)
 # *----------------------------------------------------*
 
 def _safe_svd_pca(X: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
-    """Compute k-dim PCA via SVD. Returns (proj, components)."""
+    """Compute k principal directions via SVD and project onto them."""
     if X.ndim != 2:
         raise ValueError(f"PCA expects 2D array (N, D); got {X.shape}")
     _, D = X.shape
@@ -62,21 +64,21 @@ def _set_equal_axes_3d(ax, xyz: np.ndarray, *, padding: float = 0.05) -> None:
 # *----------------------------------------------------*
 
 class Visualizer:
-    """2D/3D PCA visualizer for per-frame embeddings (API aligned with RIN Visualizer)."""
+    """3D PCA visualizer for per-frame embeddings"""
 
     no_instances: bool = True
 
     def __init__(
         self,
         EMB_path: str | Path,
-        *,
-        show: bool = False,
-        figsize: tuple[float, float] = (8.0, 6.0),
-        init_elev: float = 20.0,
-        init_azim: float = -60.0,
+        figsize: tuple[int, int] = (9, 7),
         default_node_color: str = visualizer_util.GRAY,
+        depthshade: bool = False,
         antialiased: bool = False,
-        depthshade: bool = False
+        init_elev: float = 35,
+        init_azim: float = 45,
+        *,
+        show: bool = False
     ) -> None:
         # Backend & pyplot
         visualizer_util.ensure_backend(show)
@@ -92,7 +94,7 @@ class Visualizer:
         # Load embeddings archive
         EMB_path = Path(EMB_path)
         with sawnergy_util.ArrayStorage(EMB_path, mode="r") as storage:
-            name = storage.get_attr("frame_embeddings_name") or "FRAME_EMBEDDINGS"
+            name = storage.get_attr("frame_embeddings_name")
             E = storage.read(name, slice(None))
         if E.ndim != 3:
             raise ValueError(f"Expected embeddings of shape (T,N,D); got {E.shape}")
@@ -105,9 +107,9 @@ class Visualizer:
 
         # Figure / axes / artists
         self._fig = self._plt.figure(figsize=figsize)
-        self._ax = None   # type: ignore
-        self._scatter = None  # type: ignore
-        self._marker_size = 30.0  # internal default, consistent dot size
+        self._ax = None
+        self._scatter = None
+        self._marker_size = 30.0
         self._init_elev = init_elev
         self._init_azim = init_azim
         self.default_node_color = default_node_color
@@ -135,7 +137,11 @@ class Visualizer:
             pass
 
     def _project3(self, X: np.ndarray) -> np.ndarray:
-        """3D PCA projection; if D<3, fall back to 2D and pad Z=0."""
+        """Return a 3D PCA projection of embeddings (always 3 coordinates).
+
+        If the embedding dimensionality D < 3, the remaining coordinate(s) are set to 0
+        so that the returned array still has shape (N, 3).
+        """
         k = 3 if X.shape[1] >= 3 else 2
         P, _ = _safe_svd_pca(X, k)
         if k == 2:
@@ -181,7 +187,7 @@ class Visualizer:
         show_node_labels: bool = False,
         show: bool = False
     ) -> None:
-        """Render a single frame as a PCA-3D scatter (API mirrors RIN Visualizer)."""
+        """Render a single frame as a PCA **3D** scatter (matches RIN Visualizer API)."""
         frame0 = int(frame_id) - 1
         if not (0 <= frame0 < self.T):
             raise IndexError(f"frame_id out of range [1,{self.T}]")
