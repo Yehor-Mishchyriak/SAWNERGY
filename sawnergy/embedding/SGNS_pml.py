@@ -82,17 +82,7 @@ class SGNS_PureML(NN):
         )
 
     def _sample_neg(self, B: int, K: int, dist: np.ndarray) -> np.ndarray:
-        if dist.ndim != 1 or dist.size != self.V:
-            raise ValueError(f"noise_dist must be 1-D with length {self.V}; got {dist.shape}")
-        p = np.asarray(dist, dtype=np.float64)
-        if np.any(p < 0):
-            raise ValueError("noise_dist has negative entries")
-        s = p.sum()
-        if not np.isfinite(s) or s <= 0:
-            raise ValueError("noise_dist must have positive finite sum")
-        if abs(s - 1.0) > 1e-6:
-            p = p / s
-        return self._rng.choice(self.V, size=(B, K), replace=True, p=p)
+        return self._rng.choice(self.V, size=(B, K), replace=True, p=dist)
 
     def predict(self, center: Tensor, pos: Tensor, neg: Tensor) -> tuple[Tensor, Tensor]:
         """Compute positive/negative logits for SGNS.
@@ -127,8 +117,19 @@ class SGNS_PureML(NN):
             "SGNS_PureML fit: epochs=%d batch=%d negatives=%d shuffle=%s",
             num_epochs, batch_size, num_negative_samples, shuffle_data
         )
-        data = TensorDataset(centers, contexts)
 
+        if noise_dist.ndim != 1 or noise_dist.size != self.V:
+            raise ValueError(f"noise_dist must be 1-D with length {self.V}; got {noise_dist.shape}")
+        dist = np.asarray(noise_dist, dtype=np.float64)
+        if np.any(dist < 0):
+            raise ValueError("noise_dist has negative entries")
+        s = dist.sum()
+        if not np.isfinite(s) or s <= 0:
+            raise ValueError("noise_dist must have positive finite sum")
+        if abs(s - 1.0) > 1e-6:
+            dist = dist / s
+
+        data = TensorDataset(centers, contexts)
         for epoch in range(1, num_epochs + 1):
             epoch_loss = 0.0
             batches = 0
@@ -136,7 +137,7 @@ class SGNS_PureML(NN):
             for cen, pos in DataLoader(data, batch_size=batch_size, shuffle=shuffle_data):
                 B = cen.data.shape[0] if isinstance(cen, Tensor) else len(cen)
 
-                neg_idx_np = self._sample_neg(B, num_negative_samples, noise_dist)
+                neg_idx_np = self._sample_neg(B, num_negative_samples, dist)
                 neg = Tensor(neg_idx_np, requires_grad=False)
                 x_pos_logits, x_neg_logits = self(cen, pos, neg)
 
