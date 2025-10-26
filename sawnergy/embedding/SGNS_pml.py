@@ -335,6 +335,7 @@ class SG_PureML(NN):
             mean_loss = epoch_loss / max(batches, 1)
             _logger.info("Epoch %d/%d mean_loss=%.6f", epoch, num_epochs, mean_loss)
 
+    @property
     def in_embeddings(self) -> np.ndarray:
         """Input embeddings matrix `W_in` as `(V, D)` (copy, read-only)."""
         W = self.in_emb.parameters[0]              # (V, D)
@@ -345,6 +346,7 @@ class SG_PureML(NN):
             )
         return W.numpy(copy=True, readonly=True)   # (V, D)
 
+    @property
     def out_embeddings(self) -> np.ndarray:
         """Output embeddings matrix `W_outᵀ` as `(V, D)` (copy, read-only).
         (`out_emb.parameters[0]` is `(D, V)`, so we transpose.)"""
