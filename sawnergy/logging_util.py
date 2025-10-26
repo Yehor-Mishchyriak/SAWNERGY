@@ -6,7 +6,7 @@ from datetime import datetime
 
 def configure_logging(
     logs_dir: Path | str,
-    file_level: int = logging.DEBUG,
+    file_level: int = logging.WARNING,
     console_level: int = logging.WARNING
 ) -> None:
     """
