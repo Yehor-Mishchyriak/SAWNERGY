@@ -27,11 +27,12 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 ## v1.0.7 — What’s new:
 - **Added plain SkipGram model**
   - Now, the user can choose if they want to apply the negative sampling technique (two binary classifiers) or train a single classifier over the vocabulary (full softmax). For more detail, see: [node2vec](https://arxiv.org/pdf/1607.00653), [word2vec](https://arxiv.org/pdf/1301.3781), and [negative_sampling](https://arxiv.org/pdf/1402.3722).
-
 - **Set a harsher default for low interaction energies pruning during RIN construction**
   - Now we zero out 85% of the lowest interaction energies as opposed to the past 30% default, leading to more meaningful embeddings.
 - **BUG FIX: Visualizer**
   - Previously, the visualizer would silently draw edges of 0 magnitude, meaning they were actually being drawn but were invisible due to full transparency and 0 width. As a result, the displayed image / animation would be very laggy. Now, this was fixed, and given high pruning default, the displayed interaction networks are clean and smooth under rotations, dragging, etc.
+- **New Embedding Visualizer (3D)**
+  - New lightweight viewer for per-frame embeddings that projects embeddings with PCA to a **3D** scatter. Supports the same node coloring semantics, optional node labels, and the same antialiasing/depthshade controls. Works in headless setups using the same backend guard and uses a blocking `show=True` for scripts.
 
 ---
 
@@ -231,6 +232,13 @@ v.build_frame(1,
 ```
 
 `Visualizer` lazily loads datasets and works even in headless environments (falls back to the `Agg` backend).
+
+```python
+from sawnergy.embedding import Visualizer
+
+viz = sawnergy.embedding.Visualizer("./EMBEDDINGS_demo.zip")
+viz.build_frame(1, show=True)
+```
 
 ---
 
