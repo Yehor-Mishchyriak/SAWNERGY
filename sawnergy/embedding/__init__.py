@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .embedder import Embedder
+from .visualizer import Visualizer
 
 def __getattr__(name: str):
     """Lazily expose optional backends."""
@@ -49,8 +50,9 @@ def __getattr__(name: str):
 
 __all__ = [
     "Embedder",
+    "Visualizer",
     "SGNS_PureML",
     "SGNS_Torch",
     "SG_PureML",
-    "SG_Torch",
+    "SG_Torch"
 ]
