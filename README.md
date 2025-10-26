@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 
 A toolkit for transforming molecular dynamics (MD) trajectories into rich graph representations, sampling
-random and self-avoiding walks, learning node embeddings, and visualising residue interaction networks (RINs). SAWNERGY
+random and self-avoiding walks, learning node embeddings, and visualizing residue interaction networks (RINs). SAWNERGY
 keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2vec approach) — inside Python, backed by efficient Zarr-based archives and optional GPU acceleration.
 
 ---
@@ -16,8 +16,9 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
    pip install sawnergy
    ```
 
+> **Optional:** For GPU training, install PyTorch separately (e.g., `pip install torch`).
 > **Note:** RIN building requires `cpptraj` (AmberTools). Ensure it is discoverable via `$PATH` or the `CPPTRAJ`
-> environment variable.
+> environment variable. Probably the easiest solution: install AmberTools via conda, activate the environment, and SAWNERGY will find cpptraj executable on its own, so just run your code and don't worry about it.
 
 ---
 
@@ -25,11 +26,12 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 ## v1.0.7 — What’s new:
 - **Added plain SkipGram model**
-  - Now, the user can choose if they want to apply the negative sampling technique, which implies training two binary classifiers, or train a signle classifier over the vocabulary (for more detail, please see: [node2vec](https://arxiv.org/pdf/1607.00653), [word2vec](https://arxiv.org/pdf/1301.3781), and [negative_sampling](https://arxiv.org/pdf/1402.3722)).
+  - Now, the user can choose if they want to apply the negative sampling technique (two binary classifiers) or train a single classifier over the vocabulary (full softmax). For more detail, see: [node2vec](https://arxiv.org/pdf/1607.00653), [word2vec](https://arxiv.org/pdf/1301.3781), and [negative_sampling](https://arxiv.org/pdf/1402.3722).
+
 - **Set a harsher default for low interaction energies pruning during RIN construction**
-  - Now we zero out 85% of the lowest interaction energies as opposed to the past 30% defualt, leading to more meaningful embeddings.
+  - Now we zero out 85% of the lowest interaction energies as opposed to the past 30% default, leading to more meaningful embeddings.
 - **BUG FIX: Visualizer**
-  - Previously, the visualizer would silently draw edges of 0 magnitude, meaning they were actually being drawn but were invisible due to full transperency and 0 width. As a result, the displayed image / animation would be very laggy. Now, this was fixed, and given high pruning default, the displayed interaction networks are clean and smooth under rotations, dragging, etc.
+  - Previously, the visualizer would silently draw edges of 0 magnitude, meaning they were actually being drawn but were invisible due to full transparency and 0 width. As a result, the displayed image / animation would be very laggy. Now, this was fixed, and given high pruning default, the displayed interaction networks are clean and smooth under rotations, dragging, etc.
 
 ---
 
@@ -37,9 +39,9 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 - **Bridge simulations and graph ML**: Convert raw MD trajectories into residue interaction networks ready for graph
   algorithms and downstream machine learning tasks.
-- **Deterministic, shareable artefacts**: Every stage produces compressed Zarr archives that contain both data and metadata so runs can be reproduced, shared, or inspected later.
-- **High-performance data handling**: Heavy arrays live in shared memory during walk sampling to allow parallel processing without serealization overhead; archives are written in chunked, compressed form for fast read/write.
-- **Flexible embedding backends**: Train skip-gram with negative sampling (SGNS) models using either PureML or PyTorch.
+- **Deterministic, shareable artifacts**: Every stage produces compressed Zarr archives that contain both data and metadata so runs can be reproduced, shared, or inspected later.
+- **High-performance data handling**: Heavy arrays live in shared memory during walk sampling to allow parallel processing without serialization overhead; archives are written in chunked, compressed form for fast read/write.
+- **Flexible objectives & backends**: Train Skip-Gram with **negative sampling** (`objective="sgns"`) or **plain Skip-Gram** (`objective="sg"`), using either **PureML** (default) or **PyTorch**.
 - **Visualization out of the box**: Plot and animate residue networks without leaving Python, using the data produced by RINBuilder
 
 ---
@@ -80,9 +82,9 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 * Wraps the AmberTools `cpptraj` executable to:
   - compute per-frame electrostatic (EMAP) and van der Waals (VMAP) energy matrices at the atomic level,
   - project atom–atom interactions to residue–residue interactions using compositional masks,
-  - prune, symmetrise, remove self-interactions, and L1-normalise the matrices,
-  - compute per-residue centres of mass (COM) over the same frames.
-* Outputs a compressed Zarr archive with transition matrices, optional prenormalised energies, COM snapshots, and rich
+  - prune, symmetrize, remove self-interactions, and L1-normalise the matrices,
+  - compute per-residue centers of mass (COM) over the same frames.
+* Outputs a compressed Zarr archive with transition matrices, optional pre-normalized energies, COM snapshots, and rich
   metadata (frame range, pruning quantile, molecule ID, etc.).
 * Supports parallel `cpptraj` execution, batch processing, and keeps temporary stores tidy via
   `ArrayStorage.compress_and_cleanup`.
@@ -92,7 +94,7 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 * Opens RIN archives, resolves dataset names from attributes, and renders nodes plus attractive/repulsive edge bundles
   in 3D using Matplotlib.
 * Allows both static frame visualization and trajectory animation.
-* Handles backend selection (`Agg` fallback in headless environments) and offers convenient colour palettes via
+* Handles backend selection (`Agg` fallback in headless environments) and offers convenient color palettes via
   `visualizer_util`.
 
 ### `sawnergy.walks.Walker`
@@ -129,12 +131,13 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 |---|---|---|
 | **RIN** | `ATTRACTIVE_transitions` → **(T, N, N)**, float32  •  `REPULSIVE_transitions` → **(T, N, N)**, float32 (optional)  •  `ATTRACTIVE_energies` → **(T, N, N)**, float32 (optional)  •  `REPULSIVE_energies` → **(T, N, N)**, float32 (optional)  •  `COM` → **(T, N, 3)**, float32 | `time_created` (ISO) • `com_name` = `"COM"` • `molecule_of_interest` (int) • `frame_range` = `(start, end)` inclusive • `frame_batch_size` (int) • `prune_low_energies_frac` (float in [0,1]) • `attractive_transitions_name` / `repulsive_transitions_name` (dataset names or `None`) • `attractive_energies_name` / `repulsive_energies_name` (dataset names or `None`) |
 | **Walks** | `ATTRACTIVE_RWs` → **(T, N·num_RWs, L+1)**, int32 (optional)  •  `REPULSIVE_RWs` → **(T, N·num_RWs, L+1)**, int32 (optional)  •  `ATTRACTIVE_SAWs` → **(T, N·num_SAWs, L+1)**, int32 (optional)  •  `REPULSIVE_SAWs` → **(T, N·num_SAWs, L+1)**, int32 (optional)  <br/>_Note:_ node IDs are **1-based**.| `time_created` (ISO) • `seed` (int) • `rng_scheme` = `"SeedSequence.spawn_per_batch_v1"` • `num_workers` (int) • `in_parallel` (bool) • `batch_size_nodes` (int) • `num_RWs` / `num_SAWs` (ints) • `node_count` (N) • `time_stamp_count` (T) • `walk_length` (L) • `walks_per_node` (int) • `attractive_RWs_name` / `repulsive_RWs_name` / `attractive_SAWs_name` / `repulsive_SAWs_name` (dataset names or `None`) • `walks_layout` = `"time_leading_3d"` |
-| **Embeddings** | `FRAME_EMBEDDINGS` → **(frames_written, vocab_size, D)**, typically float32 | `time_created` (ISO) • `seed` (int) • `rng_scheme` = `"SeedSequence.spawn_per_frame_v1"` • `source_walks_path` (str) • `model_base` = `"torch"` or `"pureml"` • `rin_type` = `"attr"` or `"repuls"` • `using_mode` = `"RW"|"SAW"|"merged"` • `window_size` (int) • `alpha` (float; noise exponent) • `dimensionality` = D • `num_negative_samples` (int) • `num_epochs` (int) • `batch_size` (int) • `shuffle_data` (bool) • `frames_written` (int) • `vocab_size` (int) • `frame_count` (int) • `embedding_dtype` (str) • `frame_embeddings_name` = `"FRAME_EMBEDDINGS"` • `arrays_per_chunk` (int) • `compression_level` (int) |
+| **Embeddings** | `FRAME_EMBEDDINGS` → **(frames_written, vocab_size, D)**, typically float32 | `time_created` (ISO) • `seed` (int) • `rng_scheme` = `"SeedSequence.spawn_per_frame_v1"` • `source_walks_path` (str) • `model_base` = `"torch"` or `"pureml"` • `rin_type` = `"attr"` or `"repuls"` • `using_mode` = `"RW"|"SAW"|"merged"` • `window_size` (int) • `alpha` (float; noise exponent) • `dimensionality` = D • `num_negative_samples` (int) • `num_epochs` (int) • `batch_size` (int) • `shuffle_data` (bool) • `frames_written` (int) • `vocab_size` (int) • `frame_count` (int) • `embedding_dtype` (str) • `frame_embeddings_name` = `"FRAME_EMBEDDINGS"` • `arrays_per_chunk` (int) • `compression_level` (int) • `objective` = `"sgns"` or `"sg"` |
 
 **Notes**
 
 - In **RIN**, `T` equals the number of frame **batches** written (i.e., `frame_range` swept in steps of `frame_batch_size`). `ATTRACTIVE/REPULSIVE_energies` are **pre-normalised** absolute energies (written only when `keep_prenormalized_energies=True`), whereas `ATTRACTIVE/REPULSIVE_transitions` are the **row-wise L1-normalised** versions used for sampling.
 - All archives are Zarr v3 groups. ArrayStorage also maintains per-block metadata in root attrs: `array_chunk_size_in_block`, `array_shape_in_block`, and `array_dtype_in_block` (dicts keyed by dataset name). You’ll see these in every archive.
+- In **Embeddings**, `alpha` and `num_negative_samples` apply to **SGNS** only and are ignored for `objective="sg"`.
 
 ---
 
@@ -159,7 +162,7 @@ rin_builder.build_rin(
     molecule_of_interest=1,
     frame_range=(1, 100),
     frame_batch_size=10,
-    prune_low_energies_frac=0.3,
+    prune_low_energies_frac=0.85,
     output_path=rin_path,
     include_attractive=True,
     include_repulsive=False,
@@ -188,6 +191,7 @@ embeddings_path = embedder.embed_all(
     RIN_type="attr",
     using="merged",
     window_size=4,
+    objective="sgns",
     num_negative_samples=5,
     num_epochs=5,
     batch_size=1024,
@@ -210,12 +214,12 @@ print("Embeddings written to", embeddings_path)
 
 ---
 
-## Visualisation
+## Visualization
 
 ```python
 from sawnergy.visual import Visualizer
 
-v = sawnergy.visual.Visualizer("./RIN_demo.zip")
+v = Visualizer("./RIN_demo.zip")
 v.build_frame(1,
     node_colors="rainbow",
     displayed_nodes="ALL",
