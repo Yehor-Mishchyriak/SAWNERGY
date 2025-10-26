@@ -143,9 +143,10 @@ class SGNS_PureML(NN):
                 y_pos = Tensor(np.ones_like(x_pos_logits.numpy(copy=False)), requires_grad=False)
                 y_neg = Tensor(np.zeros_like(x_neg_logits.numpy(copy=False)), requires_grad=False)
 
+                K = int(neg.data.shape[1])
                 loss = (
                     BCE(y_pos, x_pos_logits, from_logits=True)
-                    + BCE(y_neg, x_neg_logits, from_logits=True)
+                    + K*BCE(y_neg, x_neg_logits, from_logits=True)
                 )
 
                 self.optim.zero_grad()
@@ -169,11 +170,21 @@ class SGNS_PureML(NN):
     @property
     def in_embeddings(self) -> np.ndarray:
         W: Tensor = self.in_emb.parameters[0]   # (V, D)
+        if W.shape != (self.V, self.D):
+            raise RuntimeError(
+                "Wrong embedding matrix shape: "
+                "self.in_emb.parameters[0].shape != (V, D)"
+            )
         return W.numpy(copy=True, readonly=True)
 
     @property
     def out_embeddings(self) -> np.ndarray:
         W: Tensor = self.out_emb.parameters[0]  # (V, D)
+        if W.shape != (self.V, self.D):
+            raise RuntimeError(
+                "Wrong embedding matrix shape: "
+                "self.out_emb.parameters[0].shape != (V, D)"
+            )
         return W.numpy(copy=True, readonly=True)
 
     @property
@@ -323,21 +334,25 @@ class SG_PureML(NN):
             mean_loss = epoch_loss / max(batches, 1)
             _logger.info("Epoch %d/%d mean_loss=%.6f", epoch, num_epochs, mean_loss)
 
-    @property
     def in_embeddings(self) -> np.ndarray:
-        """Input embeddings matrix `W_in` of shape `(V, D)` (copy, read-only)."""
-        W = self.in_emb.parameters[0]  # (V, D)
-        return W.numpy(copy=True, readonly=True)
-    
-    @property
+        """Input embeddings matrix `W_in` as `(V, D)` (copy, read-only)."""
+        W = self.in_emb.parameters[0]              # (V, D)
+        if W.shape != (self.V, self.D):
+            raise RuntimeError(
+                "Wrong embedding matrix shape: "
+                "self.in_emb.parameters[0].shape != (V, D)"
+            )
+        return W.numpy(copy=True, readonly=True)   # (V, D)
+
     def out_embeddings(self) -> np.ndarray:
         """Output embeddings matrix `W_outᵀ` as `(V, D)` (copy, read-only).
-
-        Note:
-            `out_emb.parameters[0]` stores a weight of shape `(D, V)` internally
-            (Affine stores `W` as `(in_dim, out_dim)`), so we return its transpose.
-        """
+        (`out_emb.parameters[0]` is `(D, V)`, so we transpose.)"""
         W = self.out_emb.parameters[0]             # (D, V)
+        if W.shape != (self.D, self.V):
+            raise RuntimeError(
+                "Wrong embedding matrix shape: "
+                "self.out_emb.parameters[0].shape != (D, V)"
+            )
         return W.numpy(copy=True, readonly=True).T # (V, D)
     
     @property
