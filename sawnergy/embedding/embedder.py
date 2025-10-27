@@ -1,15 +1,5 @@
 from __future__ import annotations
 
-"""
-Embedding orchestration for Skip-Gram (SG) and Skip-Gram with Negative Sampling (SGNS).
-
-This module consumes attractive/repulsive walk corpora produced by the walker
-pipeline and trains per-frame embeddings using either the PyTorch or PureML
-implementations of SG/SGNS. The resulting embeddings can be persisted back into
-an ``ArrayStorage`` archive along with rich metadata describing the training
-configuration.
-"""
-
 # third-pary
 import numpy as np
 
@@ -36,10 +26,8 @@ class Embedder:
 
     def __init__(self,
                  WALKS_path: str | Path,
-                 base: Literal["torch", "pureml"],
                  *,
                  seed: int | None = None,
-                 objective: Literal["sgns", "sg"] = "sgns"
                 ) -> None:
         """Initialize the embedder and load walk tensors.
 
@@ -51,24 +39,20 @@ class Embedder:
                 ``None`` if that collection is absent), and the metadata
                 ``num_RWs``, ``num_SAWs``, ``node_count``, ``time_stamp_count``,
                 ``walk_length``.
-            base: Which SGNS backend to use, either ``"torch"`` or ``"pureml"``.
             seed: Optional seed for the embedder's RNG. If ``None``, a random
                 32-bit seed is chosen.
-            objective: Training objective, either ``"sgns"`` (negative sampling)
-                or ``"sg"`` (plain full-softmax Skip-Gram).
 
         Raises:
             ValueError: If required metadata is missing or any loaded walk array
                 has an unexpected shape.
             ImportError: If the requested backend is not installed.
-            NameError: If ``base`` is not one of ``{"torch","pureml"}``.
 
         Notes:
             - Walks in storage are 1-based (residue indexing). Internally, this
               class normalizes to 0-based indices for training utilities.
         """
         self._walks_path = Path(WALKS_path)
-        _logger.info("Initializing Embedder from %s (base=%s)", self._walks_path, base)
+        _logger.info("Initializing Embedder from %s", self._walks_path)
 
         # placeholders for optional walk collections
         self.attractive_RWs : np.ndarray | None = None
@@ -157,22 +141,13 @@ class Embedder:
         self.rng = np.random.default_rng(self._seed)
         _logger.info("RNG initialized from seed=%d", self._seed)
 
-        # MODEL HANDLE
-        self.model_base: Literal["torch", "pureml"] = base
-        self.objective: Literal["sgns", "sg"] = objective
-        self.model_constructor = self._get_SGNS_constructor_from(base, objective)
-        _logger.info(
-            "SG backend resolved: %s (objective=%s)",
-            getattr(self.model_constructor, "__name__", repr(self.model_constructor)), self.objective
-        )
-
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=- PRIVATE -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
     # HELPERS:
 
     @staticmethod
-    def _get_SGNS_constructor_from(base: Literal["torch", "pureml"],
-                                   objective: Literal["sgns", "sg"]):
+    def _get_NN_constructor_from(base: Literal["torch", "pureml"],
+                                 objective: Literal["sgns", "sg"]):
         """Resolve the SG/SGNS implementation class for the selected backend."""
         if base == "torch":
             try:
@@ -333,61 +308,23 @@ class Embedder:
             frame_id: int,
             RIN_type: Literal["attr", "repuls"],
             using: Literal["RW", "SAW", "merged"],
-            window_size: int,
-            num_negative_samples: int,
             num_epochs: int,
-            batch_size: int,
+            negative_sampling: bool = True,
+            window_size: int = 2,
+            num_negative_samples: int = 10,
+            batch_size: int = 1024,
             *,
             lr_step_per_batch: bool = False,
             shuffle_data: bool = True,
             dimensionality: int = 128,
             alpha: float = 0.75,
             device: str | None = None,
-            sgns_kwargs: dict[str, object] | None = None,
+            model_base: Literal["torch", "pureml"] = "pureml",
+            model_kwargs: dict[str, object] | None = None,
             kind: Literal["in", "out", "avg"] = "in",
-            _seed: int | None = None,
-            objective: Literal["sgns", "sg"] | None = None
+            _seed: int | None = None
             ) -> np.ndarray:
-        """Train embeddings for a single frame and return the input embedding matrix.
-
-        Args:
-            frame_id: 1-based frame index to train on.
-            RIN_type: Interaction channel to use: ``"attr"`` (attractive) or
-                ``"repuls"`` (repulsive).
-            using: Which walk collections to include: ``"RW"``, ``"SAW"``, or
-                ``"merged"`` (concatenates both if available).
-            window_size: Symmetric skip-gram window size ``k``.
-            num_negative_samples: Number of negative samples per positive pair.
-                Ignored when ``objective="sg"``.
-            num_epochs: Number of passes over the pair dataset.
-            batch_size: Mini-batch size for training.
-            shuffle_data: Whether to shuffle pairs each epoch.
-            dimensionality: Embedding dimensionality ``D``.
-            alpha: Noise distribution exponent (``Pn ∝ f^alpha``).
-            device: Optional device string for the Torch backend (e.g., ``"cuda"``).
-            sgns_kwargs: Extra keyword arguments forwarded to the backend SGNS
-                constructor. For PureML, required keys are:
-                ``{"optim", "optim_kwargs"}``; ``lr_sched`` is optional, but if
-                provided then ``lr_sched_kwargs`` must also be provided.
-            kind: Which embedding matrix to return: ``"in"``, ``"out"``, or ``"avg"``.
-            _seed: Optional child seed for this frame's model initialization.
-            objective: Training objective override for this call (``"sgns"`` or
-                ``"sg"``). If ``None``, uses the value set at construction.
-
-        Returns:
-            np.ndarray: Learned embedding matrix (selected by ``kind``) of shape ``(V, D)``.
-
-        Raises:
-            ValueError: If requested walks are missing, if no training pairs are
-                generated, or if required ``sgns_kwargs`` for PureML are absent.
-            AttributeError: If the SGNS model does not expose embeddings via
-                ``.embeddings`` or ``.parameters[0]``.
-        """
-        _logger.info(
-            "Preparing frame %d (rin=%s using=%s window=%d neg=%d epochs=%d batch=%d)",
-            frame_id, RIN_type, using, window_size, num_negative_samples, num_epochs, batch_size
-        )
-
+        # ------------------ resolve training data -----------------
         if RIN_type == "attr":
             if self.attractive_RWs is None and self.attractive_SAWs is None:
                 raise ValueError("Attractive random walks are missing")
@@ -397,163 +334,89 @@ class Embedder:
                 raise ValueError("Repulsive random walks are missing")
             pairs, noise_probs = self._repulsive_corpus_and_prob(frame_id=frame_id, using=using, window_size=window_size, alpha=alpha)
         else:
-            raise ValueError(f"Unknown RIN_type: {RIN_type!r}")
-
+            raise NameError(f"Unknown RIN_type: {RIN_type!r}")
         if pairs.size == 0:
             raise ValueError("No training pairs generated for the requested configuration")
+        # ----------------------------------------------------------
 
+        # ---------------- construct training corpus ---------------
         centers  = pairs[:, 0].astype(np.int64, copy=False)
         contexts = pairs[:, 1].astype(np.int64, copy=False)
+        # ----------------------------------------------------------
 
-        model_kwargs: dict[str, object] = dict(sgns_kwargs or {})
-        if self.model_base == "pureml":
-            required = {"optim", "optim_kwargs"}
-            missing = required.difference(model_kwargs)
-            if missing:
-                raise ValueError(f"PureML backend requires {sorted(missing)} in sgns_kwargs.")
-            has_sched = ("lr_sched" in model_kwargs and model_kwargs["lr_sched"] is not None)
-            has_sched_kwargs = ("lr_sched_kwargs" in model_kwargs and model_kwargs["lr_sched_kwargs"] is not None)
-            if has_sched and not has_sched_kwargs:
-                raise ValueError("When providing lr_sched for PureML, you must also provide lr_sched_kwargs.")
+        # ------------ resolve model_constructor kwargs ------------
+        if (("lr_sched" in model_kwargs and model_kwargs.get("lr_sched", None) is not None)
+            and ("lr_sched_kwargs" in model_kwargs and model_kwargs.get("lr_sched_kwargs", None) is None)):
+            raise ValueError("When `lr_sched`, you must also provide `lr_sched_kwargs`.")
 
-        child_seed = int(self._seed if _seed is None else _seed)
-        model_kwargs.update({
+        constructor_kwargs: dict[str, object] = dict(model_kwargs or {})
+        constructor_kwargs.update({
             "V": self.vocab_size,
             "D": dimensionality,
-            "seed": child_seed
+            "seed": int(self._seed if _seed is None else _seed),
+            "device": device
         })
+        # ----------------------------------------------------------
 
-        if self.model_base == "torch" and device is not None:
-            model_kwargs["device"] = device
+        # --------------- resolve model constructor ----------------
+        model_constructor = self._get_NN_constructor_from(
+            model_base, objective=("sgns" if negative_sampling else "sg"))
+        # ----------------------------------------------------------
 
-        # Resolve objective (call-level override beats constructor default)
-        obj = self.objective if objective is None else objective
-        self.model_constructor = self._get_SGNS_constructor_from(self.model_base, obj)
-        self.model = self.model_constructor(**model_kwargs)
+        # ------------------ initialize the model ------------------
+        model = model_constructor(**constructor_kwargs)
+        # ----------------------------------------------------------
 
-        _logger.info(
-            "Training SG base=%s constructor=%s objective=%s frame=%d pairs=%d dim=%d epochs=%d batch=%d neg=%d shuffle=%s",
-            self.model_base,
-            getattr(self.model_constructor, "__name__", repr(self.model_constructor)),
-            obj,
-            frame_id,
-            pairs.shape[0],
-            dimensionality,
-            num_epochs,
-            batch_size,
-            num_negative_samples,
-            shuffle_data
-        )
-
-        if obj == "sgns":
-            self.model.fit(
-                centers,
-                contexts,
-                num_epochs,
-                batch_size,
-                num_negative_samples,
-                noise_probs,
-                shuffle_data,
-                lr_step_per_batch
+        # -------------------- fitting the data --------------------
+        model.fit(centers=centers,
+                  contexts=contexts, 
+                  num_epochs=num_epochs, 
+                  batch_size=batch_size,
+                  # -- optional: ----------------------------
+                  num_negative_samples=num_negative_samples, 
+                  noise_dist=noise_probs,
+                  # -----------------------------------------
+                  shuffle_data=shuffle_data, 
+                  lr_step_per_batch=lr_step_per_batch
             )
-        else:
-            self.model.fit(
-                centers,
-                contexts,
-                num_epochs,
-                batch_size,
-                shuffle_data,
-                lr_step_per_batch
-            )
+        # ----------------------------------------------------------
 
-        # Select embedding matrix by kind
-        if kind == "in":
-            embeddings = getattr(self.model, "in_embeddings", None)
-            if embeddings is None:
-                embeddings = getattr(self.model, "embeddings", None)
-                if embeddings is None:
-                    params = getattr(self.model, "parameters", None)
-                    if isinstance(params, tuple) and params:
-                        embeddings = params[0]
-        elif kind == "out":
-            embeddings = getattr(self.model, "out_embeddings", None)
-        else:  # "avg"
-            embeddings = getattr(self.model, "avg_embeddings", None)
+        # OUTPUT:
+        embeddings = (model.in_embeddings  if kind == "in" else  
+                      model.out_embeddings if kind == "out" else
+                      model.avg_embeddings if kind == "avg" else
+                      None
+                )
 
         if embeddings is None:
-            raise AttributeError(
-                "SG/SGNS model does not expose the requested embeddings: "
-                f"kind={kind!r}"
-            )
+            if kind not in ("in", "out", "avg"):
+                raise NameError(f"Unknown {kind} embeddings kind. Expected: one of ['in', 'out', 'avg']")
 
-        embeddings = np.asarray(embeddings)
-        _logger.info("Frame %d embeddings ready: shape=%s dtype=%s", frame_id, embeddings.shape, embeddings.dtype)
-        return embeddings
+        return np.asarray(embeddings)
 
     def embed_all(
         self,
         RIN_type: Literal["attr", "repuls"],
         using: Literal["RW", "SAW", "merged"],
-        window_size: int,
-        num_negative_samples: int,
         num_epochs: int,
-        batch_size: int,
+        negative_sampling: bool = True,
+        window_size: int = 2,
+        num_negative_samples: int = 10,
+        batch_size: int = 1024,
         *,
+        lr_step_per_batch: bool = False,
         shuffle_data: bool = True,
         dimensionality: int = 128,
         alpha: float = 0.75,
         device: str | None = None,
-        sgns_kwargs: dict[str, object] | None = None,
+        model_base: Literal["torch", "pureml"] = "pureml",
+        model_kwargs: dict[str, object] | None = None,
+        kind: Literal["in", "out", "avg"] = "in",
         output_path: str | Path | None = None,
         num_matrices_in_compressed_blocks: int = 20,
         compression_level: int = 3,
-        objective: Literal["sgns", "sg"] | None = None,
-        kind: Literal["in", "out", "avg"] = "in"):
-        """Train embeddings for all frames and persist them to compressed storage.
+        ):
 
-        Iterates through all frames (``1..frame_count``), trains an SGNS model
-        per frame using the configured backend, collects the resulting input
-        embeddings, and writes them into a new compressed ``ArrayStorage`` archive.
-
-        Args:
-            RIN_type: Interaction channel to use: ``"attr"`` or ``"repuls"``.
-            using: Walk collections: ``"RW"``, ``"SAW"``, or ``"merged"``.
-            window_size: Symmetric skip-gram window size ``k``.
-            num_negative_samples: Number of negative samples per positive pair.
-                Ignored when ``objective="sg"``.
-            num_epochs: Number of epochs for each frame.
-            batch_size: Mini-batch size used during training.
-            shuffle_data: Whether to shuffle pairs each epoch.
-            dimensionality: Embedding dimensionality ``D``.
-            alpha: Noise distribution exponent (``Pn ∝ f^alpha``).
-            device: Optional device string for Torch backend.
-            sgns_kwargs: Extra constructor kwargs for the SGNS backend (see
-                :meth:`embed_frame` for PureML requirements).
-            output_path: Destination path. If ``None``, a new file named
-                ``EMBEDDINGS_<timestamp>.zip`` is created next to the source
-                WALKS archive. If the provided path lacks a suffix, ``.zip`` is
-                appended.
-            num_matrices_in_compressed_blocks: Number of per-frame matrices to
-                store per compressed chunk in the output archive.
-            compression_level: Blosc Zstd compression level (0-9).
-            objective: Training objective for all frames (``"sgns"`` or ``"sg"``).
-                If ``None``, uses the value set at construction.
-            kind: Which embedding matrix to persist for each frame: ``"in"``,
-                ``"out"``, or ``"avg"``.
-
-        Returns:
-            str: Filesystem path to the written embeddings archive (``.zip``).
-
-        Raises:
-            ValueError: If configuration produces no pairs for a frame or if
-                PureML kwargs are incomplete.
-            RuntimeError: Propagated from storage operations on failure.
-
-        Notes:
-            - A deterministic child seed is spawned per frame from the master
-            seed using ``np.random.SeedSequence`` to ensure reproducibility
-            across runs.
-        """
         current_time = sawnergy_util.current_time()
         if output_path is None:
             output_path = self._walks_path.with_name(f"EMBEDDINGS_{current_time}").with_suffix(".zip")
@@ -562,39 +425,34 @@ class Embedder:
             if output_path.suffix == "":
                 output_path = output_path.with_suffix(".zip")
 
-        _logger.info(
-            "Embedding all frames -> %s | frames=%d dim=%d base=%s",
-            output_path, self.frame_count, dimensionality, self.model_base
-        )
-
         master_ss = np.random.SeedSequence(self._seed)
         child_seeds = master_ss.spawn(self.frame_count)
 
         embeddings = []
-        for frame_idx, seed_seq in enumerate(child_seeds, start=1):
+        for frame_id, seed_seq in enumerate(child_seeds, start=1):
             child_seed = int(seed_seq.generate_state(1, dtype=np.uint32)[0])
-            _logger.info("Processing frame %d/%d (child_seed=%d entropy=%d)", frame_idx, self.frame_count, child_seed, seed_seq.entropy)
             embeddings.append(
                 self.embed_frame(
-                    frame_idx,
+                    frame_id,
                     RIN_type,
                     using,
+                    num_epochs,
+                    negative_sampling,
                     window_size,
                     num_negative_samples,
-                    num_epochs,
                     batch_size,
+                    lr_step_per_batch=lr_step_per_batch,
                     shuffle_data=shuffle_data,
                     dimensionality=dimensionality,
                     alpha=alpha,
                     device=device,
-                    sgns_kwargs=sgns_kwargs,
-                    _seed=child_seed,
-                    objective=objective,
-                    kind=kind
+                    model_base=model_base,
+                    model_kwargs=model_kwargs,
+                    kind=kind,
+                    _seed=child_seed
                 )
             )
 
-        embeddings = [np.asarray(e) for e in embeddings]
         block_name = "FRAME_EMBEDDINGS"
         with sawnergy_util.ArrayStorage.compress_and_cleanup(output_path, compression_level=compression_level) as storage:
             storage.write(
@@ -602,31 +460,10 @@ class Embedder:
                 to_block_named=block_name,
                 arrays_per_chunk=num_matrices_in_compressed_blocks
             )
-            storage.add_attr("time_created", current_time)
-            storage.add_attr("seed", int(self._seed))
-            storage.add_attr("rng_scheme", "SeedSequence.spawn_per_frame_v1")
-            storage.add_attr("source_walks_path", str(self._walks_path))
-            storage.add_attr("model_base", self.model_base)
-            storage.add_attr("rin_type", RIN_type)
-            storage.add_attr("using_mode", using)
-            storage.add_attr("window_size", int(window_size))
-            storage.add_attr("alpha", float(alpha))
-            storage.add_attr("dimensionality", int(dimensionality))
-            storage.add_attr("num_negative_samples", int(num_negative_samples))
-            storage.add_attr("num_epochs", int(num_epochs))
-            storage.add_attr("batch_size", int(batch_size))
-            storage.add_attr("shuffle_data", bool(shuffle_data))
-            storage.add_attr("frames_written", int(len(embeddings)))
-            storage.add_attr("vocab_size", int(self.vocab_size))
-            storage.add_attr("frame_count", int(self.frame_count))
-            storage.add_attr("embedding_dtype", str(embeddings[0].dtype))
-            storage.add_attr("frame_embeddings_name", block_name)
-            storage.add_attr("arrays_per_chunk", int(num_matrices_in_compressed_blocks))
-            storage.add_attr("compression_level", int(compression_level))
-            storage.add_attr("objective", self.objective if objective is None else objective)
+            # ... add metadata
 
-        _logger.info("Embedding archive written to %s", output_path)
         return str(output_path)
+
 
 __all__ = ["Embedder"]
 
