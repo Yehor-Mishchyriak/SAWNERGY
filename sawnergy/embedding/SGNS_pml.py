@@ -6,7 +6,7 @@ from pureml.machinery import Tensor
 from pureml.layers import Embedding, Affine
 from pureml.losses import BCE, CCE
 from pureml.general_math import sum as t_sum
-from pureml.optimizers import Optim, LRScheduler
+from pureml.optimizers import Optim, LRScheduler, SGD
 from pureml.training_utils import TensorDataset, DataLoader, one_hot
 from pureml.base import NN
 
@@ -32,8 +32,8 @@ class SGNS_PureML(NN):
                 D: int,
                 *,
                 seed: int | None = None,
-                optim: Type[Optim],
-                optim_kwargs: dict,
+                optim: Type[Optim] = SGD,
+                optim_kwargs: dict | None,
                 lr_sched: Type[LRScheduler] | None = None,
                 lr_sched_kwargs: dict | None = None,
                 device: str | None = None):
@@ -42,15 +42,15 @@ class SGNS_PureML(NN):
             V: Vocabulary size (number of nodes).
             D: Embedding dimensionality.
             seed: Optional RNG seed for negative sampling.
-            optim: Optimizer class to instantiate.
-            optim_kwargs: Keyword arguments for the optimizer (required).
+            optim: Optimizer class to instantiate. Defaults to plain SGD.
+            optim_kwargs: Keyword arguments for the optimizer. Defaults to {"lr": 0.1}.
             lr_sched: Optional learning-rate scheduler class.
             lr_sched_kwargs: Keyword arguments for the scheduler (required if lr_sched is provided).
             device: Target device string (e.g. "cuda"); accepted for API parity, ignored by PureML.
         """
 
-        if optim_kwargs is None:
-            raise ValueError("optim_kwargs must be provided")
+        optim_kwargs = optim_kwargs or {"lr": 0.1}
+
         if lr_sched is not None and lr_sched_kwargs is None:
             raise ValueError("lr_sched_kwargs required when lr_sched is provided")
 
@@ -208,37 +208,29 @@ class SG_PureML(NN):
     """
 
     def __init__(self,
-                 V: int,
-                 D: int,
-                 *,
-                 seed: int | None = None,
-                 optim: Type[Optim],
-                 optim_kwargs: dict,
-                 lr_sched: Type[LRScheduler] | None = None,
-                 lr_sched_kwargs: dict | None = None,
-                 device: str | None = None):
+                V: int,
+                D: int,
+                *,
+                seed: int | None = None,
+                optim: Type[Optim] = SGD,
+                optim_kwargs: dict | None = None,
+                lr_sched: Type[LRScheduler] | None = None,
+                lr_sched_kwargs: dict | None = None,
+                device: str | None = None):
         """Initialize the plain Skip-Gram model (full softmax).
 
         Args:
             V: Vocabulary size (number of nodes/tokens).
             D: Embedding dimensionality.
             seed: Optional RNG seed (kept for API parity; not used in layer init).
-            optim: Optimizer class to instantiate (e.g., `Adam`, `SGD`).
-            optim_kwargs: Keyword arguments passed to the optimizer constructor.
+            optim: Optimizer class to instantiate. Defaults to plain SGD.
+            optim_kwargs: Keyword arguments for the optimizer. Defaults to {"lr": 0.1}.
             lr_sched: Optional learning-rate scheduler class.
-            lr_sched_kwargs: Keyword arguments for the scheduler
-                (required if `lr_sched` is provided).
-            device: Device string (e.g., `"cuda"`). Accepted for parity, ignored
-                by PureML (CPU-only).
-
-        Notes:
-            The encoder/decoder are implemented as:
-              • `in_emb = Affine(V, D)` (acts on a one-hot center index)
-              • `out_emb = Affine(D, V)`
-            so forward pass produces vocabulary-sized logits.
+            lr_sched_kwargs: Keyword arguments for the scheduler (required if lr_sched is provided).
+            device: Device string (e.g., "cuda"). Accepted for parity, ignored by PureML (CPU-only).
         """
-        if optim_kwargs is None:
-            raise ValueError("optim_kwargs must be provided")
+
+        optim_kwargs = optim_kwargs or {"lr": 0.1}
         if lr_sched is not None and lr_sched_kwargs is None:
             raise ValueError("lr_sched_kwargs required when lr_sched is provided")
 
@@ -249,9 +241,7 @@ class SG_PureML(NN):
         self.out_emb = Affine(self.D, self.V)
 
         self.seed = None if seed is None else int(seed)
-
-        # API compatibility: PureML is CPU-only
-        self.device = "cpu"
+        self.device = "cpu"  # API parity
 
         # optimizer / scheduler
         self.optim: Optim = optim(self.parameters, **optim_kwargs)
