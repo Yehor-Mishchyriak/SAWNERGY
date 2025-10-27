@@ -25,12 +25,12 @@ class SGNS_Torch:
     """PyTorch implementation of Skip-Gram with Negative Sampling."""
 
     def __init__(self,
-                 V: int,
-                 D: int,
-                 *,
+                V: int,
+                D: int,
+                *,
                 seed: int | None = None,
-                optim: Type[Optimizer],
-                optim_kwargs: dict,
+                optim: Type[Optimizer] = torch.optim.SGD,
+                optim_kwargs: dict | None = None,
                 lr_sched: Type[LRScheduler] | None = None,
                 lr_sched_kwargs: dict | None = None,
                 device: str | None = None):
@@ -39,14 +39,13 @@ class SGNS_Torch:
             V: Vocabulary size (number of nodes).
             D: Embedding dimensionality.
             seed: Optional RNG seed for PyTorch.
-            optim: Optimizer class to instantiate.
-            optim_kwargs: Keyword arguments for the optimizer.
+            optim: Optimizer class to instantiate. Defaults to plain SGD.
+            optim_kwargs: Keyword arguments for the optimizer. Defaults to {"lr": 0.1}.
             lr_sched: Optional learning-rate scheduler class.
             lr_sched_kwargs: Keyword arguments for the scheduler (required if lr_sched is provided).
-            device: Target device string (e.g. ``"cuda"``). Defaults to CUDA if available, else CPU.
+            device: Target device string (e.g. "cuda"). Defaults to CUDA if available, else CPU.
         """
-        if optim_kwargs is None:
-            raise ValueError("optim_kwargs must be provided")
+        optim_kwargs = optim_kwargs or {"lr": 0.1}
         if lr_sched is not None and lr_sched_kwargs is None:
             raise ValueError("lr_sched_kwargs required when lr_sched is provided")
 
@@ -192,20 +191,37 @@ class SGNS_Torch:
         return self
 
 class SG_Torch:
+    """PyTorch implementation of Skip-Gram."""
 
     def __init__(self,
-                 V: int,
-                 D: int,
-                 *,
+                V: int,
+                D: int,
+                *,
                 seed: int | None = None,
-                optim: Type[Optimizer],
-                optim_kwargs: dict,
+                optim: Type[Optimizer] = torch.optim.SGD,
+                optim_kwargs: dict | None = None,
                 lr_sched: Type[LRScheduler] | None = None,
                 lr_sched_kwargs: dict | None = None,
                 device: str | None = None):
+        """Initialize the plain Skip-Gram (full softmax) model in PyTorch.
 
-        if optim_kwargs is None:
-            raise ValueError("optim_kwargs must be provided")
+        Args:
+            V: Vocabulary size (number of nodes/tokens).
+            D: Embedding dimensionality.
+            seed: Optional RNG seed for reproducibility.
+            optim: Optimizer class to instantiate. Defaults to :class:`torch.optim.SGD`.
+            optim_kwargs: Keyword args for the optimizer. Defaults to ``{"lr": 0.1}``.
+            lr_sched: Optional learning-rate scheduler class.
+            lr_sched_kwargs: Keyword args for the scheduler (required if ``lr_sched`` is provided).
+            device: Target device string (e.g., ``"cuda"``). Defaults to CUDA if available, else CPU.
+
+        Notes:
+            The encoder/decoder are linear layers acting on one-hot centers:
+            • ``in_emb = nn.Linear(V, D)``
+            • ``out_emb = nn.Linear(D, V)``
+            Forward pass produces vocabulary-sized logits and is trained with CrossEntropyLoss.
+        """
+        optim_kwargs = optim_kwargs or {"lr": 0.1}
         if lr_sched is not None and lr_sched_kwargs is None:
             raise ValueError("lr_sched_kwargs required when lr_sched is provided")
 
@@ -225,7 +241,6 @@ class SG_Torch:
         _logger.info("SG_Torch init: V=%d D=%d device=%s seed=%s", self.V, self.D, self.device, seed)
 
         params = list(self.in_emb.parameters()) + list(self.out_emb.parameters())
-        
         # optimizer / scheduler
         self.opt = optim(params=params, **optim_kwargs)
         self.lr_sched = lr_sched(self.opt, **lr_sched_kwargs) if lr_sched is not None else None
