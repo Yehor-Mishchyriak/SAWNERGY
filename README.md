@@ -109,12 +109,9 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 ### `sawnergy.embedding.Embedder`
 
 * Consumes walk archives, generates skip-gram pairs, and normalises them to 0-based indices.
-* Provides a unified interface to SGNS implementations:
-  - **PureML backend** (`SGNS_PureML`): works with the `pureml` ecosystem, optimistic for CPU training.
-  - **PyTorch backend** (`SGNS_Torch`): uses `torch.nn.Embedding` plays nicely with GPUs.
-* Both `SGNS_PureML` and `SGNS_Torch` accept training hyperparameters such as batch_size, LR, optimizer and LR_scheduler, etc.
-* Exposes `embed_frame` (single frame) and `embed_all` (all frames, deterministic seeding per frame) which return the
-  learned input embedding matrices and write them to disk when requested.
+* Selects skip-gram (SG / SGNS) backends dynamically via `model_base="pureml"|"torch"` with per-backend overrides supplied through `model_kwargs`.
+* Handles deterministic per-frame seeding and returns the requested embedding `kind` (`"in"`, `"out"`, or `"avg"`) from `embed_frame` and `embed_all`.
+* Persists per-frame matrices with rich provenance (walk metadata, objective, hyperparameters, RNG seeds) when `embed_all` targets an output archive.
 
 ### Supporting Utilities
 
@@ -132,7 +129,7 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 |---|---|---|
 | **RIN** | `ATTRACTIVE_transitions` → **(T, N, N)**, float32  •  `REPULSIVE_transitions` → **(T, N, N)**, float32 (optional)  •  `ATTRACTIVE_energies` → **(T, N, N)**, float32 (optional)  •  `REPULSIVE_energies` → **(T, N, N)**, float32 (optional)  •  `COM` → **(T, N, 3)**, float32 | `time_created` (ISO) • `com_name` = `"COM"` • `molecule_of_interest` (int) • `frame_range` = `(start, end)` inclusive • `frame_batch_size` (int) • `prune_low_energies_frac` (float in [0,1]) • `attractive_transitions_name` / `repulsive_transitions_name` (dataset names or `None`) • `attractive_energies_name` / `repulsive_energies_name` (dataset names or `None`) |
 | **Walks** | `ATTRACTIVE_RWs` → **(T, N·num_RWs, L+1)**, int32 (optional)  •  `REPULSIVE_RWs` → **(T, N·num_RWs, L+1)**, int32 (optional)  •  `ATTRACTIVE_SAWs` → **(T, N·num_SAWs, L+1)**, int32 (optional)  •  `REPULSIVE_SAWs` → **(T, N·num_SAWs, L+1)**, int32 (optional)  <br/>_Note:_ node IDs are **1-based**.| `time_created` (ISO) • `seed` (int) • `rng_scheme` = `"SeedSequence.spawn_per_batch_v1"` • `num_workers` (int) • `in_parallel` (bool) • `batch_size_nodes` (int) • `num_RWs` / `num_SAWs` (ints) • `node_count` (N) • `time_stamp_count` (T) • `walk_length` (L) • `walks_per_node` (int) • `attractive_RWs_name` / `repulsive_RWs_name` / `attractive_SAWs_name` / `repulsive_SAWs_name` (dataset names or `None`) • `walks_layout` = `"time_leading_3d"` |
-| **Embeddings** | `FRAME_EMBEDDINGS` → **(frames_written, vocab_size, D)**, typically float32 | `time_created` (ISO) • `seed` (int) • `rng_scheme` = `"SeedSequence.spawn_per_frame_v1"` • `source_walks_path` (str) • `model_base` = `"torch"` or `"pureml"` • `rin_type` = `"attr"` or `"repuls"` • `using_mode` = `"RW"|"SAW"|"merged"` • `window_size` (int) • `alpha` (float; noise exponent) • `dimensionality` = D • `num_negative_samples` (int) • `num_epochs` (int) • `batch_size` (int) • `shuffle_data` (bool) • `frames_written` (int) • `vocab_size` (int) • `frame_count` (int) • `embedding_dtype` (str) • `frame_embeddings_name` = `"FRAME_EMBEDDINGS"` • `arrays_per_chunk` (int) • `compression_level` (int) • `objective` = `"sgns"` or `"sg"` |
+| **Embeddings** | `FRAME_EMBEDDINGS` → **(T, N, D)**, float32 | `created_at` (ISO) • `frame_embeddings_name` = `"FRAME_EMBEDDINGS"` • `time_stamp_count` = T • `node_count` = N • `embedding_dim` = D • `model_base` = `"torch"` or `"pureml"` • `embedding_kind` = `"in"|"out"|"avg"` • `objective` = `"sgns"` or `"sg"` • `negative_sampling` (bool) • `num_negative_samples` (int) • `num_epochs` (int) • `batch_size` (int) • `window_size` (int) • `alpha` (float) • `lr_step_per_batch` (bool) • `shuffle_data` (bool) • `device_hint` (str) • `model_kwargs_repr` (repr string) • `RIN_type` = `"attr"` or `"repuls"` • `using` = `"RW"|"SAW"|"merged"` • `source_WALKS_path` (str) • `walk_length` (int) • `num_RWs` / `num_SAWs` (ints) • `attractive_*_name` / `repulsive_*_name` (dataset names or `None`) • `master_seed` (int) • `per_frame_seeds` (list[int]) • `arrays_per_chunk` (int) • `compression_level` (int) |
 
 **Notes**
 
@@ -187,31 +184,32 @@ walker.close()
 # 3. Train embeddings per frame (PyTorch backend)
 import torch
 
-embedder = Embedder(walks_path, base="torch", seed=999)
+embedder = Embedder(walks_path, seed=999)
 embeddings_path = embedder.embed_all(
     RIN_type="attr",
     using="merged",
-    window_size=4,
-    objective="sgns",
-    num_negative_samples=5,
     num_epochs=5,
+    negative_sampling=True,
+    window_size=4,
+    num_negative_samples=5,
     batch_size=1024,
     dimensionality=128,
     shuffle_data=True,
-    output_path="./EMBEDDINGS_demo.zip",
-    sgns_kwargs={
+    alpha=0.75,
+    device="cuda" if torch.cuda.is_available() else "cpu",
+    model_base="torch",
+    model_kwargs={
         "optim": torch.optim.Adam,
         "optim_kwargs": {"lr": 1e-3},
         "lr_sched": torch.optim.lr_scheduler.LambdaLR,
         "lr_sched_kwargs": {"lr_lambda": lambda _: 1.0},
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
     },
+    output_path="./EMBEDDINGS_demo.zip",
 )
 print("Embeddings written to", embeddings_path)
 ```
 
-> For the PureML backend, supply the relevant optimiser and scheduler via `sgns_kwargs`
-> (for example `optim=pureml.optimizers.Adam`, `lr_sched=pureml.optimizers.CosineAnnealingLR`).
+> For the PureML backend, set `model_base="pureml"` and pass the optimiser / scheduler classes inside `model_kwargs`.
 
 ---
 
@@ -246,8 +244,7 @@ viz.build_frame(1, show=True)
 
 - **Time-aware walks**: Set `time_aware=True`, provide `stickiness` and `on_no_options` when calling `Walker.sample_walks`.
 - **Shared memory lifecycle**: Call `Walker.close()` (or use a context manager) to release shared-memory segments.
-- **PureML vs PyTorch**: Choose the backend via `Embedder(..., base="pureml"|"torch")` and provide backend-specific
-  constructor kwargs through `sgns_kwargs` (optimizer, scheduler, device).
+- **PureML vs PyTorch**: Select the backend at call time with `model_base="pureml"|"torch"` (defaults to `"pureml"`) and pass optimiser / scheduler overrides through `model_kwargs`.
 - **ArrayStorage utilities**: Use `ArrayStorage` directly to peek into archives, append arrays, or manage metadata.
 
 ---
