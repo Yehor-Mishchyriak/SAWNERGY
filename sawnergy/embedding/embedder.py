@@ -45,7 +45,6 @@ class Embedder:
         Raises:
             ValueError: If required metadata is missing or any loaded walk array
                 has an unexpected shape.
-            ImportError: If the requested backend is not installed.
 
         Notes:
             - Walks in storage are 1-based (residue indexing). Internally, this
@@ -529,10 +528,10 @@ class Embedder:
                   num_epochs=num_epochs, 
                   batch_size=batch_size,
                   # -- optional; for SGNS; safely ignored by SG via **_ignore -- 
-                  num_negative_samples=num_negative_samples, 
+                  num_negative_samples=num_negative_samples,
                   noise_dist=noise_probs,
                   # -----------------------------------------
-                  shuffle_data=shuffle_data, 
+                  shuffle_data=shuffle_data,
                   lr_step_per_batch=lr_step_per_batch
             )
         _logger.info("Training complete for frame %d", frame_id)
