@@ -302,13 +302,13 @@ class SG_Torch:
     
     @property
     def in_embeddings(self) -> np.ndarray:
-        W = self.in_emb.weight.detach().cpu().numpy()
+        W = self.in_emb.weight.detach().T.cpu().numpy()
         _logger.debug("In emb shape: %s", W.shape)
         return W
 
     @property
     def out_embeddings(self) -> np.ndarray:
-        W = self.out_emb.weight.detach().T.cpu().numpy()
+        W = self.out_emb.weight.detach().cpu().numpy()
         _logger.debug("Out emb shape: %s", W.shape)
         return W
 
