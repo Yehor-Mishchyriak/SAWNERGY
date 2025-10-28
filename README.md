@@ -18,7 +18,7 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 > **Optional:** For GPU training, install PyTorch separately (e.g., `pip install torch`).
 > **Note:** RIN building requires `cpptraj` (AmberTools). Ensure it is discoverable via `$PATH` or the `CPPTRAJ`
-> environment variable. Probably the easiest solution: install AmberTools via conda, activate the environment, and SAWNERGY will find cpptraj executable on its own, so just run your code and don't worry about it.
+> environment variable. Probably the easiest solution: install AmberTools via Conda, activate the environment, and SAWNERGY will find the cpptraj executable on its own, so just run your code and don't worry about it.
 
 ---
 
@@ -32,17 +32,17 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
   - **Compatibility:** No breaking API changes; imports remain stable. PureML backends are unaffected.
 - **Embedding visualizer update**
   - Now you can L2 normalize your embeddings before display.
-- **Small improvements of the embedding module**
+- **Small improvements in the embedding module**
   - Improved API with a lot of good defaults in place to ease usage out of the box.
   - Small internal model tweaks.
 
 ## v1.0.7 — What’s new:
-- **Added plain SkipGram model**
+- **Added plain Skip-Gram model**
   - Now, the user can choose if they want to apply the negative sampling technique (two binary classifiers) or train a single classifier over the vocabulary (full softmax). For more detail, see: [node2vec](https://arxiv.org/pdf/1607.00653), [word2vec](https://arxiv.org/pdf/1301.3781), and [negative_sampling](https://arxiv.org/pdf/1402.3722).
 - **Set a harsher default for low interaction energies pruning during RIN construction**
   - Now we zero out 85% of the lowest interaction energies as opposed to the past 30% default, leading to more meaningful embeddings.
 - **BUG FIX: Visualizer**
-  - Previously, the visualizer would silently draw edges of 0 magnitude, meaning they were actually being drawn but were invisible due to full transparency and 0 width. As a result, the displayed image / animation would be very laggy. Now, this was fixed, and given high pruning default, the displayed interaction networks are clean and smooth under rotations, dragging, etc.
+  - Previously, the visualizer would silently draw edges of 0 magnitude, meaning they were actually being drawn but were invisible due to full transparency and 0 width. As a result, the displayed image/animation would be very laggy. Now, this was fixed, and given the higher pruning default, the displayed interaction networks are clean and smooth under rotations, dragging, etc.
 - **New Embedding Visualizer (3D)**
   - New lightweight viewer for per-frame embeddings that projects embeddings with PCA to a **3D** scatter. Supports the same node coloring semantics, optional node labels, and the same antialiasing/depthshade controls. Works in headless setups using the same backend guard and uses a blocking `show=True` for scripts.
 
@@ -55,7 +55,7 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 - **Deterministic, shareable artifacts**: Every stage produces compressed Zarr archives that contain both data and metadata so runs can be reproduced, shared, or inspected later.
 - **High-performance data handling**: Heavy arrays live in shared memory during walk sampling to allow parallel processing without serialization overhead; archives are written in chunked, compressed form for fast read/write.
 - **Flexible objectives & backends**: Train Skip-Gram with **negative sampling** (`objective="sgns"`) or **plain Skip-Gram** (`objective="sg"`), using either **PureML** (default) or **PyTorch**.
-- **Visualization out of the box**: Plot and animate residue networks without leaving Python, using the data produced by RINBuilder
+- **Visualization out of the box**: Plot and animate residue networks without leaving Python, using the data produced by RINBuilder.
 
 ---
 
@@ -95,7 +95,7 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 * Wraps the AmberTools `cpptraj` executable to:
   - compute per-frame electrostatic (EMAP) and van der Waals (VMAP) energy matrices at the atomic level,
   - project atom–atom interactions to residue–residue interactions using compositional masks,
-  - prune, symmetrize, remove self-interactions, and L1-normalise the matrices,
+  - prune, symmetrize, remove self-interactions, and L1-normalize the matrices,
   - compute per-residue centers of mass (COM) over the same frames.
 * Outputs a compressed Zarr archive with transition matrices, optional pre-normalized energies, COM snapshots, and rich
   metadata (frame range, pruning quantile, molecule ID, etc.).
@@ -120,7 +120,7 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 
 ### `sawnergy.embedding.Embedder`
 
-* Consumes walk archives, generates skip-gram pairs, and normalises them to 0-based indices.
+* Consumes walk archives, generates skip-gram pairs, and normalizes them to 0-based indices.
 * Selects skip-gram (SG / SGNS) backends dynamically via `model_base="pureml"|"torch"` with per-backend overrides supplied through `model_kwargs`.
 * Handles deterministic per-frame seeding and returns the requested embedding `kind` (`"in"`, `"out"`, or `"avg"`) from `embed_frame` and `embed_all`.
 * Persists per-frame matrices with rich provenance (walk metadata, objective, hyperparameters, RNG seeds) when `embed_all` targets an output archive.
@@ -145,7 +145,7 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 
 **Notes**
 
-- In **RIN**, `T` equals the number of frame **batches** written (i.e., `frame_range` swept in steps of `frame_batch_size`). `ATTRACTIVE/REPULSIVE_energies` are **pre-normalised** absolute energies (written only when `keep_prenormalized_energies=True`), whereas `ATTRACTIVE/REPULSIVE_transitions` are the **row-wise L1-normalised** versions used for sampling.
+- In **RIN**, `T` equals the number of frame **batches** written (i.e., `frame_range` swept in steps of `frame_batch_size`). `ATTRACTIVE/REPULSIVE_energies` are **pre-normalized** absolute energies (written only when `keep_prenormalized_energies=True`), whereas `ATTRACTIVE/REPULSIVE_transitions` are the **row-wise L1-normalized** versions used for sampling.
 - All archives are Zarr v3 groups. ArrayStorage also maintains per-block metadata in root attrs: `array_chunk_size_in_block`, `array_shape_in_block`, and `array_dtype_in_block` (dicts keyed by dataset name). You’ll see these in every archive.
 - In **Embeddings**, `alpha` and `num_negative_samples` apply to **SGNS** only and are ignored for `objective="sg"`.
 
@@ -210,7 +210,7 @@ embeddings_path = embedder.embed_all(
 print("Embeddings written to", embeddings_path)
 ```
 
-> For the PureML backend, set `model_base="pureml"` and pass the optimiser / scheduler classes inside `model_kwargs`.
+> For the PureML backend, set `model_base="pureml"` and pass the optimizer / scheduler classes inside `model_kwargs`.
 
 ---
 
@@ -235,7 +235,7 @@ v.build_frame(1,
 ```python
 from sawnergy.embedding import Visualizer
 
-viz = sawnergy.embedding.Visualizer("./EMBEDDINGS_demo.zip", normalize_rows=True)
+viz = Visualizer("./EMBEDDINGS_demo.zip", normalize_rows=True)
 viz.build_frame(1, show=True)
 ```
 
@@ -245,7 +245,7 @@ viz.build_frame(1, show=True)
 
 - **Time-aware walks**: Set `time_aware=True`, provide `stickiness` and `on_no_options` when calling `Walker.sample_walks`.
 - **Shared memory lifecycle**: Call `Walker.close()` (or use a context manager) to release shared-memory segments.
-- **PureML vs PyTorch**: Select the backend at call time with `model_base="pureml"|"torch"` (defaults to `"pureml"`) and pass optimiser / scheduler overrides through `model_kwargs`.
+- **PureML vs PyTorch**: Select the backend at call time with `model_base="pureml"|"torch"` (defaults to `"pureml"`) and pass optimizer / scheduler overrides through `model_kwargs`.
 - **ArrayStorage utilities**: Use `ArrayStorage` directly to peek into archives, append arrays, or manage metadata.
 
 ---
@@ -267,7 +267,7 @@ viz.build_frame(1, show=True)
 
 ---
 
-## Acknowledgements
+## Acknowledgments
 
 SAWNERGY builds on the AmberTools `cpptraj` ecosystem, NumPy, Matplotlib, Zarr, and PyTorch (for GPU acceleration if necessary; PureML is available by default).
 Big thanks to the upstream communities whose work makes this toolkit possible.
