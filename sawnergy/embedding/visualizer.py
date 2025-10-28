@@ -106,7 +106,7 @@ class Visualizer:
         self._residue_norm = mpl.colors.Normalize(0, max(1, self.N - 1))
 
         # Figure / axes / artists
-        self._fig = self._plt.figure(figsize=figsize)
+        self._fig = self._plt.figure(figsize=figsize, num="SAWNERGY")
         self._ax = None
         self._scatter = None
         self._marker_size = 30.0
