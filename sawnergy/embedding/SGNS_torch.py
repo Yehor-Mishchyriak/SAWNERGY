@@ -10,6 +10,7 @@ from torch.optim.lr_scheduler import LRScheduler
 # built-in
 import logging
 from typing import Type
+import warnings
 
 # *----------------------------------------------------*
 #                        GLOBALS
@@ -22,7 +23,18 @@ _logger = logging.getLogger(__name__)
 # *----------------------------------------------------*
 
 class SGNS_Torch:
-    """PyTorch implementation of Skip-Gram with Negative Sampling."""
+    """PyTorch implementation of Skip-Gram with Negative Sampling.
+
+    DEPRECATED (temporary): This class currently produces noisy embeddings in
+    practice and is deprecated until further notice. The issue likely stems from
+    weight initialization, although the root cause has not yet been determined.
+
+    Prefer one of the following alternatives:
+      • Plain PyTorch Skip-Gram (full softmax): `SG_Torch`
+      • PureML-based implementations: `SGNS_PureML` or `SG_PureML` (if available)
+
+    This API may change or be removed once the root cause is resolved.
+    """
 
     def __init__(self,
                 V: int,
@@ -34,7 +46,15 @@ class SGNS_Torch:
                 lr_sched: Type[LRScheduler] | None = None,
                 lr_sched_kwargs: dict | None = None,
                 device: str | None = None):
-        """
+        """Initialize SGNS (negative sampling) in PyTorch.
+
+        DEPRECATION WARNING:
+            This implementation is temporarily deprecated for producing noisy
+            embeddings. The issue likely stems from weight initialization, though
+            the exact root cause has not been conclusively determined. Please use
+            `SG_Torch` (plain Skip-Gram with full softmax) or the PureML-based
+            `SGNS_PureML` / `SG_PureML` models instead.
+
         Args:
             V: Vocabulary size (number of nodes).
             D: Embedding dimensionality.
@@ -45,6 +65,21 @@ class SGNS_Torch:
             lr_sched_kwargs: Keyword arguments for the scheduler (required if lr_sched is provided).
             device: Target device string (e.g. "cuda"). Defaults to CUDA if available, else CPU.
         """
+
+        # --- runtime deprecation notice ---
+        warnings.warn(
+            "SGNS_Torch is temporarily deprecated: it currently produces noisy "
+            "embeddings (likely due to weight initialization). Use SG_Torch "
+            "(plain Skip-Gram, full softmax) or the PureML-based SG/SGNS classes.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        _logger.warning(
+            "DEPRECATED: SGNS_Torch currently produces noisy embeddings "
+            "(likely weight initialization). Prefer SG_Torch or PureML SG/SGNS."
+        )
+        # ----------------------------------
+
         optim_kwargs = optim_kwargs or {"lr": 0.1}
         if lr_sched is not None and lr_sched_kwargs is None:
             raise ValueError("lr_sched_kwargs required when lr_sched is provided")
