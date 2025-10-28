@@ -33,7 +33,7 @@ class SGNS_PureML(NN):
                 *,
                 seed: int | None = None,
                 optim: Type[Optim] = SGD,
-                optim_kwargs: dict | None,
+                optim_kwargs: dict | None = None,
                 lr_sched: Type[LRScheduler] | None = None,
                 lr_sched_kwargs: dict | None = None,
                 device: str | None = None):
@@ -147,7 +147,7 @@ class SGNS_PureML(NN):
                 K = int(neg.data.shape[1])
                 loss = (
                     BCE(y_pos, x_pos_logits, from_logits=True)
-                    + K*BCE(y_neg, x_neg_logits, from_logits=True)
+                    + Tensor(K)*BCE(y_neg, x_neg_logits, from_logits=True)
                 )
 
                 self.optim.zero_grad()
@@ -176,7 +176,9 @@ class SGNS_PureML(NN):
                 "Wrong embedding matrix shape: "
                 "self.in_emb.parameters[0].shape != (V, D)"
             )
-        return W.numpy(copy=True, readonly=True)
+        arr = W.numpy(copy=True, readonly=True)  # (V, D)
+        _logger.debug("In emb shape: %s", arr.shape)
+        return arr
 
     @property
     def out_embeddings(self) -> np.ndarray:
@@ -186,7 +188,9 @@ class SGNS_PureML(NN):
                 "Wrong embedding matrix shape: "
                 "self.out_emb.parameters[0].shape != (V, D)"
             )
-        return W.numpy(copy=True, readonly=True)
+        arr = W.numpy(copy=True, readonly=True)  # (V, D)
+        _logger.debug("Out emb shape: %s", arr.shape)
+        return arr
 
     @property
     def avg_embeddings(self) -> np.ndarray:
@@ -334,7 +338,9 @@ class SG_PureML(NN):
                 "Wrong embedding matrix shape: "
                 "self.in_emb.parameters[0].shape != (V, D)"
             )
-        return W.numpy(copy=True, readonly=True)   # (V, D)
+        arr = W.numpy(copy=True, readonly=True)    # (V, D)
+        _logger.debug("In emb shape: %s", arr.shape)
+        return arr
 
     @property
     def out_embeddings(self) -> np.ndarray:
@@ -346,7 +352,9 @@ class SG_PureML(NN):
                 "Wrong embedding matrix shape: "
                 "self.out_emb.parameters[0].shape != (D, V)"
             )
-        return W.numpy(copy=True, readonly=True).T # (V, D)
+        arr = W.numpy(copy=True, readonly=True).T  # (V, D)
+        _logger.debug("Out emb shape: %s", arr.shape)
+        return arr
     
     @property
     def avg_embeddings(self) -> np.ndarray:

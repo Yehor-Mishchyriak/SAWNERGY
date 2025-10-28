@@ -166,19 +166,18 @@ class SGNS_Torch:
 
             mean_loss = epoch_loss / max(batches, 1)
             _logger.info("Epoch %d/%d mean_loss=%.6f", epoch, num_epochs, mean_loss)
-
-    @property
-    def embeddings(self) -> np.ndarray:
-        """Return the input embedding matrix as a NumPy array."""
-        return self.in_emb.weight.detach().cpu().numpy()
     
     @property
     def in_embeddings(self) -> np.ndarray:
-        return self.in_emb.weight.detach().cpu().numpy()
+        W = self.in_emb.weight.detach().cpu().numpy()
+        _logger.debug("In emb shape: %s", W.shape)
+        return W
 
     @property
     def out_embeddings(self) -> np.ndarray:
-        return self.out_emb.weight.detach().cpu().numpy()
+        W = self.out_emb.weight.detach().cpu().numpy()
+        _logger.debug("Out emb shape: %s", W.shape)
+        return W
 
     @property
     def avg_embeddings(self) -> np.ndarray:
@@ -303,11 +302,15 @@ class SG_Torch:
     
     @property
     def in_embeddings(self) -> np.ndarray:
-        return self.in_emb.weight.detach().T.cpu().numpy()
+        W = self.in_emb.weight.detach().cpu().numpy()
+        _logger.debug("In emb shape: %s", W.shape)
+        return W
 
     @property
     def out_embeddings(self) -> np.ndarray:
-        return self.out_emb.weight.detach().cpu().numpy()
+        W = self.out_emb.weight.detach().T.cpu().numpy()
+        _logger.debug("Out emb shape: %s", W.shape)
+        return W
 
     @property
     def avg_embeddings(self) -> np.ndarray:
