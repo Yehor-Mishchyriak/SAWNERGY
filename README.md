@@ -25,7 +25,11 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 # UPDATES:
 
 ## v1.0.8 — What’s new:
-
+- **Temporary deprecation of `SGNS_Torch`**
+  - `sawnergy.embedding.SGNS_Torch` currently produces noisy embeddings in practice. The issue likely stems from **weight initialization**, although the root cause has not yet been conclusively determined.
+  - **Action:** The class and its `__init__` docstring now carry a deprecation notice. Constructing the class emits a **`DeprecationWarning`** and logs a **warning**.
+  - **Use instead:** Prefer **`SG_Torch`** (plain Skip-Gram with full softmax) or the PureML backends **`SGNS_PureML`** / **`SG_PureML`**.
+  - **Compatibility:** No breaking API changes; imports remain stable. PureML backends are unaffected.
 - **Embedding visualizer update**
   - Now you can L2 normalize your embeddings before display.
 - **Small improvements of the embedding module**
