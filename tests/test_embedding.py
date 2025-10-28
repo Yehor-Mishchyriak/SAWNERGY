@@ -13,9 +13,22 @@ def test_embeddings_preserve_order(embeddings_archive_path):
     with sawnergy_util.ArrayStorage(embeddings_archive_path, mode="r") as storage:
         name = storage.get_attr("frame_embeddings_name")
         embeddings = storage.read(name, slice(None))
-        assert storage.get_attr("frames_written") == FRAME_COUNT
-        assert storage.get_attr("frame_count") == FRAME_COUNT
+        assert embeddings.dtype == np.float32
+        assert storage.get_attr("time_stamp_count") == FRAME_COUNT
         assert storage.get_attr("model_base") == "torch"
+        assert storage.get_attr("node_count") == embeddings.shape[1]
+        assert storage.get_attr("embedding_dim") == embeddings.shape[2]
+        assert storage.get_attr("embedding_kind") == "in"
+        assert storage.get_attr("objective") == "sgns"
+        assert storage.get_attr("negative_sampling") is True
+        assert storage.get_attr("num_epochs") == 1
+        assert storage.get_attr("num_negative_samples") == 1
+        assert storage.get_attr("batch_size") == 4
+        assert storage.get_attr("window_size") == 1
+        assert storage.get_attr("alpha") == pytest.approx(0.75)
+        assert storage.get_attr("RIN_type") == "attr"
+        assert storage.get_attr("using") == "RW"
+        assert storage.get_attr("master_seed") == 999
 
     assert embeddings.shape[0] == FRAME_COUNT
     assert len(_StubSGNS.call_log) == FRAME_COUNT
@@ -28,7 +41,8 @@ def test_embeddings_preserve_order(embeddings_archive_path):
         rng = np.random.default_rng(seed)
         base = rng.random()
         values = np.linspace(0.0, 1.0, embeddings.shape[2], dtype=np.float32)
-        expected_emb = (values + base).repeat(embeddings.shape[1]).reshape(embeddings.shape[1], embeddings.shape[2])
+        expected_row = values + base
+        expected_emb = np.tile(expected_row, (embeddings.shape[1], 1))
         np.testing.assert_allclose(embeddings[idx], expected_emb)
 
 

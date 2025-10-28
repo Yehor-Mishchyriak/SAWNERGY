@@ -254,32 +254,49 @@ def walks_archive_path(
 # Stub SGNS implementation for embedding tests
 # ---------------------------------------------------------------------------
 
+
 class _StubSGNS:
     call_log: List[int] = []
 
     def __init__(self, V: int, D: int, *, seed: int | None = None, **_):
-        self.V = V
-        self.D = D
+        self.V = int(V)
+        self.D = int(D)
         self.seed = 0 if seed is None else int(seed)
-        self._embeddings = np.zeros((V, D), dtype=np.float32)
+        # Initialize placeholders for required attributes
+        self._in = np.zeros((self.V, self.D), dtype=np.float32)
+        self._out = np.zeros((self.V, self.D), dtype=np.float32)
 
     def fit(self, *_, **__):
         rng = np.random.default_rng(self.seed)
-        base = rng.random()
-        values = np.linspace(0.0, 1.0, self.D, dtype=np.float32)
-        self._embeddings = (values + base).repeat(self.V).reshape(self.V, self.D)
-        self.call_log.append(self.seed)
+        base = float(rng.random())
+        ramp = np.linspace(0.0, 1.0, self.D, dtype=np.float32)
+
+        # Simple deterministic “training result”
+        in_row = base + ramp
+        out_row = base + 0.5 + ramp
+
+        self._in = np.tile(in_row, (self.V, 1))
+        self._out = np.tile(out_row, (self.V, 1))
+        _StubSGNS.call_log.append(self.seed)
 
     @property
-    def embeddings(self) -> np.ndarray:
-        return self._embeddings
+    def in_embeddings(self) -> np.ndarray:
+        return self._in
+
+    @property
+    def out_embeddings(self) -> np.ndarray:
+        return self._out
+
+    @property
+    def avg_embeddings(self) -> np.ndarray:
+        return (self._in + self._out) / 2.0
 
 
 @pytest.fixture
 def patched_sgns(monkeypatch):
     monkeypatch.setattr(
         embedder_module.Embedder,
-        "_get_SGNS_constructor_from",
+        "_get_NN_constructor_from",
         staticmethod(lambda base, objective: _StubSGNS),
     )
     return _StubSGNS
@@ -293,23 +310,26 @@ def embeddings_archive_path(
 ) -> Path:
     _StubSGNS.call_log.clear()
 
-    emb = embedder_module.Embedder(walks_archive_path, base="torch", seed=999)
+    # Embedder no longer takes `base=` in __init__
+    emb = embedder_module.Embedder(walks_archive_path, seed=999)
+
     out_path = tmp_path / "synthetic_embeddings.zip"
     emb.embed_all(
         RIN_type="attr",
         using="RW",
+        num_epochs=1,
+        negative_sampling=True,
         window_size=1,
         num_negative_samples=1,
-        num_epochs=1,
         batch_size=4,
         shuffle_data=False,
         dimensionality=2,
         alpha=0.75,
+        model_base="torch",
+        model_kwargs={},
         output_path=out_path,
-        sgns_kwargs={},
     )
     return out_path
-
 
 # ---------------------------------------------------------------------------
 # Matplotlib stubs for Visualizer tests
