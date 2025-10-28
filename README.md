@@ -28,7 +28,7 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 - **Embedding visualizer update**
   - Now you can L2 normalize your embeddings before display.
-- **Small improvements of the embeddings module**
+- **Small improvements of the embedding module**
   - Improved API with a lot of good defaults in place to ease usage out of the box.
   - Small internal model tweaks.
 
@@ -231,7 +231,7 @@ v.build_frame(1,
 ```python
 from sawnergy.embedding import Visualizer
 
-viz = sawnergy.embedding.Visualizer("./EMBEDDINGS_demo.zip")
+viz = sawnergy.embedding.Visualizer("./EMBEDDINGS_demo.zip", normalize_rows=True)
 viz.build_frame(1, show=True)
 ```
 
