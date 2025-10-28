@@ -24,6 +24,14 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 # UPDATES:
 
+## v1.0.8 — What’s new:
+
+- **Embedding visualizer update**
+  - Now you can L2 normalize your embeddings before display.
+- **Small improvements of the embeddings module**
+  - Improved API with a lot of good defaults in place to ease usage out of the box.
+  - Small internal model tweaks.
+
 ## v1.0.7 — What’s new:
 - **Added plain SkipGram model**
   - Now, the user can choose if they want to apply the negative sampling technique (two binary classifiers) or train a single classifier over the vocabulary (full softmax). For more detail, see: [node2vec](https://arxiv.org/pdf/1607.00653), [word2vec](https://arxiv.org/pdf/1301.3781), and [negative_sampling](https://arxiv.org/pdf/1402.3722).
@@ -163,7 +171,7 @@ rin_builder.build_rin(
     prune_low_energies_frac=0.85,
     output_path=rin_path,
     include_attractive=True,
-    include_repulsive=False,
+    include_repulsive=False
 )
 
 # 2. Sample walks from the RIN
@@ -171,13 +179,13 @@ walker = Walker(rin_path, seed=123)
 walks_path = Path("./WALKS_demo.zip")
 walker.sample_walks(
     walk_length=16,
-    walks_per_node=32,
+    walks_per_node=100,
     saw_frac=0.25,
     include_attractive=True,
     include_repulsive=False,
     time_aware=False,
     output_path=walks_path,
-    in_parallel=False,
+    in_parallel=False
 )
 walker.close()
 
@@ -188,23 +196,12 @@ embedder = Embedder(walks_path, seed=999)
 embeddings_path = embedder.embed_all(
     RIN_type="attr",
     using="merged",
-    num_epochs=5,
-    negative_sampling=True,
+    num_epochs=10,
+    negative_sampling=False,
     window_size=4,
-    num_negative_samples=5,
-    batch_size=1024,
-    dimensionality=128,
-    shuffle_data=True,
-    alpha=0.75,
     device="cuda" if torch.cuda.is_available() else "cpu",
     model_base="torch",
-    model_kwargs={
-        "optim": torch.optim.Adam,
-        "optim_kwargs": {"lr": 1e-3},
-        "lr_sched": torch.optim.lr_scheduler.LambdaLR,
-        "lr_sched_kwargs": {"lr_lambda": lambda _: 1.0},
-    },
-    output_path="./EMBEDDINGS_demo.zip",
+    output_path="./EMBEDDINGS_demo.zip"
 )
 print("Embeddings written to", embeddings_path)
 ```
@@ -255,8 +252,9 @@ viz.build_frame(1, show=True)
 ├── sawnergy/
 │   ├── rin/           # RINBuilder and cpptraj integration helpers
 │   ├── walks/         # Walker class and shared-memory utilities
-│   ├── embedding/     # Embedder + SGNS backends (PureML / PyTorch)
+│   ├── embedding/     # Embedder + SG/SGNS backends (PureML / PyTorch)
 │   ├── visual/        # Visualizer and palette utilities
+│   │
 │   ├── logging_util.py
 │   └── sawnergy_util.py
 │
