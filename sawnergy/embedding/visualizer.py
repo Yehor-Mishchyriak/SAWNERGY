@@ -23,7 +23,7 @@ _logger = logging.getLogger(__name__)
 #                        HELPERS
 # *----------------------------------------------------*
 
-def _safe_svd_pca(X: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
+def _safe_svd_pca(X: np.ndarray, k: int, *, row_l2: bool = False) -> tuple[np.ndarray, np.ndarray]:
     """Compute k principal directions via SVD and project onto them."""
     if X.ndim != 2:
         raise ValueError(f"PCA expects 2D array (N, D); got {X.shape}")
@@ -33,6 +33,9 @@ def _safe_svd_pca(X: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
     if D < k:
         raise ValueError(f"Requested k={k} exceeds feature dim D={D}")
     Xc = X - X.mean(axis=0, keepdims=True)
+    if row_l2:
+        norms = np.linalg.norm(Xc, axis=1, keepdims=True)
+        Xc = Xc / np.clip(norms, 1e-9, None)
     _, _, Vt = np.linalg.svd(Xc, full_matrices=False)
     comps = Vt[:k].copy()
     proj = Xc @ comps.T
@@ -78,7 +81,8 @@ class Visualizer:
         init_elev: float = 35,
         init_azim: float = 45,
         *,
-        show: bool = False
+        show: bool = False,
+        normalize_rows: bool = False,
     ) -> None:
         # Backend & pyplot
         visualizer_util.ensure_backend(show)
@@ -115,6 +119,7 @@ class Visualizer:
         self.default_node_color = default_node_color
         self._antialiased = bool(antialiased)
         self._depthshade = bool(depthshade)
+        self._normalize_rows = bool(normalize_rows)
 
     # ------------------------------ PRIVATE ------------------------------ #
 
@@ -143,7 +148,7 @@ class Visualizer:
         so that the returned array still has shape (N, 3).
         """
         k = 3 if X.shape[1] >= 3 else 2
-        P, _ = _safe_svd_pca(X, k)
+        P, _ = _safe_svd_pca(X, k, row_l2=self._normalize_rows)
         if k == 2:
             P = np.c_[P, np.zeros((P.shape[0], 1), dtype=P.dtype)]
         return P
@@ -214,7 +219,6 @@ class Visualizer:
             for p, nid in zip(P, idx + 1):
                 self._labels.append(self._ax.text(p[0], p[1], p[2], str(int(nid)), fontsize=8))
 
-        # Be friendly to test dummies (they may lack tight_layout/canvas)
         try:
             self._fig.tight_layout()
         except Exception:
