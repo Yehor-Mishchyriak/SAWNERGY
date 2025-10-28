@@ -552,7 +552,7 @@ def timeaware_walks_archive_path(
 def patched_embedding_visualizer(monkeypatch):
     from sawnergy.embedding import visualizer as emb_vis_module
 
-    def fake_init(self, EMB_path: str | Path, *_, **__):
+    def fake_init(self, EMB_path: str | Path, *_, normalize_rows: bool = False, **__):
         # Load embeddings exactly like the real class does
         with sawnergy_util.ArrayStorage(EMB_path, mode="r") as storage:
             name = storage.get_attr("frame_embeddings_name")
@@ -571,6 +571,7 @@ def patched_embedding_visualizer(monkeypatch):
         self.default_node_color = "#cccccc"
         self._residue_norm = _DummyNormalize()
         self._plt = _DummyPlt()
+        self._normalize_rows = bool(normalize_rows)
 
     monkeypatch.setattr(emb_vis_module.Visualizer, "__init__", fake_init)
     return None
