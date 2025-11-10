@@ -28,17 +28,17 @@ class SGNS_PureML(NN):
     """PureML implementation of Skip-Gram with Negative Sampling."""
 
     def __init__(self,
-                V: int,
-                D: int,
-                in_weights: Tensor | None = None,
-                out_weights: Tensor | None = None,
-                *,
-                seed: int | None = None,
-                optim: Type[Optim] = SGD,
-                optim_kwargs: dict | None = None,
-                lr_sched: Type[LRScheduler] | None = None,
-                lr_sched_kwargs: dict | None = None,
-                device: str | None = None):
+                 V: int,
+                 D: int,
+                 in_weights:  Tensor | np.ndarray | None = None,
+                 out_weights: Tensor | np.ndarray | None = None,
+                 *,
+                 seed: int | None = None,
+                 optim: Type[Optim] = SGD,
+                 optim_kwargs: dict | None = None,
+                 lr_sched: Type[LRScheduler] | None = None,
+                 lr_sched_kwargs: dict | None = None,
+                 device: str | None = None):
         """
         Initialize SGNS.
 
@@ -50,10 +50,12 @@ class SGNS_PureML(NN):
         Args:
             V: Vocabulary size (number of nodes/tokens).
             D: Embedding dimensionality.
-            in_weights: Optional starting input-embedding matrix of shape (V, D).
-                        If None, the Embedding layer initializes it (seeded if `seed` is set).
-            out_weights: Optional starting output-embedding matrix of shape (V, D).
-                         If None, the Embedding layer initializes it (seeded if `seed` is set).
+            in_weights: Optional starting input-embedding matrix of shape (V, D) as
+                        :class:`Tensor` or :class:`numpy.ndarray`. If None, the Embedding
+                        layer initializes it (seeded if `seed` is set).
+            out_weights: Optional starting output-embedding matrix of shape (V, D) as
+                         :class:`Tensor` or :class:`numpy.ndarray`. If None, the Embedding
+                         layer initializes it (seeded if `seed` is set).
             seed: Optional RNG seed used for **embedding initialization** and for
                   **negative sampling** during training.
             optim: Optimizer class to instantiate. Defaults to plain SGD.
@@ -63,7 +65,6 @@ class SGNS_PureML(NN):
             device: Target device string (e.g., "cuda"); accepted for API parity, ignored by PureML.
         """
 
-
         optim_kwargs = optim_kwargs or {"lr": 0.1}
 
         if lr_sched is not None and lr_sched_kwargs is None:
@@ -71,8 +72,14 @@ class SGNS_PureML(NN):
 
         self.V, self.D = int(V), int(D)
 
+        # Convert warm-starts from np.ndarray → Tensor if needed
+        if isinstance(in_weights, np.ndarray):
+            in_weights = Tensor(in_weights, requires_grad=True)
+        if isinstance(out_weights, np.ndarray):
+            out_weights = Tensor(out_weights, requires_grad=True)
+
         # embeddings
-        self.in_emb  = Embedding(self.V, self.D, W=in_weights, seed=seed)
+        self.in_emb  = Embedding(self.V, self.D, W=in_weights,  seed=seed)
         self.out_emb = Embedding(self.V, self.D, W=out_weights, seed=seed)
 
         # seed + RNG for negative sampling
@@ -225,17 +232,17 @@ class SG_PureML(NN):
     """
 
     def __init__(self,
-                V: int,
-                D: int,
-                in_weights: Tensor | None = None,
-                out_weights: Tensor | None = None,
-                *,
-                seed: int | None = None,
-                optim: Type[Optim] = SGD,
-                optim_kwargs: dict | None = None,
-                lr_sched: Type[LRScheduler] | None = None,
-                lr_sched_kwargs: dict | None = None,
-                device: str | None = None):
+                 V: int,
+                 D: int,
+                 in_weights:  Tensor | np.ndarray | None = None,
+                 out_weights: Tensor | np.ndarray | None = None,
+                 *,
+                 seed: int | None = None,
+                 optim: Type[Optim] = SGD,
+                 optim_kwargs: dict | None = None,
+                 lr_sched: Type[LRScheduler] | None = None,
+                 lr_sched_kwargs: dict | None = None,
+                 device: str | None = None):
         """Initialize the plain Skip-Gram model (full softmax, **no biases**).
 
         Shapes:
@@ -244,14 +251,14 @@ class SG_PureML(NN):
                 W_out: (D, V) — maps D→V; rows of W_outᵀ are output embeddings.
 
             - Warm-starts:
-                in_weights:  (V, D) or None — copied into W_in if provided.
-                out_weights: (D, V) or None — copied into W_out if provided.
+                in_weights:  (V, D) or None — copied into W_in if provided (Tensor or np.ndarray).
+                out_weights: (D, V) or None — copied into W_out if provided (Tensor or np.ndarray).
 
         Args:
             V: Vocabulary size (number of nodes/tokens).
             D: Embedding dimensionality.
-            in_weights: Optional starting matrix for W_in with shape (V, D).
-            out_weights: Optional starting matrix for W_out with shape (D, V).
+            in_weights: Optional starting matrix for W_in with shape (V, D) as Tensor or np.ndarray.
+            out_weights: Optional starting matrix for W_out with shape (D, V) as Tensor or np.ndarray.
                          (Note the asymmetry with SGNS; use `.T` if converting from (V, D).)
             seed: Optional RNG seed (used for layer initialization).
             optim: Optimizer class to instantiate. Defaults to plain SGD.
@@ -267,8 +274,14 @@ class SG_PureML(NN):
 
         self.V, self.D = int(V), int(D)
 
+        # Convert warm-starts from np.ndarray → Tensor if needed
+        if isinstance(in_weights, np.ndarray):
+            in_weights = Tensor(in_weights, requires_grad=True)
+        if isinstance(out_weights, np.ndarray):
+            out_weights = Tensor(out_weights, requires_grad=True)
+
         # input/output “embedding” projections
-        self.in_emb  = Affine(self.V, self.D, W=in_weights, bias=False, seed=seed)
+        self.in_emb  = Affine(self.V, self.D, W=in_weights,  bias=False, seed=seed)
         self.out_emb = Affine(self.D, self.V, W=out_weights, bias=False, seed=seed)
 
         self.seed = None if seed is None else int(seed)
