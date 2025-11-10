@@ -434,6 +434,8 @@ class Embedder:
             num_negative_samples: int = 10,
             batch_size: int = 1024,
             *,
+            in_weights:  np.ndarray | None = None,
+            out_weights: np.ndarray | None = None,
             lr_step_per_batch: bool = False,
             shuffle_data: bool = True,
             dimensionality: int = 128,
@@ -441,10 +443,10 @@ class Embedder:
             device: str | None = None,
             model_base: Literal["torch", "pureml"] = "pureml",
             model_kwargs: dict[str, object] | None = None,
-            kind: Literal["in", "out", "avg"] = "in",
+            kind: tuple[Literal["in", "out", "avg"]] = ("in",),
             _seed: int | None = None
-            ) -> np.ndarray:
-        """Train embeddings for a single frame and return the matrix.
+            ) -> list[tuple[np.ndarray, str]]:
+        """Train embeddings for a single frame and return the matrix containing embeddings of the specified `kind`.
 
         Args:
             frame_id: 1-based frame index to embed.
@@ -455,6 +457,10 @@ class Embedder:
             window_size: Skip-gram symmetric window radius.
             num_negative_samples: Negatives per positive pair (SGNS only).
             batch_size: Minibatch size for training.
+            in_weights: Optional starting input-embedding matrix of shape (V, D).
+            out_weights: Optional starting output-embedding matrix of shape (V, D).
+                        SGNS: shape (V, D)
+                        SG:   shape (D, V)
             lr_step_per_batch: If ``True``, step LR every batch (else per epoch).
             shuffle_data: Shuffle pairs each epoch.
             dimensionality: Embedding dimension ``D``.
@@ -466,10 +472,11 @@ class Embedder:
             _seed: Optional override seed for this frame.
 
         Returns:
-            ``(V, D)`` float32 embedding matrix.
+            list[tuple[np.ndarray, Literal["avg","in","out"]]]:
+                (embedding, kind) pairs sorted as 'avg', 'in', 'out'.
         """
         _logger.info(
-            "embed_frame: frame=%d RIN=%s using=%s base=%s D=%d epochs=%d batch=%d sgns=%s k=%d alpha=%.3f",
+            "embed_frame: frame=%d RIN=%s using=%s base=%s D=%d epochs=%d batch=%d sgns=%s window_size=%d alpha=%.3f",
             frame_id, RIN_type, using, model_base, dimensionality, num_epochs, batch_size,
             str(negative_sampling), window_size, alpha
         )
@@ -505,6 +512,8 @@ class Embedder:
         constructor_kwargs.update({
             "V": self.vocab_size,
             "D": dimensionality,
+            "in_weights": in_weights,
+            "out_weights": out_weights,
             "seed": int(self._seed if _seed is None else _seed),
             "device": device
         })
@@ -537,20 +546,19 @@ class Embedder:
         _logger.info("Training complete for frame %d", frame_id)
         # ----------------------------------------------------------
 
+        if any([k not in ("in", "out", "avg") for k in kind]):
+            raise NameError(f"Unknown embeddings kind in {kind}. Expected: one of ['in', 'out', 'avg']")
+
         # OUTPUT:
-        embeddings = (model.in_embeddings  if kind == "in" else  
-                      model.out_embeddings if kind == "out" else
-                      model.avg_embeddings if kind == "avg" else
-                      None
-                )
+        embeddings = [(np.asarray(model.in_embeddings, dtype=np.float32),  k)  if k == "in" else  
+                      (np.asarray(model.out_embeddings, dtype=np.float32), k)  if k == "out" else
+                      (np.asarray(model.avg_embeddings, dtype=np.float32), k)  if k == "avg" else
+                      (None, k)
+                      for k in kind
+                    ]
+        embeddings.sort(key=lambda pair: pair[1]) # ensures 'avg', 'in', 'out' ordering
 
-        if embeddings is None:
-            if kind not in ("in", "out", "avg"):
-                raise NameError(f"Unknown {kind} embeddings kind. Expected: one of ['in', 'out', 'avg']")
-
-        E = np.asarray(embeddings, dtype=np.float32)
-        _logger.debug("Returned embeddings shape: %s dtype=%s", E.shape, E.dtype)
-        return E
+        return embeddings
 
     def embed_all(
         self,
@@ -621,10 +629,16 @@ class Embedder:
         child_seeds = master_ss.spawn(self.frame_count)
 
         embeddings: list[np.ndarray] = []
+        last_frame_in_embs:  np.ndarray = None
+        last_frame_out_embs: np.ndarray = None
+        used_child_seeds: list[int] = []
         for frame_id, seed_seq in enumerate(child_seeds, start=1):
             child_seed = int(seed_seq.generate_state(1, dtype=np.uint32)[0])
+            used_child_seeds.append(child_seed)
             _logger.info("Embedding frame %d/%d with seed=%d", frame_id, self.frame_count, child_seed)
-            E = self.embed_frame(
+            
+            embs_and_kinds: list[tuple[np.ndarray, str]] = \
+                self.embed_frame(
                     frame_id=frame_id,
                     RIN_type=RIN_type,
                     using=using,
@@ -633,6 +647,8 @@ class Embedder:
                     window_size=window_size,
                     num_negative_samples=num_negative_samples,
                     batch_size=batch_size,
+                    in_weights=last_frame_in_embs,
+                    out_weights=last_frame_out_embs,
                     lr_step_per_batch=lr_step_per_batch,
                     shuffle_data=shuffle_data,
                     dimensionality=dimensionality,
@@ -640,11 +656,18 @@ class Embedder:
                     device=device,
                     model_base=model_base,
                     model_kwargs=model_kwargs,
-                    kind=kind,
+                    kind=("in", "out", "avg"),
                     _seed=child_seed
                 )
-            embeddings.append(np.asarray(E, dtype=np.float32, copy=False))
-            _logger.debug("Frame %d embedded: E.shape=%s", frame_id, E.shape)
+            embs = {K: E for (E, K) in embs_and_kinds}
+
+            last_frame_in_embs  = embs["in"]                          # (V, D)
+            last_frame_out_embs = embs["out"] if negative_sampling else embs["out"].T  # SG needs (D, V), SGNS keeps (V, D)
+
+            resolved_embedding = embs[kind]
+            embeddings.append(np.asarray(resolved_embedding, dtype=np.float32, copy=False))
+            
+            _logger.debug("Frame %d embedded: E.shape=%s", frame_id, resolved_embedding.shape)
 
         block_name = "FRAME_EMBEDDINGS"
         with sawnergy_util.ArrayStorage.compress_and_cleanup(output_path, compression_level=compression_level) as storage:
@@ -692,8 +715,7 @@ class Embedder:
 
             # Reproducibility
             storage.add_attr("master_seed", int(self._seed))
-            # Note: this records seeds derived from child SeedSequences at metadata time.
-            storage.add_attr("per_frame_seeds", [int(s.generate_state(1, dtype=np.uint32)[0]) for s in child_seeds])
+            storage.add_attr("per_frame_seeds", [int(s) for s in used_child_seeds])
 
             # Archive/IO details
             storage.add_attr("arrays_per_chunk", int(num_matrices_in_compressed_blocks))
