@@ -251,20 +251,49 @@ def walks_archive_path(
 
 
 # ---------------------------------------------------------------------------
-# Stub SGNS implementation for embedding tests
+# Stub SG/SGNS implementation for embedding tests (now records warm starts)
 # ---------------------------------------------------------------------------
 
 
 class _StubSGNS:
-    call_log: List[int] = []
+    """Tiny deterministic model used to stub both SGNS and SG.
 
-    def __init__(self, V: int, D: int, *, seed: int | None = None, **_):
+    Behavior:
+      - fit() produces:
+          in[i, :]  = base + linspace(0, 1, D)
+          out[i, :] = base + 0.5 + linspace(0, 1, D)
+      - call_log records the seed used in fit() (one entry per frame).
+      - init_log records constructor-time warm starts (shapes + copies).
+    """
+    call_log: List[int] = []
+    init_log: List[dict] = []
+
+    def __init__(self,
+                 V: int,
+                 D: int,
+                 in_weights: np.ndarray | None = None,
+                 out_weights: np.ndarray | None = None,
+                 *,
+                 seed: int | None = None,
+                 **_):
         self.V = int(V)
         self.D = int(D)
         self.seed = 0 if seed is None else int(seed)
         # Initialize placeholders for required attributes
         self._in = np.zeros((self.V, self.D), dtype=np.float32)
         self._out = np.zeros((self.V, self.D), dtype=np.float32)
+
+        # Record warm starts (keep small tests, so full copies are fine)
+        rec = {
+            "seed": self.seed,
+            "V": self.V,
+            "D": self.D,
+            "in_weights_shape": None if in_weights is None else tuple(np.asarray(in_weights).shape),
+            "out_weights_shape": None if out_weights is None else tuple(np.asarray(out_weights).shape),
+            "in_weights": None if in_weights is None else np.array(in_weights, dtype=np.float32, copy=True),
+            "out_weights": None if out_weights is None else np.array(out_weights, dtype=np.float32, copy=True),
+        }
+        _StubSGNS.init_log.append(rec)
 
     def fit(self, *_, **__):
         rng = np.random.default_rng(self.seed)
@@ -294,6 +323,7 @@ class _StubSGNS:
 
 @pytest.fixture
 def patched_sgns(monkeypatch):
+    # Route both ("sgns" and "sg") to the same stub class.
     monkeypatch.setattr(
         embedder_module.Embedder,
         "_get_NN_constructor_from",
@@ -309,8 +339,8 @@ def embeddings_archive_path(
     tmp_path: Path,
 ) -> Path:
     _StubSGNS.call_log.clear()
+    _StubSGNS.init_log.clear()
 
-    # Embedder no longer takes `base=` in __init__
     emb = embedder_module.Embedder(walks_archive_path, seed=999)
 
     out_path = tmp_path / "synthetic_embeddings.zip"

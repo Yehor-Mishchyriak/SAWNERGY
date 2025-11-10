@@ -298,3 +298,115 @@ def test_sg_torch_smoke():
     W = getattr(model, "avg_embeddings", getattr(model, "embeddings", None))
     assert W is not None
     assert np.isfinite(W).all()
+
+
+# ---------------------------------------------------------------------------
+# New tests: embed_frame ordering + warm-start forwarding (SGNS vs SG)
+# ---------------------------------------------------------------------------
+
+def _expected_stub_embeds(V: int, D: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
+    """Helper to compute the deterministic embeddings produced by _StubSGNS.fit()."""
+    rng = np.random.default_rng(seed)
+    base = float(rng.random())
+    ramp = np.linspace(0.0, 1.0, D, dtype=np.float32)
+    in_row = base + ramp
+    out_row = base + 0.5 + ramp
+    E_in = np.tile(in_row, (V, 1)).astype(np.float32)
+    E_out = np.tile(out_row, (V, 1)).astype(np.float32)
+    return E_in, E_out
+
+
+def test_embed_frame_returns_sorted_kinds_and_numpy(walks_archive_path, patched_sgns):
+    _StubSGNS.call_log.clear()
+    _StubSGNS.init_log.clear()
+
+    emb = embedder_module.Embedder(walks_archive_path, seed=111)
+    # Ask in weird order -> Embedder sorts to ('avg','in','out')
+    out = emb.embed_frame(
+        frame_id=1, RIN_type="attr", using="RW",
+        num_epochs=1, negative_sampling=True,
+        window_size=1, num_negative_samples=1, batch_size=4,
+        kind=("out", "avg", "in"),
+    )
+    kinds = [k for (_, k) in out]
+    assert kinds == ["avg", "in", "out"]
+    for arr, _ in out:
+        assert isinstance(arr, np.ndarray)
+        assert arr.dtype == np.float32
+
+
+def test_warm_starts_forwarding_sgns(walks_archive_path, patched_sgns):
+    """SGNS: out warm start should be (V, D)."""
+    _StubSGNS.call_log.clear()
+    _StubSGNS.init_log.clear()
+
+    seed = 2024
+    D = 3
+    emb = embedder_module.Embedder(walks_archive_path, seed=seed)
+    V = emb.vocab_size
+
+    # Run across 2 frames (dataset fixture provides FRAME_COUNT=2)
+    emb.embed_all(
+        RIN_type="attr", using="RW",
+        num_epochs=1, negative_sampling=True,
+        window_size=1, num_negative_samples=1, batch_size=8,
+        dimensionality=D, model_base="torch", model_kwargs={},
+    )
+
+    # Two model constructions, one per frame
+    assert len(_StubSGNS.init_log) == FRAME_COUNT
+
+    # Frame 1: no warm starts
+    first = _StubSGNS.init_log[0]
+    assert first["in_weights_shape"] is None
+    assert first["out_weights_shape"] is None
+
+    # Frame 2: warm starts from frame 1
+    second = _StubSGNS.init_log[1]
+    assert second["in_weights_shape"] == (V, D)
+    assert second["out_weights_shape"] == (V, D)
+
+    # Compute expected frame-1 embeddings from seeds the Embedder uses
+    master = np.random.SeedSequence(seed)
+    child_seeds = [int(s.generate_state(1, dtype=np.uint32)[0]) for s in master.spawn(FRAME_COUNT)]
+    first_seed = child_seeds[0]
+    E_in_expected, E_out_expected = _expected_stub_embeds(V, D, first_seed)
+
+    np.testing.assert_allclose(second["in_weights"], E_in_expected, rtol=0, atol=0)
+    np.testing.assert_allclose(second["out_weights"], E_out_expected, rtol=0, atol=0)
+
+
+def test_warm_starts_forwarding_sg_transposed_out(walks_archive_path, patched_sgns):
+    """SG (full softmax): out warm start should be (D, V) i.e., transpose of previous 'out' (V, D)."""
+    _StubSGNS.call_log.clear()
+    _StubSGNS.init_log.clear()
+
+    seed = 3031
+    D = 4
+    emb = embedder_module.Embedder(walks_archive_path, seed=seed)
+    V = emb.vocab_size
+
+    emb.embed_all(
+        RIN_type="attr", using="RW",
+        num_epochs=1, negative_sampling=False,  # SG path
+        window_size=1, num_negative_samples=1, batch_size=8,
+        dimensionality=D, model_base="torch", model_kwargs={},
+    )
+
+    assert len(_StubSGNS.init_log) == FRAME_COUNT
+
+    first = _StubSGNS.init_log[0]
+    assert first["in_weights_shape"] is None
+    assert first["out_weights_shape"] is None
+
+    second = _StubSGNS.init_log[1]
+    assert second["in_weights_shape"] == (V, D)
+    # Key difference vs SGNS:
+    assert second["out_weights_shape"] == (D, V)
+
+    # Expected transpose check
+    master = np.random.SeedSequence(seed)
+    child_seeds = [int(s.generate_state(1, dtype=np.uint32)[0]) for s in master.spawn(FRAME_COUNT)]
+    first_seed = child_seeds[0]
+    _, E_out_expected = _expected_stub_embeds(V, D, first_seed)
+    np.testing.assert_allclose(second["out_weights"], E_out_expected.T, rtol=0, atol=0)
