@@ -88,6 +88,8 @@ class SGNS_Torch:
         # two embeddings as in/out matrices
         self.in_emb  = nn.Embedding(self.V, self.D)
         self.out_emb = nn.Embedding(self.V, self.D)
+        nn.init.uniform_(self.in_emb.weight,  -0.5 / self.D,  0.5 / self.D)
+        nn.init.zeros_(self.out_emb.weight)
 
         resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.device = torch.device(resolved_device)
