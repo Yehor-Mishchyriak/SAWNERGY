@@ -30,6 +30,8 @@ class SGNS_PureML(NN):
     def __init__(self,
                 V: int,
                 D: int,
+                in_weights: Tensor | None = None,
+                out_weights: Tensor | None = None,
                 *,
                 seed: int | None = None,
                 optim: Type[Optim] = SGD,
@@ -38,16 +40,29 @@ class SGNS_PureML(NN):
                 lr_sched_kwargs: dict | None = None,
                 device: str | None = None):
         """
+        Initialize SGNS.
+
+        Shapes:
+            - Embedding tables:
+                in_weights:  (V, D) or None — row i is the “input” vector for token i.
+                out_weights: (V, D) or None — row i is the “output” vector for token i.
+
         Args:
-            V: Vocabulary size (number of nodes).
+            V: Vocabulary size (number of nodes/tokens).
             D: Embedding dimensionality.
-            seed: Optional RNG seed for negative sampling.
+            in_weights: Optional starting input-embedding matrix of shape (V, D).
+                        If None, the Embedding layer initializes it (seeded if `seed` is set).
+            out_weights: Optional starting output-embedding matrix of shape (V, D).
+                         If None, the Embedding layer initializes it (seeded if `seed` is set).
+            seed: Optional RNG seed used for **embedding initialization** and for
+                  **negative sampling** during training.
             optim: Optimizer class to instantiate. Defaults to plain SGD.
             optim_kwargs: Keyword arguments for the optimizer. Defaults to {"lr": 0.1}.
             lr_sched: Optional learning-rate scheduler class.
             lr_sched_kwargs: Keyword arguments for the scheduler (required if lr_sched is provided).
-            device: Target device string (e.g. "cuda"); accepted for API parity, ignored by PureML.
+            device: Target device string (e.g., "cuda"); accepted for API parity, ignored by PureML.
         """
+
 
         optim_kwargs = optim_kwargs or {"lr": 0.1}
 
@@ -57,15 +72,12 @@ class SGNS_PureML(NN):
         self.V, self.D = int(V), int(D)
 
         # embeddings
-        self.in_emb  = Embedding(self.V, self.D)
-        self.out_emb = Embedding(self.V, self.D)
+        self.in_emb  = Embedding(self.V, self.D, W=in_weights, seed=seed)
+        self.out_emb = Embedding(self.V, self.D, W=out_weights, seed=seed)
 
         # seed + RNG for negative sampling
         self.seed = None if seed is None else int(seed)
         self._rng = np.random.default_rng(self.seed)
-        if self.seed is not None:
-            # optional: also set global NumPy seed for any non-RNG paths
-            np.random.seed(self.seed)
 
         # API compatibility: PureML is CPU-only
         self.device = "cpu"
@@ -133,8 +145,8 @@ class SGNS_PureML(NN):
         for epoch in range(1, num_epochs + 1):
             epoch_loss = 0.0
             batches = 0
-
-            for cen, pos in DataLoader(data, batch_size=batch_size, shuffle=shuffle_data):
+            dl_seed = None if self.seed is None else (self.seed + epoch)
+            for cen, pos in DataLoader(data, batch_size=batch_size, shuffle=shuffle_data, seed=dl_seed):
                 B = cen.data.shape[0] if isinstance(cen, Tensor) else len(cen)
 
                 neg_idx_np = self._sample_neg(B, num_negative_samples, dist)
@@ -199,21 +211,24 @@ class SGNS_PureML(NN):
 class SG_PureML(NN):
     """Plain Skip-Gram (full softmax) in PureML.
 
-    Trains two affine layers to emulate the classic Skip-Gram objective with a
-    **full** softmax over the vocabulary (no negative sampling):
+    This variant uses **no bias terms**: both projections are pure linear maps.
 
-        x = one_hot(center, V)                 # (B, V)
-        y = x @ W_in + b_in                    # (B, D)
-        logits = y @ W_out + b_out             # (B, V)
+    Computation:
+        x = one_hot(center, V)          # (B, V)
+        y = x @ W_in                    # (B, D), with W_in ∈ R^{VxD}
+        logits = y @ W_out              # (B, V), with W_out ∈ R^{DxV}
         loss = CCE(one_hot(context, V), logits, from_logits=True)
 
-    The learnable “input” embeddings are the rows of `W_in` (shape `(V, D)`), and
-    the “output” embeddings are the rows of `W_outᵀ` (also `(V, D)`).
+    Embeddings:
+        - Input embeddings  = rows of W_in        → shape (V, D)
+        - Output embeddings = rows of W_outᵀ      → shape (V, D)
     """
 
     def __init__(self,
                 V: int,
                 D: int,
+                in_weights: Tensor | None = None,
+                out_weights: Tensor | None = None,
                 *,
                 seed: int | None = None,
                 optim: Type[Optim] = SGD,
@@ -221,12 +236,24 @@ class SG_PureML(NN):
                 lr_sched: Type[LRScheduler] | None = None,
                 lr_sched_kwargs: dict | None = None,
                 device: str | None = None):
-        """Initialize the plain Skip-Gram model (full softmax).
+        """Initialize the plain Skip-Gram model (full softmax, **no biases**).
+
+        Shapes:
+            - Linear maps (no bias):
+                W_in:  (V, D) — rows are input embeddings for tokens.
+                W_out: (D, V) — maps D→V; rows of W_outᵀ are output embeddings.
+
+            - Warm-starts:
+                in_weights:  (V, D) or None — copied into W_in if provided.
+                out_weights: (D, V) or None — copied into W_out if provided.
 
         Args:
             V: Vocabulary size (number of nodes/tokens).
             D: Embedding dimensionality.
-            seed: Optional RNG seed (kept for API parity; not used in layer init).
+            in_weights: Optional starting matrix for W_in with shape (V, D).
+            out_weights: Optional starting matrix for W_out with shape (D, V).
+                         (Note the asymmetry with SGNS; use `.T` if converting from (V, D).)
+            seed: Optional RNG seed (used for layer initialization).
             optim: Optimizer class to instantiate. Defaults to plain SGD.
             optim_kwargs: Keyword arguments for the optimizer. Defaults to {"lr": 0.1}.
             lr_sched: Optional learning-rate scheduler class.
@@ -241,8 +268,8 @@ class SG_PureML(NN):
         self.V, self.D = int(V), int(D)
 
         # input/output “embedding” projections
-        self.in_emb  = Affine(self.V, self.D)
-        self.out_emb = Affine(self.D, self.V)
+        self.in_emb  = Affine(self.V, self.D, W=in_weights, bias=False, seed=seed)
+        self.out_emb = Affine(self.D, self.V, W=out_weights, bias=False, seed=seed)
 
         self.seed = None if seed is None else int(seed)
         self.device = "cpu"  # API parity
@@ -305,11 +332,11 @@ class SG_PureML(NN):
         for epoch in range(1, num_epochs + 1):
             epoch_loss = 0.0
             batches = 0
-
-            for cen, ctx in DataLoader(data, batch_size=batch_size, shuffle=shuffle_data):
+            dl_seed = None if self.seed is None else (self.seed + epoch)
+            for cen, ctx in DataLoader(data, batch_size=batch_size, shuffle=shuffle_data, seed=dl_seed):
                 logits = self(cen)                          # (B, V)
-                y = one_hot(self.V, label=ctx)             # (B, V)
-                loss = CCE(y, logits, from_logits=True)    # scalar
+                y = one_hot(dims=self.V, label=ctx)         # (B, V)
+                loss = CCE(y, logits, from_logits=True)     # scalar
 
                 self.optim.zero_grad()
                 loss.backward()
