@@ -8,8 +8,8 @@ authors:
 repository-code: https://github.com/Yehor-Mishchyriak/SAWNERGY
 url: https://github.com/Yehor-Mishchyriak/SAWNERGY
 license: Apache-2.0
-version: 1.0.0
-date-released: 2025-10-22
+version: 1.0.9
+date-released: 2025-11-10
 keywords:
   - molecular dynamics
   - residue interaction networks
