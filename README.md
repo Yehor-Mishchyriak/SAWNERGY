@@ -25,14 +25,15 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 # UPDATES:
 
 ## v1.0.9 — What’s new:
-- **`SGNS_Torch` is no longer deprecated**
-  - The issue indeed was weights initialization.
-- **`SG_Torch` and `SG_PureML` no longer use biases**
-  - From now on, Affine/Linear layers no longer translate embeddings away from the origin.
-- **Added warm starts of frame embeddings**
-  - Now the next frame's embedding process is done from the preceeding frame's representation. It not only makes convergence faster, but also keeps everything in approximately the same basis.
-- **Added an alignment function for comparing embeddings from different latent spaces**
-  - The function is based on the solution to the "Orthogonal Procrustes problem". The idea is given two sets of embeddings, we find an orthogonal transformation that does the "best effort" mapping from one basis to the other. Note that since it is orthogonal, it preserves all the angles and relative distances making it possible to directly compare embeddings originally from different bases.
+v1.0.9 — What’s new:
+- **`SGNS_Torch` is no longer deprecated.**
+  - The root cause was weight initialization; it’s fixed.
+- **`SG_Torch` and `SG_PureML` no longer use biases.**
+  - Affine/Linear layers no longer translate embeddings away from the origin.
+- **Warm starts for frame embeddings.**
+  - Each frame initializes from the preceding frame’s representation. This speeds convergence and keeps the basis approximately consistent.
+- **Alignment function for comparing embeddings from different latent spaces.**
+  - Based on the Orthogonal Procrustes solution: finds the best-fit orthogonal map between two embedding sets. Orthogonality preserves angles and relative distances, enabling direct comparison across bases.
 
 ## v1.0.8 — What’s new:
 - **Temporary deprecation of `SGNS_Torch`**
