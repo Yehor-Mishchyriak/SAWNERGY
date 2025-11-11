@@ -729,8 +729,73 @@ class Embedder:
 
         return str(output_path)
 
+# *----------------------------------------------------*
+#                       FUNCTIONS
+# *----------------------------------------------------*
 
-__all__ = ["Embedder"]
+def align_frames(this: np.ndarray,
+                 to_this: np.ndarray,
+                 *,
+                 center: bool = True,
+                 add_back_mean: bool = True,
+                 allow_reflection: bool = False) -> np.ndarray:
+    """
+    Align `this` to `to_this` via Orthogonal Procrustes.
+
+    Solves:  min_{R ∈ O(D)} || X R - Y ||_F
+    with X = this, Y = to_this (both shape (N, D)). Returns X aligned.
+
+    Args:
+        this: (N, D) matrix to be aligned.
+        to_this: (N, D) target matrix.
+        center: if True, subtract per-dimension means before solving.
+        add_back_mean: if True, add Y's mean back after alignment.
+        allow_reflection: if False, enforce det(R) = +1 (proper rotation).
+
+    Returns:
+        Aligned copy of `this` with shape (N, D).
+    """
+    X = np.asarray(this, dtype=np.float64)
+    Y = np.asarray(to_this, dtype=np.float64)
+
+    if X.ndim != 2 or Y.ndim != 2:
+        raise ValueError(f"Expected 2D arrays; got {X.ndim=} and {Y.ndim=}")
+    if X.shape[1] != Y.shape[1]:
+        raise ValueError(f"Dimensionalities must match: X.shape={X.shape}, Y.shape={Y.shape}")
+    if X.shape[0] != Y.shape[0]:
+        raise ValueError(f"Row counts must match (one-to-one correspondence): {X.shape[0]} vs {Y.shape[0]}")
+
+    # center
+    if center:
+        X_mean = X.mean(axis=0, keepdims=True)
+        Y_mean = Y.mean(axis=0, keepdims=True)
+        Xc = X - X_mean
+        Yc = Y - Y_mean
+    else:
+        Xc, Yc = X, Y
+        Y_mean = 0.0
+
+    # Cross-covariance and SVD
+    # M = Xᵀ Y (D×D); solution R = U Vᵀ for SVD(M) = U Σ Vᵀ
+    M = Xc.T @ Yc
+    U, _, Vt = np.linalg.svd(M, full_matrices=False)
+    R = U @ Vt
+
+    # enforce proper rotation unless reflections are allowed
+    if not allow_reflection and np.linalg.det(R) < 0:
+        Vt[-1, :] *= -1
+        R = U @ Vt
+
+    X_aligned = Xc @ R
+
+    if center and add_back_mean is True:
+        X_aligned = X_aligned + Y_mean
+
+    # match input dtype if possible
+    return X_aligned.astype(this.dtype, copy=False)
+
+
+__all__ = ["Embedder", "align_frames"]
 
 if __name__ == "__main__":
     pass
