@@ -410,3 +410,174 @@ def test_warm_starts_forwarding_sg_transposed_out(walks_archive_path, patched_sg
     first_seed = child_seeds[0]
     _, E_out_expected = _expected_stub_embeds(V, D, first_seed)
     np.testing.assert_allclose(second["out_weights"], E_out_expected.T, rtol=0, atol=0)
+
+
+def _rand_orthogonal(D: int, *, allow_reflection: bool) -> np.ndarray:
+    """Random orthogonal matrix; det sign controlled by allow_reflection."""
+    A = np.random.default_rng(0).standard_normal((D, D))
+    Q, R = np.linalg.qr(A)
+    # Make Q a true orthogonal with det=+1 baseline
+    if np.linalg.det(Q) < 0:
+        Q[:, -1] *= -1
+    if allow_reflection:
+        # Flip one axis to induce det=-1
+        Q[:, -1] *= -1
+    return Q
+
+
+@pytest.mark.parametrize("N,D", [(5, 3), (20, 3), (10, 8)])
+def test_align_identity_noop(N, D):
+    """If X==Y (up to centering/add_back), aligned output should equal Y."""
+    rng = np.random.default_rng(42)
+    X = rng.standard_normal((N, D))
+    Y = X.copy()
+
+    Z = embedder_module.align_frames(X, Y, center=True, add_back_mean=True, allow_reflection=False)
+    np.testing.assert_allclose(Z, Y, rtol=1e-6, atol=1e-6)
+
+    # Also without centering (means identical): still a noop
+    Z2 = embedder_module.align_frames(X, Y, center=False, add_back_mean=False, allow_reflection=False)
+    np.testing.assert_allclose(Z2, Y, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize("N,D", [(7, 3), (13, 3), (9, 5)])
+def test_translation_invariance_with_centering(N, D):
+    """Centering + add_back_mean should absorb arbitrary translations."""
+    rng = np.random.default_rng(1)
+    X = rng.standard_normal((N, D))
+    tX = rng.uniform(-3, 3, size=(1, D))
+    tY = rng.uniform(-2, 2, size=(1, D))
+    R = _rand_orthogonal(D, allow_reflection=False)
+
+    X_shifted = X + tX
+    Y = X @ R + tY
+
+    Z = embedder_module.align_frames(X_shifted, Y, center=True, add_back_mean=True, allow_reflection=False)
+    np.testing.assert_allclose(Z, Y, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize("N,D", [(12, 3), (25, 3), (10, 6)])
+def test_recovers_rotation_exact_when_proper(N, D):
+    """When Y = X @ R with det R = +1, alignment should be exact (up to fp)."""
+    rng = np.random.default_rng(7)
+    X = rng.standard_normal((N, D))
+    R = _rand_orthogonal(D, allow_reflection=False)
+    Y = X @ R + rng.normal(scale=0.0, size=(1, D))  # optional tiny shift 0
+
+    Z = embedder_module.align_frames(X, Y, center=True, add_back_mean=True, allow_reflection=False)
+    np.testing.assert_allclose(Z, Y, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize("N,D", [(15, 3), (10, 4)])
+def test_reflection_behavior(N, D):
+    """
+    If Y = X @ S with det S = -1:
+      - allow_reflection=True should match Y almost exactly.
+      - allow_reflection=False must reject reflection and achieve the best proper rotation:
+        error(proper) <= error(naive) and error(proper) > 0 (unless data is degenerate).
+    """
+    rng = np.random.default_rng(11)
+    X = rng.standard_normal((N, D))
+    S_reflect = _rand_orthogonal(D, allow_reflection=True)  # det=-1
+    Y = X @ S_reflect + rng.uniform(-1, 1, size=(1, D))
+
+    # With reflection allowed: exact alignment (up to fp)
+    Z_ref = embedder_module.align_frames(X, Y, center=True, add_back_mean=True, allow_reflection=True)
+    err_ref = np.linalg.norm(Z_ref - Y, ord="fro")
+    assert err_ref <= 1e-6 * max(1.0, np.linalg.norm(Y, ord="fro"))
+
+    # Without reflection: should not be exact if data is non-degenerate
+    Z_proper = embedder_module.align_frames(X, Y, center=True, add_back_mean=True, allow_reflection=False)
+    err_proper = np.linalg.norm(Z_proper - Y, ord="fro")
+
+    # Construct a naive 'wrong' rotation by forcing det=+1 incorrectly (e.g., flip last axis on X directly)
+    # Just to compare relative error scales:
+    Q_naive = S_reflect.copy()
+    Q_naive[:, -1] *= -1  # det now +1, but not the optimal Procrustes solution in general
+    Y_naive = X @ Q_naive + (Y.mean(axis=0, keepdims=True) - (X @ Q_naive).mean(axis=0, keepdims=True))
+
+    err_naive = np.linalg.norm((X - X.mean(0)) @ Q_naive - (Y - Y.mean(0)), ord="fro")
+
+    assert err_proper <= err_naive + 1e-8  # optimality
+    # For generic non-degenerate X, rejecting reflection should incur some error:
+    assert err_proper > 1e-9
+
+
+@pytest.mark.parametrize("N,D", [(30, 3)])
+def test_center_false_means_matter(N, D):
+    """With center=False, translations remain; centered solve should fit better."""
+    rng = np.random.default_rng(21)
+    X = rng.standard_normal((N, D))
+    R = _rand_orthogonal(D, allow_reflection=False)
+    tX = rng.normal(size=(1, D))
+    tY = rng.normal(size=(1, D))
+
+    Xs = X + tX
+    Y = X @ R + tY
+
+    # Uncentered Procrustes: rotation is fit *including* translation bias.
+    Z_nc = embedder_module.align_frames(
+        Xs, Y, center=False, add_back_mean=False, allow_reflection=False
+    )
+
+    # 1) Means are not forced to match when center=False.
+    assert not np.allclose(Z_nc.mean(axis=0), Y.mean(axis=0))
+
+    # 2) A centered solve must not be worse (usually strictly better).
+    Z_c = embedder_module.align_frames(
+        Xs, Y, center=True, add_back_mean=True, allow_reflection=False
+    )
+    err_nc = np.linalg.norm(Z_nc - Y, ord="fro")
+    err_c = np.linalg.norm(Z_c - Y, ord="fro")
+    assert err_c <= err_nc + 1e-9
+
+    # 3) In the centered solve, the centered shapes match to fp tolerance.
+    Zc = embedder_module.align_frames(
+        Xs, Y, center=True, add_back_mean=False, allow_reflection=False
+    )
+    Yc = Y - Y.mean(axis=0, keepdims=True)
+    np.testing.assert_allclose(Zc, Yc, rtol=1e-6, atol=1e-6)
+
+
+def test_dtype_and_copy_contract():
+    """Return dtype should match input dtype; avoid unnecessary copies."""
+    rng = np.random.default_rng(5)
+    X = rng.standard_normal((10, 3)).astype(np.float32)
+    R = _rand_orthogonal(3, allow_reflection=False)
+    Y = (X @ R).astype(np.float32)
+
+    Z = embedder_module.align_frames(X, Y, center=True, add_back_mean=True, allow_reflection=False)
+    assert Z.dtype == np.float32
+    # Basic sanity: content's right
+    np.testing.assert_allclose(Z, Y, rtol=1e-5, atol=1e-5)
+
+
+def test_shape_and_dim_errors():
+    X = np.zeros((5, 3))
+    Y = np.zeros((6, 3))
+    with pytest.raises(ValueError):
+        embedder_module.align_frames(X, Y)
+
+    X = np.zeros((5, 3, 1))
+    Y = np.zeros((5, 3))
+    with pytest.raises(ValueError):
+        embedder_module.align_frames(X, Y)
+
+    X = np.zeros((5, 3))
+    Y = np.zeros((5, 2))
+    with pytest.raises(ValueError):
+        embedder_module.align_frames(X, Y)
+
+
+def test_degenerate_zero_crosscov_returns_identity_like():
+    """
+    If Xc^T Yc == 0, SVD can return U,V arbitrary; R = U V^T is still orthogonal.
+    We just require it doesn't crash and gives a valid transform.
+    """
+    N, D = 10, 3
+    X = np.zeros((N, D))
+    Y = np.zeros((N, D))
+    Z = embedder_module.align_frames(X, Y, center=True, add_back_mean=False, allow_reflection=False)
+    # All zeros in, all zeros out
+    assert np.all(Z == 0)
+
