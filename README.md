@@ -25,7 +25,6 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 # UPDATES:
 
 ## v1.0.9 — What’s new:
-v1.0.9 — What’s new:
 - **`SGNS_Torch` is no longer deprecated.**
   - The root cause was weight initialization; it’s fixed.
 - **`SG_Torch` and `SG_PureML` no longer use biases.**
