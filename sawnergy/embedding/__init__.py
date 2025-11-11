@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .embedder import Embedder
+from .embedder import Embedder, align_frames
 from .visualizer import Visualizer
 
 def __getattr__(name: str):
@@ -50,6 +50,7 @@ def __getattr__(name: str):
 
 __all__ = [
     "Embedder",
+    "align_frames",
     "Visualizer",
     "SGNS_PureML",
     "SGNS_Torch",
