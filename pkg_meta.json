@@ -1,6 +1,6 @@
 {
   "name": "sawnergy",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Toolkit for transforming molecular dynamics (MD) trajectories into rich graph representations",
   "long_description": "[PLACE_HOLDER]",
   "long_description_content_type": "text/markdown",
