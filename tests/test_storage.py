@@ -40,3 +40,13 @@ def test_delete_block_errors_in_readonly(tmp_path):
     with sawnergy_util.ArrayStorage(p, mode="r") as st:
         with pytest.raises(RuntimeError):
             st.delete_block("X")
+
+def test_repr_lists_blocks_sorted(tmp_path):
+    p = tmp_path / "arrs5"
+    with sawnergy_util.ArrayStorage(p, mode="w") as st:
+        st.write([np.zeros((1,), dtype=np.int32)], to_block_named="B")
+        st.write([np.zeros((1,), dtype=np.int32)], to_block_named="A")
+        blocks = st.list_blocks()
+        assert blocks == ["A", "B"]
+        rep = repr(st)
+        assert "ArrayStorage" in rep and "blocks=2" in rep

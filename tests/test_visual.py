@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from sawnergy.visual import visualizer as visualizer_module
 
@@ -44,3 +45,14 @@ def test_repulsive_edges_available(rin_archive_path_both, patched_visualizer):
     # Ensure update path does not crash and records segments
     vis._update_repuls_edges(np.zeros((0, 2, 3)), colors=np.zeros((0, 4)), opacity=None)
 
+
+def test_displayed_nodes_require_integers(rin_archive_path_both, patched_visualizer):
+    vis = visualizer_module.Visualizer(rin_archive_path_both, show=False)
+    with pytest.raises(TypeError):
+        vis.build_frame(
+            1,
+            displayed_nodes=[1.5],
+            displayed_pairwise_attraction_for_nodes=None,
+            displayed_pairwise_repulsion_for_nodes=None,
+            show=False,
+        )

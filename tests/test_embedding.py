@@ -412,6 +412,35 @@ def test_warm_starts_forwarding_sg_transposed_out(walks_archive_path, patched_sg
     np.testing.assert_allclose(second["out_weights"], E_out_expected.T, rtol=0, atol=0)
 
 
+def test_embed_frame_skips_noise_for_plain_sg(monkeypatch, walks_archive_path, patched_sgns):
+    called = {"noise": False}
+
+    def _fail_soft(*args, **kwargs):
+        called["noise"] = True
+        raise AssertionError("SG objective should not build noise distribution")
+
+    monkeypatch.setattr(embedder_module.Embedder, "_soft_unigram", staticmethod(_fail_soft))
+
+    emb = embedder_module.Embedder(walks_archive_path, seed=0)
+    emb.embed_frame(
+        frame_id=1,
+        RIN_type="attr",
+        using="RW",
+        num_epochs=1,
+        negative_sampling=False,
+        window_size=1,
+        num_negative_samples=1,
+        batch_size=2,
+        shuffle_data=False,
+        dimensionality=2,
+        alpha=0.75,
+        model_base="torch",
+        model_kwargs={},
+        kind=("in",),
+    )
+    assert called["noise"] is False
+
+
 def _rand_orthogonal(D: int, *, allow_reflection: bool) -> np.ndarray:
     """Random orthogonal matrix; det sign controlled by allow_reflection."""
     A = np.random.default_rng(0).standard_normal((D, D))
@@ -580,4 +609,3 @@ def test_degenerate_zero_crosscov_returns_identity_like():
     Z = embedder_module.align_frames(X, Y, center=True, add_back_mean=False, allow_reflection=False)
     # All zeros in, all zeros out
     assert np.all(Z == 0)
-

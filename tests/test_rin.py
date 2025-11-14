@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
 import numpy as np
+import pytest
 
 from sawnergy import sawnergy_util
-from sawnergy.rin import rin_builder
+from sawnergy.rin import rin_builder, rin_util
 
 from .conftest import (
     COM_COORDS,
@@ -45,3 +51,34 @@ def test_rin_archive_attractive_channel(rin_archive_path):
         np.testing.assert_allclose(energies[idx], attr_energy)
         np.testing.assert_allclose(transitions[idx], attr_transition)
         np.testing.assert_allclose(com[idx], COM_COORDS[frame_id])
+
+
+def test_locate_cpptraj_deduplicates_candidates(monkeypatch, tmp_path):
+    exe = tmp_path / "cpptraj"
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+
+    monkeypatch.setenv("CPPTRAJ", str(exe))
+
+    def fake_which(name):
+        if name.startswith("cpptraj"):
+            return str(exe)
+        return None
+
+    monkeypatch.setattr(shutil, "which", fake_which)
+    monkeypatch.setattr(os, "access", lambda path, mode: True)
+
+    calls = []
+
+    def fake_run(cmd, capture_output, text, timeout):
+        calls.append(Path(cmd[0]))
+        class _Res:
+            returncode = 0
+            stderr = ""
+        return _Res()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    resolved = rin_util.locate_cpptraj(explicit=exe, verify=True)
+    assert Path(resolved) == exe.resolve()
+    assert len(calls) == 1  # explicit/env/PATH duplicates only probed once
