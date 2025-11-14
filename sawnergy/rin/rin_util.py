@@ -196,6 +196,8 @@ def locate_cpptraj(explicit: Path | None = None, verify: bool = True) -> str:
     if os.getenv("AMBERHOME"): candidates.append(Path(os.getenv("AMBERHOME")) / "bin" / "cpptraj")
     if os.getenv("CONDA_PREFIX"): candidates.append(Path(os.getenv("CONDA_PREFIX")) / "bin" / "cpptraj")
 
+    candidates = list(dict.fromkeys(candidates))
+
     _logger.info(f"Checking the following paths for cpptraj presence: {candidates}")
     for p in candidates:
         if p and p.exists() and os.access(p, os.X_OK):
