@@ -430,7 +430,7 @@ class Embedder:
             using: Literal["RW", "SAW", "merged"],
             num_epochs: int,
             negative_sampling: bool = False,
-            window_size: int = 5,
+            window_size: int = 2,
             num_negative_samples: int = 10,
             batch_size: int = 1024,
             *,
