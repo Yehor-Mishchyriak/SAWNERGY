@@ -239,6 +239,8 @@ class Visualizer:
 
     # convenience
     def savefig(self, path: str | Path, *, dpi: int = 150) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
         self._fig.savefig(path, dpi=dpi)
 
     def close(self) -> None:
