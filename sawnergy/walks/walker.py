@@ -313,7 +313,8 @@ class Walker:
             if mass <= 0.0:
                 _logger.error("_step_node: zero probability mass without avoidance")
                 raise RuntimeError("No valid node transitions: zero probability mass.")
-            return int(self.rng.choice(self.nodes, p=prob_dist)), None
+            probs = walker_util.l1_norm(prob_dist)
+            return int(self.rng.choice(self.nodes, p=probs)), None
 
         to_avoid = np.asarray(avoid, dtype=np.intp)
         keep = np.setdiff1d(self.nodes, to_avoid, assume_unique=False)
@@ -478,18 +479,19 @@ class Walker:
         nodes_to_avoid: np.ndarray | None = np.array([node], dtype=np.intp) if self_avoid else None
         time_stamps_to_avoid: np.ndarray | None = None
 
-        pth = np.array([node], dtype=np.intp)
+        pth = np.empty(length + 1, dtype=np.intp)
+        pth[0] = node
 
         if time_aware and (stickiness is None or on_no_options is None):
             _logger.error("time_aware=True but stickiness/on_no_options missing")
             raise ValueError("time_aware=True requires both `stickiness` and `on_no_options`.")
 
-        for _ in range(length):
+        for step in range(1, length + 1):
             if self_avoid:
                 node, nodes_to_avoid = self._step_node(node, interaction_type, time_stamp, nodes_to_avoid)
             else:
                 node, _ = self._step_node(node, interaction_type, time_stamp, avoid=None)
-            pth = np.append(pth, node).astype(np.intp, copy=False)
+            pth[step] = node
 
             if time_aware:
                 time_stamp, time_stamps_to_avoid = self._step_time(
