@@ -3,19 +3,24 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from datetime import datetime
 
+_logger = logging.getLogger(__name__)
+
 
 def configure_logging(
     logs_dir: Path | str,
     file_level: int = logging.WARNING,
-    console_level: int = logging.WARNING
+    console_level: int = logging.WARNING,
+    force: bool = False,
 ) -> None:
     """
     Configure a logger with a timed rotating file handler and console handler.
 
     Args:
         logs_dir: Directory where log files will be stored.
-        file_level: Logging level for the file handler (default: DEBUG).
+        file_level: Logging level for the file handler (default: WARNING).
         console_level: Logging level for the console handler (default: WARNING).
+        force: If True, remove existing handlers on the root logger before
+            configuring new ones.
     """
 
     if isinstance(logs_dir, str):
@@ -23,7 +28,15 @@ def configure_logging(
 
     root = logging.getLogger()
     if root.handlers:
-        return
+        if not force:
+            return
+        _logger.info("configure_logging(force=True): clearing %d existing handler(s)", len(root.handlers))
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:
+                _logger.debug("Failed to close handler %r during force reset", handler, exc_info=True)
 
     logs_dir.mkdir(parents=True, exist_ok=True)
 
