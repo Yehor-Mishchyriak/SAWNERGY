@@ -378,7 +378,8 @@ class Embedder:
                                     frame_id: int,
                                     using: Literal["RW", "SAW", "merged"],
                                     window_size: int,
-                                    alpha: float = 0.75) -> tuple[np.ndarray, np.ndarray]:
+                                    alpha: float = 0.75,
+                                    need_noise: bool = True) -> tuple[np.ndarray, np.ndarray | None]:
         """Construct (center, context) pairs and noise distribution for ATTR.
 
         Args:
@@ -386,6 +387,7 @@ class Embedder:
             using: Walk subset to include.
             window_size: Skip-gram window radius.
             alpha: Unigram smoothing exponent.
+            need_noise: Whether to build a unigram noise distribution (SGNS only).
 
         Returns:
             Tuple of (pairs, noise_probs).
@@ -393,7 +395,12 @@ class Embedder:
         walks = self._materialize_walks(frame_id, "attr", using)
         walks0 = self._as_zerobase_intp(walks, V=self.vocab_size)
         attractive_corpus = self._pairs_from_walks(walks0, window_size)
-        attractive_noise_probs = self._soft_unigram(self._freq_from_walks(walks0, V=self.vocab_size), power=alpha)
+        attractive_noise_probs: np.ndarray | None = None
+        if need_noise:
+            attractive_noise_probs = self._soft_unigram(
+                self._freq_from_walks(walks0, V=self.vocab_size),
+                power=alpha,
+            )
         _logger.info("ATTR corpus ready: pairs=%d", 0 if attractive_corpus is None else attractive_corpus.shape[0])
         
         return attractive_corpus, attractive_noise_probs
@@ -402,7 +409,8 @@ class Embedder:
                                    frame_id: int,
                                    using: Literal["RW", "SAW", "merged"],
                                    window_size: int,
-                                   alpha: float = 0.75) -> tuple[np.ndarray, np.ndarray]:
+                                   alpha: float = 0.75,
+                                   need_noise: bool = True) -> tuple[np.ndarray, np.ndarray | None]:
         """Construct (center, context) pairs and noise distribution for REP.
 
         Args:
@@ -410,6 +418,7 @@ class Embedder:
             using: Walk subset to include.
             window_size: Skip-gram window radius.
             alpha: Unigram smoothing exponent.
+            need_noise: Whether to build a unigram noise distribution (SGNS only).
 
         Returns:
             Tuple of (pairs, noise_probs).
@@ -417,7 +426,12 @@ class Embedder:
         walks = self._materialize_walks(frame_id, "repuls", using)
         walks0 = self._as_zerobase_intp(walks, V=self.vocab_size)
         repulsive_corpus = self._pairs_from_walks(walks0, window_size)
-        repulsive_noise_probs = self._soft_unigram(self._freq_from_walks(walks0, V=self.vocab_size), power=alpha)
+        repulsive_noise_probs: np.ndarray | None = None
+        if need_noise:
+            repulsive_noise_probs = self._soft_unigram(
+                self._freq_from_walks(walks0, V=self.vocab_size),
+                power=alpha,
+            )
         _logger.info("REP corpus ready: pairs=%d", 0 if repulsive_corpus is None else repulsive_corpus.shape[0])
 
         return repulsive_corpus, repulsive_noise_probs
@@ -482,14 +496,28 @@ class Embedder:
         )
 
         # ------------------ resolve training data -----------------
+        need_noise = bool(negative_sampling)
+
         if RIN_type == "attr":
             if self.attractive_RWs is None and self.attractive_SAWs is None:
                 raise ValueError("Attractive random walks are missing")
-            pairs, noise_probs = self._attractive_corpus_and_prob(frame_id=frame_id, using=using, window_size=window_size, alpha=alpha)
+            pairs, noise_probs = self._attractive_corpus_and_prob(
+                frame_id=frame_id,
+                using=using,
+                window_size=window_size,
+                alpha=alpha,
+                need_noise=need_noise,
+            )
         elif RIN_type == "repuls":
             if self.repulsive_RWs is None and self.repulsive_SAWs is None:
                 raise ValueError("Repulsive random walks are missing")
-            pairs, noise_probs = self._repulsive_corpus_and_prob(frame_id=frame_id, using=using, window_size=window_size, alpha=alpha)
+            pairs, noise_probs = self._repulsive_corpus_and_prob(
+                frame_id=frame_id,
+                using=using,
+                window_size=window_size,
+                alpha=alpha,
+                need_noise=need_noise,
+            )
         else:
             raise NameError(f"Unknown RIN_type: {RIN_type!r}")
         if pairs.size == 0:
