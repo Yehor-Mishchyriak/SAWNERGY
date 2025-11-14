@@ -419,6 +419,13 @@ class Visualizer:
         frame_id -= 1 # 1-base indexing
         _logger.debug("build_frame | using frame_id(0-based)=%s", frame_id)
 
+        # helper to normalize 1-based selectors into 0-based integer arrays
+        def _as_zero_based(idx, *, label: str) -> np.ndarray:
+            arr = np.asarray(idx)
+            if not np.issubdtype(arr.dtype, np.integer):
+                raise TypeError(f"{label} must contain integer indices; got dtype {arr.dtype}")
+            return arr.astype(np.int64, copy=False) - 1
+
         # NODES
         if displayed_nodes is not None:
             if isinstance(displayed_nodes, str):
@@ -432,7 +439,7 @@ class Visualizer:
                             "collection of node indices, or an 'ALL' string, "
                             "or None.")
             else:
-                displayed_nodes = np.asarray(displayed_nodes)-1 # 1-base indexing
+                displayed_nodes = _as_zero_based(displayed_nodes, label="displayed_nodes")
                 _logger.debug("displayed_nodes provided | count=%d", displayed_nodes.size)
         else:
             _logger.debug("displayed_nodes is None -> returning early.")
@@ -444,8 +451,15 @@ class Visualizer:
 
         nodes = self._fix_view(nodes, padding, spread)
         _logger.debug("Nodes after _fix_view | shape=%s", getattr(nodes, "shape", None))
-        coords_for_edges = frame_coords.copy()
-        coords_for_edges[displayed_nodes] = nodes
+        coords_for_edges: np.ndarray | None = None
+
+        def _edge_coords() -> np.ndarray:
+            nonlocal coords_for_edges
+            if coords_for_edges is None:
+                coords_for_edges = frame_coords.copy()
+                coords_for_edges[displayed_nodes] = nodes
+                _logger.debug("Edge coordinates materialized | shape=%s", getattr(coords_for_edges, "shape", None))
+            return coords_for_edges
 
         # ATTRACTIVE EDGES
         if displayed_pairwise_attraction_for_nodes is not None:
@@ -464,7 +478,10 @@ class Visualizer:
                                 "collection of node indices, or an 'DISPLAYED_NODES' string, "
                                 "or None.")
                 else:
-                    displayed_pairwise_attraction_for_nodes = np.asarray(displayed_pairwise_attraction_for_nodes)-1 # 1-base indexing
+                    displayed_pairwise_attraction_for_nodes = _as_zero_based(
+                        displayed_pairwise_attraction_for_nodes,
+                        label="displayed_pairwise_attraction_for_nodes",
+                    )
                     _logger.debug("Attraction nodes provided | count=%d", displayed_pairwise_attraction_for_nodes.size)
                 
                 if np.setdiff1d(displayed_pairwise_attraction_for_nodes, displayed_nodes).size > 0:
@@ -475,7 +492,7 @@ class Visualizer:
                     visualizer_util.build_line_segments(
                         self.N,
                         displayed_pairwise_attraction_for_nodes,
-                        coords_for_edges,
+                        _edge_coords(),
                         self.attr_energies[frame_id],
                         frac_node_interactions_displayed,
                         global_weights_frac=global_interactions_frac,
@@ -507,7 +524,10 @@ class Visualizer:
                                 "collection of node indices, or an 'DISPLAYED_NODES' string, "
                                 "or None.")
                 else:
-                    displayed_pairwise_repulsion_for_nodes = np.asarray(displayed_pairwise_repulsion_for_nodes)-1 # 1-base indexing
+                    displayed_pairwise_repulsion_for_nodes = _as_zero_based(
+                        displayed_pairwise_repulsion_for_nodes,
+                        label="displayed_pairwise_repulsion_for_nodes",
+                    )
                     _logger.debug("Repulsion nodes provided | count=%d", displayed_pairwise_repulsion_for_nodes.size)
                 
                 if np.setdiff1d(displayed_pairwise_repulsion_for_nodes, displayed_nodes).size > 0:
@@ -518,7 +538,7 @@ class Visualizer:
                     visualizer_util.build_line_segments(
                         self.N,
                         displayed_pairwise_repulsion_for_nodes,
-                        coords_for_edges,
+                        _edge_coords(),
                         self.repuls_energies[frame_id],
                         frac_node_interactions_displayed,
                         global_weights_frac=global_interactions_frac,
