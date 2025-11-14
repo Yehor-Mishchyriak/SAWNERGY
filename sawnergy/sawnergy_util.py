@@ -125,6 +125,10 @@ class ArrayStorage:
         except Exception:
             pass
 
+    def __repr__(self) -> str:
+        return (f"{self.__class__.__name__}(path={self.store_path!s}, "
+                f"mode={self.mode!r}, blocks={len(self.list_blocks())})")
+
     # --------- PRIVATE ----------
         
     def _array_chunk_size_in_block(self, named: str, *, given: int | None) -> int:
@@ -246,6 +250,10 @@ class ArrayStorage:
         )
 
     # --------- PUBLIC ----------
+
+    def list_blocks(self) -> list[str]:
+        """Return sorted names of all Zarr arrays in the root group."""
+        return sorted(name for name, arr in self.root.arrays())
 
     def write(
         self,
@@ -444,7 +452,7 @@ class ArrayStorage:
         >>> store.add_attr("experiment", "run_3")
         >>> store.add_attr("created_at", datetime.utcnow())
         >>> store.add_attr("means", np.arange(3, dtype=np.float32))
-        >>> store.get_attr["experiment"]
+        >>> store.get_attr("experiment")
         'run_3'
 
         Note:
