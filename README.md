@@ -24,6 +24,18 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 # UPDATES:
 
+## v1.1.0 — What’s new:
+- **Logging helper respects `force` resets.**
+  - `configure_logging()` now documents the correct defaults, and an optional `force=True` clears existing handlers before installing fresh ones — useful for scripts/notebooks that reconfigure logging multiple times.
+- **`ArrayStorage` is easier to introspect.**
+  - Added a readable `__repr__` plus `list_blocks()` so you can quickly inspect the stored datasets when debugging archives or working interactively.
+- **Visualizer selectors are safer and lighter.**
+  - `displayed_nodes` (and related selectors) now reject non-integer inputs before converting to 0-based indices, and edge coordinate buffers are only materialized when an edge layer is requested, reducing unnecessary copies when plotting nodes only.
+- **Walker sampling is more robust.**
+  - Transition rows are renormalized before RNG sampling (even without avoidance sets), and walk paths are accumulated in preallocated arrays, keeping long walks numerically stable and memory efficient.
+- **Training prep and tooling tweaks.**
+  - Skip-gram runs skip building noise distributions entirely (SGNS still gets them), cutting redundant `np.bincount`/normalization work, and `locate_cpptraj()` now de-duplicates candidate paths before probing to avoid repeated `cpptraj -h` calls.
+
 ## v1.0.9 — What’s new:
 - **`SGNS_Torch` is no longer deprecated.**
   - The root cause was weight initialization; it’s fixed.
