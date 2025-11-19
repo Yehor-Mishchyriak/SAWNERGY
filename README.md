@@ -24,6 +24,10 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 # UPDATES:
 
+## v1.1.1 — What’s new:
+- **Walker parallelism is configurable.**
+  - `Walker.sample_walks(..., in_parallel=True)` now accepts `max_parallel_workers` so you can lower the worker count below `os.cpu_count()` when sharing machines or reserving cores for other workloads.
+
 ## v1.1.0 — What’s new:
 - **Logging helper respects `force` resets.**
   - `configure_logging()` now documents the correct defaults, and an optional `force=True` clears existing handlers before installing fresh ones — useful for scripts/notebooks that reconfigure logging multiple times.
