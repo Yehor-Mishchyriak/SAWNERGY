@@ -599,6 +599,7 @@ class Walker:
                      *,
                      # computation
                      in_parallel: bool,
+                     max_parallel_workers: int | None = None,
                      # storage
                      compression_level: int = 3,
                      num_walk_matrices_in_compressed_blocks: int | None = None
@@ -634,6 +635,8 @@ class Walker:
                 ``WALKS_<timestamp>.zip`` in the current working directory.
             in_parallel: Use :class:`ProcessPoolExecutor` to parallelize over
                 node batches (requires main-process guard).
+            max_parallel_workers: Optional cap for worker processes when
+                ``in_parallel=True``. Defaults to ``os.cpu_count()``.
             compression_level: Compression level for the output archive.
             num_walk_matrices_in_compressed_blocks: Max number of walk matrices
                 per compressed chunk when writing. Defaults to number of batches.
@@ -668,9 +671,20 @@ class Walker:
         num_RWs  = int(walks_per_node) - num_SAWs
         _logger.info("Per-node counts: SAWs=%d, RWs=%d", num_SAWs, num_RWs)
 
-        num_workers = os.cpu_count() or 1
+        available_workers = os.cpu_count() or 1
+        if max_parallel_workers is None:
+            requested_workers = available_workers
+        else:
+            if max_parallel_workers < 1:
+                raise ValueError("max_parallel_workers must be >= 1 when provided")
+            requested_workers = min(max_parallel_workers, available_workers)
+
+        num_workers = requested_workers if in_parallel else 1
         batch_size_nodes = (num_workers if in_parallel else 1)
-        _logger.debug("Workers=%d, batch_size_nodes=%d", num_workers, batch_size_nodes)
+        _logger.debug(
+            "Workers available=%d, requested=%s, using=%d; batch_size_nodes=%d",
+            available_workers, max_parallel_workers, num_workers, batch_size_nodes
+        )
 
         if in_parallel and not sawnergy_util.is_main_process():
             _logger.error("Process-based parallelism requires main-process guard")
