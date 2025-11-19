@@ -8,7 +8,7 @@ authors:
 repository-code: https://github.com/Yehor-Mishchyriak/SAWNERGY
 url: https://github.com/Yehor-Mishchyriak/SAWNERGY
 license: Apache-2.0
-version: 1.0.9
+version: 1.1.1
 date-released: 2025-11-11
 keywords:
   - molecular dynamics
@@ -35,4 +35,4 @@ preferred-citation:
     - family-names: Mishchyriak
       given-names: Yehor
   url: https://github.com/Yehor-Mishchyriak/SAWNERGY
-  version: 1.0.9
+  version: 1.1.1
