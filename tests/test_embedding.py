@@ -301,6 +301,193 @@ def test_sg_torch_smoke():
 
 
 # ---------------------------------------------------------------------------
+# Warm-start behavior for Torch implementations
+# ---------------------------------------------------------------------------
+
+
+def test_sgns_torch_warm_start_copies_inputs():
+    torch = pytest.importorskip("torch")
+    from sawnergy.embedding.SGNS_torch import SGNS_Torch
+
+    V, D = 4, 3
+    in_w = np.arange(V * D, dtype=np.float64).reshape(V, D)
+    out_w = (np.arange(V * D, dtype=np.float64).reshape(V, D) + 50.0)
+    in_expected = in_w.astype(np.float32).copy()
+    out_expected = out_w.astype(np.float32).copy()
+
+    model = SGNS_Torch(
+        V=V,
+        D=D,
+        in_weights=in_w,
+        out_weights=out_w,
+        seed=0,
+        optim=torch.optim.SGD,
+        optim_kwargs={"lr": 0.1},
+        lr_sched=None,
+        lr_sched_kwargs=None,
+        device="cpu",
+    )
+
+    np.testing.assert_allclose(model.in_embeddings, in_expected)
+    np.testing.assert_allclose(model.out_embeddings, out_expected)
+
+    # Mutating user-supplied arrays must not change model parameters.
+    in_w[:] = -1.0
+    out_w[:] = -2.0
+    np.testing.assert_allclose(model.in_embeddings, in_expected)
+    np.testing.assert_allclose(model.out_embeddings, out_expected)
+
+
+def test_sg_torch_warm_start_transposes_out_weights():
+    torch = pytest.importorskip("torch")
+    from sawnergy.embedding.SGNS_torch import SG_Torch
+
+    V, D = 5, 2
+    in_w = np.linspace(0.0, 1.0, V * D, dtype=np.float64).reshape(V, D)
+    out_w = (np.arange(D * V, dtype=np.float64).reshape(D, V) + 7.0)
+    in_expected = in_w.astype(np.float32).copy()
+    out_expected = out_w.T.astype(np.float32).copy()  # model stores (V, D)
+
+    model = SG_Torch(
+        V=V,
+        D=D,
+        in_weights=in_w,
+        out_weights=out_w,
+        seed=0,
+        optim=torch.optim.SGD,
+        optim_kwargs={"lr": 0.05},
+        lr_sched=None,
+        lr_sched_kwargs=None,
+        device="cpu",
+    )
+
+    np.testing.assert_allclose(model.in_embeddings, in_expected)
+    np.testing.assert_allclose(model.out_embeddings, out_expected)
+
+    # Ensure a defensive copy was made for both warm starts.
+    in_w[:] = 99.0
+    out_w[:] = 123.0
+    np.testing.assert_allclose(model.in_embeddings, in_expected)
+    np.testing.assert_allclose(model.out_embeddings, out_expected)
+
+
+def test_sg_torch_warm_start_validates_out_shape():
+    torch = pytest.importorskip("torch")
+    from sawnergy.embedding.SGNS_torch import SG_Torch
+
+    V, D = 3, 4
+    bad_out = np.zeros((V, D), dtype=np.float32)  # should be (D, V)
+
+    with pytest.raises(ValueError):
+        SG_Torch(
+            V=V,
+            D=D,
+            in_weights=None,
+            out_weights=bad_out,
+            seed=0,
+            optim=torch.optim.SGD,
+            optim_kwargs={"lr": 0.1},
+            lr_sched=None,
+            lr_sched_kwargs=None,
+            device="cpu",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Warm-start behavior for PureML implementations
+# ---------------------------------------------------------------------------
+
+
+def test_sgns_pureml_warm_start_copies_inputs():
+    pureml = pytest.importorskip("pureml")
+    from sawnergy.embedding.SGNS_pml import SGNS_PureML
+
+    V, D = 4, 3
+    in_w = np.arange(V * D, dtype=np.float64).reshape(V, D)
+    out_w = (np.arange(V * D, dtype=np.float64).reshape(V, D) + 25.0)
+
+    model = SGNS_PureML(
+        V=V,
+        D=D,
+        in_weights=in_w,
+        out_weights=out_w,
+        seed=0,
+        optim=pureml.optimizers.SGD,
+        optim_kwargs={"lr": 0.05},
+        lr_sched=None,
+        lr_sched_kwargs=None,
+        device=None,
+    )
+
+    emb_in = model.in_embeddings
+    emb_out = model.out_embeddings
+    np.testing.assert_allclose(emb_in, np.array(in_w, dtype=emb_in.dtype))
+    np.testing.assert_allclose(emb_out, np.array(out_w, dtype=emb_out.dtype))
+
+    # Mutations to user arrays must not leak into model parameters.
+    in_w[:] = -3.0
+    out_w[:] = -4.0
+    np.testing.assert_allclose(model.in_embeddings, emb_in)
+    np.testing.assert_allclose(model.out_embeddings, emb_out)
+
+
+def test_sg_pureml_warm_start_transposes_out_weights():
+    pureml = pytest.importorskip("pureml")
+    from sawnergy.embedding.SGNS_pml import SG_PureML
+
+    V, D = 5, 2
+    in_w = np.linspace(0.0, 1.0, V * D, dtype=np.float64).reshape(V, D)
+    out_w = (np.arange(D * V, dtype=np.float64).reshape(D, V) + 11.0)
+
+    model = SG_PureML(
+        V=V,
+        D=D,
+        in_weights=in_w,
+        out_weights=out_w,
+        seed=0,
+        optim=pureml.optimizers.SGD,
+        optim_kwargs={"lr": 0.01},
+        lr_sched=None,
+        lr_sched_kwargs=None,
+        device=None,
+    )
+
+    emb_in = model.in_embeddings
+    emb_out = model.out_embeddings
+    np.testing.assert_allclose(emb_in, np.array(in_w, dtype=emb_in.dtype))
+    np.testing.assert_allclose(emb_out, np.array(out_w.T, dtype=emb_out.dtype))
+
+    in_w[:] = 99.0
+    out_w[:] = 123.0
+    np.testing.assert_allclose(model.in_embeddings, emb_in)
+    np.testing.assert_allclose(model.out_embeddings, emb_out)
+
+
+def test_sg_pureml_warm_start_validates_out_shape():
+    pureml = pytest.importorskip("pureml")
+    from sawnergy.embedding.SGNS_pml import SG_PureML
+
+    V, D = 3, 4
+    bad_out = np.zeros((V, D), dtype=np.float32)  # should be (D, V)
+
+    with pytest.raises((ValueError, RuntimeError)):
+        model = SG_PureML(
+            V=V,
+            D=D,
+            in_weights=None,
+            out_weights=bad_out,
+            seed=0,
+            optim=pureml.optimizers.SGD,
+            optim_kwargs={"lr": 0.05},
+            lr_sched=None,
+            lr_sched_kwargs=None,
+            device=None,
+        )
+        # If constructor unexpectedly succeeds, accessing out embeddings must fail.
+        _ = model.out_embeddings
+
+
+# ---------------------------------------------------------------------------
 # New tests: embed_frame ordering + warm-start forwarding (SGNS vs SG)
 # ---------------------------------------------------------------------------
 
