@@ -24,6 +24,11 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 # UPDATES:
 
+## v1.1.2 — What’s new:
+- **Safer warm starts across backends.**
+  - Torch: Skip-Gram (full softmax) now transposes provided out warm-starts before copying, matching Linear’s `(out_features, in_features)` layout.
+  - PureML: Both SGNS and SG defensively copy/validate warm-start arrays (correct shapes, immutable after construction); SG also transposes `(D, V)` out weights to `(V, D)` for embedding access.
+
 ## v1.1.1 — What’s new:
 - **Walker parallelism is configurable.**
   - `Walker.sample_walks(..., in_parallel=True)` now accepts `max_parallel_workers` so you can lower the worker count below `os.cpu_count()` when sharing machines or reserving cores for other workloads.
