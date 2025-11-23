@@ -72,15 +72,24 @@ class SGNS_PureML(NN):
 
         self.V, self.D = int(V), int(D)
 
-        # Convert warm-starts from np.ndarray → Tensor if needed
-        if isinstance(in_weights, np.ndarray):
-            in_weights = Tensor(in_weights, requires_grad=True)
-        if isinstance(out_weights, np.ndarray):
-            out_weights = Tensor(out_weights, requires_grad=True)
+        def _to_tensor_copy(w, name: str) -> Tensor | None:
+            if w is None:
+                return None
+            if isinstance(w, Tensor):
+                arr = w.numpy(copy=True)
+            else:
+                arr = np.asarray(w, dtype=np.float32)
+            if arr.shape != (self.V, self.D):
+                raise ValueError(f"{name} must be (V, D); got {tuple(arr.shape)}")
+            arr = np.array(arr, dtype=np.float32, copy=True)
+            return Tensor(arr, requires_grad=True)
+
+        in_weights_t = _to_tensor_copy(in_weights, "in_weights")
+        out_weights_t = _to_tensor_copy(out_weights, "out_weights")
 
         # embeddings
-        self.in_emb  = Embedding(self.V, self.D, W=in_weights,  seed=seed)
-        self.out_emb = Embedding(self.V, self.D, W=out_weights, seed=seed)
+        self.in_emb  = Embedding(self.V, self.D, W=in_weights_t,  seed=seed)
+        self.out_emb = Embedding(self.V, self.D, W=out_weights_t, seed=seed)
 
         # seed + RNG for negative sampling
         self.seed = None if seed is None else int(seed)
@@ -274,15 +283,24 @@ class SG_PureML(NN):
 
         self.V, self.D = int(V), int(D)
 
-        # Convert warm-starts from np.ndarray → Tensor if needed
-        if isinstance(in_weights, np.ndarray):
-            in_weights = Tensor(in_weights, requires_grad=True)
-        if isinstance(out_weights, np.ndarray):
-            out_weights = Tensor(out_weights, requires_grad=True)
+        def _to_tensor_copy(w, expected_shape: tuple[int, int], name: str) -> Tensor | None:
+            if w is None:
+                return None
+            if isinstance(w, Tensor):
+                arr = w.numpy(copy=True)
+            else:
+                arr = np.asarray(w, dtype=np.float32)
+            if arr.shape != expected_shape:
+                raise ValueError(f"{name} must be {expected_shape}; got {tuple(arr.shape)}")
+            arr = np.array(arr, dtype=np.float32, copy=True)
+            return Tensor(arr, requires_grad=True)
+
+        in_weights_t = _to_tensor_copy(in_weights, (self.V, self.D), "in_weights")
+        out_weights_t = _to_tensor_copy(out_weights, (self.D, self.V), "out_weights")
 
         # input/output “embedding” projections
-        self.in_emb  = Affine(self.V, self.D, W=in_weights,  bias=False, seed=seed)
-        self.out_emb = Affine(self.D, self.V, W=out_weights, bias=False, seed=seed)
+        self.in_emb  = Affine(self.V, self.D, W=in_weights_t,  bias=False, seed=seed)
+        self.out_emb = Affine(self.D, self.V, W=out_weights_t, bias=False, seed=seed)
 
         self.seed = None if seed is None else int(seed)
         self.device = "cpu"  # API parity
