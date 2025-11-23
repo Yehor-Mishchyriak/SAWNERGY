@@ -320,7 +320,8 @@ class SG_Torch:
                 w_out = torch.as_tensor(out_weights, dtype=torch.float32, device=self.device)
                 if w_out.shape != (self.D, self.V):
                     raise ValueError(f"out_weights must be (D,V); got {tuple(w_out.shape)}")
-                self.out_emb.weight.copy_(w_out)  # (V,D) weight is (V,D) because (out=in V, in=D)
+                # Linear expects (out_features, in_features) = (V, D); provided warm-start is (D, V)
+                self.out_emb.weight.copy_(w_out.T)
             # else: default init
 
         self.to(self.device)
