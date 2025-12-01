@@ -27,6 +27,7 @@
 # ----------------------------
 !assets/
 !assets/*.png
+!assets/*.gif
 # ----------------------------
 !.gitignore
 !pkg_meta.json
@@ -35,4 +36,5 @@
 !CREDITS.md
 !LICENSE
 !NOTICE
+!docs.md
 !requirements.txt
