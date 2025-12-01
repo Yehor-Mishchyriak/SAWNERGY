@@ -4,6 +4,8 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Yehor-Mishchyriak/SAWNERGY/blob/main/LICENSE)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 
+![LOGO](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/SAWNERGY_Logo_cropped.png)
+
 A toolkit for transforming molecular dynamics (MD) trajectories into rich graph representations, sampling
 random and self-avoiding walks, learning node embeddings, and visualizing residue interaction networks (RINs). SAWNERGY
 keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2vec approach) — inside Python, backed by efficient Zarr-based archives and optional GPU acceleration.
@@ -23,6 +25,9 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 ---
 
 # UPDATES:
+
+## v1.1.3 — What’s new:
+...
 
 ## v1.1.2 — What’s new:
 - **Safer warm starts across backends.**
@@ -116,6 +121,17 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 ## Small visual example (constructed fully from trajectory and topology files)
 ![RIN](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/rin.png)
 ![Embedding](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/embedding.png)
+
+## More visual examples:
+
+### Temporal Residue Interaction Network Animation
+![RIN_animation](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/RIN_animation.gif)
+
+### Residue Interaction Network of Full Length p53 Protein (on the right) and its Embedding (on the left)
+![embedding_and_RIN_2](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/embedding_and_RIN_2.png)
+
+### Residue Interaction Network of Full Length p53 Protein (on the right) and its Embedding (on the left) -- GIF
+![Embedding_vs_RIN](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/Embedding_vs_RIN.gif)
 
 ---
 
