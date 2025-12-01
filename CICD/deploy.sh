@@ -140,6 +140,7 @@ CANDIDATES=(
   README.md README.MD
   CREDITS.md CREDITS.MD
   assets
+  tests
 )
 SELECTED=()
 for p in "${CANDIDATES[@]}"; do
