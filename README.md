@@ -124,14 +124,11 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 
 ## More visual examples:
 
-### Temporal Residue Interaction Network Animation
-![RIN_animation](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/RIN_animation.gif)
+### Animated Temporal Residue Interaction Network of Full Length p53 Protein
+![RIN_animation](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/RIN_animation_compressed.gif)
 
 ### Residue Interaction Network of Full Length p53 Protein (on the right) and its Embedding (on the left)
-![embedding_and_RIN_2](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/embedding_and_RIN_2.png)
-
-### Residue Interaction Network of Full Length p53 Protein (on the right) and its Embedding (on the left) -- GIF
-![Embedding_vs_RIN](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/Embedding_vs_RIN.gif)
+![Embedding_vs_RIN](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/Embedding_vs_RIN_compressed.gif)
 
 ---
 
