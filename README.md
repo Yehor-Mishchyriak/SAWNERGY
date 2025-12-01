@@ -28,7 +28,8 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 # UPDATES:
 
 ## v1.1.3 — What’s new:
-...
+- Added more visual examples into the README
+- Dedicated docs site is live: https://ymishchyriak.com/docs/SAWNERGY-DOCS (mirrors this repo and stays current).
 
 ## v1.1.2 — What’s new:
 - **Safer warm starts across backends.**
