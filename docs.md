@@ -3,6 +3,7 @@
 ![LOGO](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/SAWNERGY_Logo_cropped.png)
 
 A Python 3.11+ toolkit that converts molecular dynamics (MD) trajectories into residue interaction networks (RINs), samples random and self-avoiding walks (RW/SAW), trains skip-gram embeddings (PureML or PyTorch backends), and visualizes both networks and embeddings. All artifacts are Zarr v3 archives stored as compressed `.zip` files with rich metadata so every stage can be reproduced.
+[![PyPI](https://img.shields.io/pypi/v/sawnergy)](https://pypi.org/project/sawnergy/) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Yehor-Mishchyriak/SAWNERGY/blob/main/LICENSE) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![GitHub](https://img.shields.io/badge/GitHub-Repo-black?logo=github)](https://github.com/Yehor-Mishchyriak/SAWNERGY)
 
 ---
 
@@ -17,6 +18,20 @@ pip install sawnergy
 # If you want the PyTorch backend, install torch separately:
 # pip install torch
 ```
+
+---
+
+## Small visual example (constructed fully from trajectory and topology files)
+![RIN](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/rin.png)
+![Embedding](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/embedding.png)
+
+## More visual examples:
+
+### Animated Temporal Residue Interaction Network of Full Length p53 Protein
+![RIN_animation](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/RIN_animation_compressed.gif)
+
+### Residue Interaction Network of Full Length p53 Protein (on the right) and its Embedding (on the left)
+![Embedding_vs_RIN](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/Embedding_vs_RIN_compressed.gif)
 
 ---
 
@@ -77,6 +92,25 @@ emb_path = embedder.embed_all(
 )
 print("Embeddings written to", emb_path)
 ```
+
+```
+MD Trajectory + Topology
+          │
+          ▼
+      RINBuilder 
+          │   →  RIN archive (.zip/.zarr) → Visualizer (display/animate RINs)
+          ▼
+        Walker
+          │   →  Walks archive (RW/SAW per frame)
+          ▼
+       Embedder
+          │   →  Embedding archive (frame × vocab × dim)
+          ▼
+     Downstream ML
+```
+
+Each stage consumes the archive produced by the previous one. Metadata embedded in the archives ensures frame order,
+node indexing, and RNG seeds stay consistent across the toolchain.
 
 ---
 

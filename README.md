@@ -3,6 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/sawnergy)](https://pypi.org/project/sawnergy/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Yehor-Mishchyriak/SAWNERGY/blob/main/LICENSE)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+[![Docs](https://img.shields.io/badge/docs-available-blue)](https://ymishchyriak.com/docs/SAWNERGY-DOCS)
 
 ![LOGO](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/SAWNERGY_Logo_cropped.png)
 
