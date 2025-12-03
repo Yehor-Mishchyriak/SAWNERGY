@@ -29,6 +29,24 @@
 !assets/*.png
 !assets/*.gif
 # ----------------------------
+!example_MD_run/
+!example_MD_run/*.nc
+!example_MD_run/*.pdb
+!example_MD_run/*.prmtop
+!example_MD_run/*.md
+# ----------------------------
+!example_analysis/
+!example_analysis/*.py
+!example_analysis/*.png
+!example_analysis/*.md
+# ----------------------------
+!test_logs/
+!test_logs/*
+# ----------------------------
+!JOSS/
+!JOSS/*.md
+!JOSS/*.bib
+# ----------------------------
 !.gitignore
 !pkg_meta.json
 !README.md
