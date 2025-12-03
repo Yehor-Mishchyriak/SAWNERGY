@@ -27,6 +27,9 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 # UPDATES:
 
+## v1.1.4 — What’s new:
+- **SAW dead-end guard.** When self-avoidance zeroes out a transition row, the walker now logs a warning and takes an unconstrained RW step instead of raising, so sampling runs finish even on disconnected nodes.
+
 ## v1.1.3 — What’s new:
 - Added more visual examples into the README
 - Dedicated docs site is live: https://ymishchyriak.com/docs/SAWNERGY-DOCS (mirrors this repo and stays current).
