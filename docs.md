@@ -35,7 +35,7 @@ pip install sawnergy
 
 ---
 
-## End-to-End Quick Start
+## End-to-End Quick Start (make sure cpptraj is discoverable)
 ```python
 from pathlib import Path
 import logging
@@ -57,7 +57,7 @@ rin_builder.build_rin(
     molecule_of_interest=1,
     frame_range=(1, 100),          # inclusive, 1-based
     frame_batch_size=10,           # processed in 10-frame batches
-    prune_low_energies_frac=0.85,  # per-row quantile pruning
+    prune_low_energies_frac=0.9,   # per-row quantile pruning
     include_attractive=True,
     include_repulsive=False,
     output_path=rin_path,
@@ -69,7 +69,6 @@ with Walker(rin_path, seed=123) as walker:
     walker.sample_walks(
         walk_length=16,
         walks_per_node=100,
-        saw_frac=0.25,          # 25% SAWs, 75% RWs
         include_attractive=True,
         include_repulsive=False,
         time_aware=False,
@@ -82,9 +81,10 @@ embedder = Embedder(walks_path, seed=999)
 emb_path = embedder.embed_all(
     RIN_type="attr",              # "attr" or "repuls"
     using="merged",               # "RW" | "SAW" | "merged"
-    num_epochs=10,
-    negative_sampling=False,      # SG (False) or SGNS (True)
-    window_size=4,
+    num_epochs=20,
+    negative_sampling=True,      # SG (False) or SGNS (True)
+    num_negative_samples=10,
+    window_size=5,
     device="cuda" if torch.cuda.is_available() else "cpu",
     model_base="torch",
     kind="in",                    # stored embedding kind
@@ -155,6 +155,7 @@ All archives are Zarr v3 groups and can be opened directly with `sawnergy.sawner
 - Key methods:
   - `_extract_prob_vector(node, time_stamp, interaction_type)` returns the transition row (float) for a node/time, renormalized after any masking.
   - `walk(start_node=None, start_time_stamp=None, length, interaction_type, self_avoid=False, time_aware=False, stickiness=None, on_no_options=None)` → `(length+1,)` array of **1-based** node ids. When `time_aware=True`, `stickiness` (probability of staying) and `on_no_options` (`"raise"` or `"loop"`) are mandatory; time steps are chosen by cosine similarity between transition matrices.
+  - SAW dead-ends: if self-avoidance removes all probability mass for a step, the sampler logs a warning and falls back to an unconstrained RW move instead of raising.
   - `sample_walks(walk_length, walks_per_node, *, saw_frac=0.0, include_attractive=True, include_repulsive=False, time_aware=False, stickiness=None, on_no_options=None, output_path=None, in_parallel, max_parallel_workers=None, compression_level=3, num_walk_matrices_in_compressed_blocks=None)` → path to walks archive.
     - `in_parallel` is required (process-based via `ProcessPoolExecutor`); guard with `if __name__ == "__main__":` when `True`.
     - Per-node counts: `num_SAWs = round(walks_per_node * saw_frac)`, `num_RWs = walks_per_node - num_SAWs`.
