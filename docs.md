@@ -57,7 +57,7 @@ rin_builder.build_rin(
     molecule_of_interest=1,
     frame_range=(1, 100),          # inclusive, 1-based
     frame_batch_size=10,           # processed in 10-frame batches
-    prune_low_energies_frac=0.9,   # per-row quantile pruning
+    prune_low_energies_frac=0.85,   # per-row quantile pruning
     include_attractive=True,
     include_repulsive=False,
     output_path=rin_path,
