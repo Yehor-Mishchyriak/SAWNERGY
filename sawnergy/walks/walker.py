@@ -328,8 +328,13 @@ class Walker:
         mass = float(probs.sum())
         _logger.debug("_step_node: normalized mass=%.6f", mass)
         if mass <= 0.0:
-            _logger.error("_step_node: zero probability mass after masking/normalization")
-            raise RuntimeError("No valid node transitions: probability mass is zero.")
+            _logger.warning(
+                "_step_node: zero probability mass after masking; relaxing self-avoidance"
+            )
+            fallback_probs = walker_util.l1_norm(prob_dist)
+            next_node = int(self.rng.choice(self.nodes, p=fallback_probs))
+            to_avoid = np.append(to_avoid, next_node).astype(np.intp, copy=False)
+            return next_node, to_avoid
 
         next_node = int(self.rng.choice(keep, p=probs))
         _logger.debug("_step_node: chosen next_node=%d", next_node)
@@ -438,6 +443,9 @@ class Walker:
             length: Number of transition **steps** to simulate.
             interaction_type: ``"attr"`` or ``"repuls"``.
             self_avoid: If ``True``, path will not revisit nodes within the same walk.
+                When avoidance leaves zero probability mass for a step, the
+                constraint is relaxed for that step (falls back to RW) and a
+                warning is logged so the walk can continue.
             time_aware: If ``True``, advance time with :meth:`_step_time` each step.
             stickiness: Required when ``time_aware=True``; probability of staying
                 at the current time.
