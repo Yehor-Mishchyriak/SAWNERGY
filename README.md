@@ -9,7 +9,7 @@
 
 A toolkit for transforming molecular dynamics (MD) trajectories into rich graph representations, sampling
 random and self-avoiding walks, learning node embeddings, and visualizing residue interaction networks (RINs). SAWNERGY
-keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2vec approach) — inside Python, backed by efficient Zarr-based archives and optional GPU acceleration.
+keeps the full workflow — from `cpptraj` output to skip-gram embeddings (DeepWalk approach) — inside Python, backed by efficient Zarr-based archives and optional GPU acceleration.
 
 ---
 
@@ -79,7 +79,7 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (node2
 
 ## v1.0.7 — What’s new:
 - **Added plain Skip-Gram model**
-  - Now, the user can choose if they want to apply the negative sampling technique (two binary classifiers) or train a single classifier over the vocabulary (full softmax). For more detail, see: [node2vec](https://arxiv.org/pdf/1607.00653), [word2vec](https://arxiv.org/pdf/1301.3781), and [negative_sampling](https://arxiv.org/pdf/1402.3722).
+  - Now, the user can choose if they want to apply the negative sampling technique (two binary classifiers) or train a single classifier over the vocabulary (full softmax). For more detail, see: [deepwalk](https://arxiv.org/pdf/1403.6652), [word2vec](https://arxiv.org/pdf/1301.3781), and [negative_sampling](https://arxiv.org/pdf/1402.3722).
 - **Set a harsher default for low interaction energies pruning during RIN construction**
   - Now we zero out 85% of the lowest interaction energies as opposed to the past 30% default, leading to more meaningful embeddings.
 - **BUG FIX: Visualizer**
@@ -126,6 +126,17 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 ## Small visual example (constructed fully from trajectory and topology files)
 ![RIN](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/rin.png)
 ![Embedding](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/embedding.png)
+
+## Quick-start MD example
+
+A minimal dataset is included in `example_MD_for_quick_start/` to let you run the full SAWNERGY pipeline immediately:
+
+- `p53_DBD.prmtop` (topology), `p53_DBD.pdb` (reference), `p53_DBD.nc` (trajectory)
+- 1 µs production trajectory of the p53 DNA-binding domain, 1000 snapshots saved every 1 ns
+- Credits: MD simulation produced by Sean Stetson (ORCID: 0009-0007-9759-5977)
+- Intended use: quick-start tutorial for building RINs, sampling walks, and training embeddings without setting up your own MD run
+
+See `example_MD_for_quick_start/brief_description.md`.
 
 ## More visual examples:
 
