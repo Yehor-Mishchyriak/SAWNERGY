@@ -129,7 +129,7 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 
 ## Quick-start MD example
 
-A minimal dataset is included in `example_MD_for_quick_start/` to let you run the full SAWNERGY pipeline immediately:
+A minimal dataset is included in `example_MD_for_quick_start/` on GitHub to let you run the full SAWNERGY pipeline immediately:
 
 - `p53_DBD.prmtop` (topology), `p53_DBD.pdb` (reference), `p53_DBD.nc` (trajectory)
 - 1 µs production trajectory of the p53 DNA-binding domain, 1000 snapshots saved every 1 ns
