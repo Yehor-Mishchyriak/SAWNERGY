@@ -43,15 +43,18 @@ rm -rf dist build ./*.egg-info
 
 # ---------- 2) Run tests (log to file) ----------
 section "Running tests"
+LOG_DIR="${REPO_ROOT}/test_logs"
+mkdir -p "${LOG_DIR}"
+LOG_FILE="${LOG_DIR}/tests_$(date +%Y-%m-%d_%H%M%S).log"
 set +e
-"$PY" CICD/test_runner.py 2>&1 | tee tests.log
+"$PY" CICD/test_runner.py 2>&1 | tee "${LOG_FILE}"
 TEST_STATUS=${PIPESTATUS[0]}
 set -e
 if [[ $TEST_STATUS -ne 0 ]]; then
-  echo "❌ Tests failed. See tests.log"
+  echo "❌ Tests failed. See ${LOG_FILE}"
   exit $TEST_STATUS
 fi
-echo "✅ Tests passed."
+echo "✅ Tests passed. Log: ${LOG_FILE}"
 
 # ---------- 3) Build sdist + wheel (also bumps pkg_meta.json version) ----------
 section "Building sdist and wheel"
@@ -141,6 +144,11 @@ CANDIDATES=(
   CREDITS.md CREDITS.MD
   assets
   tests
+  example_MD_for_quick_start
+  example_analysis
+  test_logs
+  JOSS
+  docs.md
 )
 SELECTED=()
 for p in "${CANDIDATES[@]}"; do
