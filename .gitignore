@@ -29,11 +29,11 @@
 !assets/*.png
 !assets/*.gif
 # ----------------------------
-!example_MD_run/
-!example_MD_run/*.nc
-!example_MD_run/*.pdb
-!example_MD_run/*.prmtop
-!example_MD_run/*.md
+!example_MD_for_quick_start/
+!example_MD_for_quick_start/*.nc
+!example_MD_for_quick_start/*.pdb
+!example_MD_for_quick_start/*.prmtop
+!example_MD_for_quick_start/*.md
 # ----------------------------
 !example_analysis/
 !example_analysis/*.py
