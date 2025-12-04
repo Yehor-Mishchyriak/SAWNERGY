@@ -1,2 +1,2 @@
-These MD simulations whose analysis is presented here were produced and are owned by the ThayerLab at Wesleyan University, Middletown, CT, United States.
+The MD simulations whose analysis is presented here were produced and are owned by the ThayerLab at Wesleyan University, Middletown, CT, United States.
 Author of the simulations is Sean Stetson (ORCID: 0009-0007-9759-5977).
