@@ -5,18 +5,19 @@ type: software
 authors:
   - family-names: Mishchyriak
     given-names: Yehor
+    orcid: 0009-0001-8371-7159
 repository-code: https://github.com/Yehor-Mishchyriak/SAWNERGY
 url: https://github.com/Yehor-Mishchyriak/SAWNERGY
 license: Apache-2.0
-version: 1.1.3
-date-released: 2025-12-1
+version: 1.1.4
+date-released: 2025-12-3
 keywords:
   - molecular dynamics
   - residue interaction networks
   - random walks
   - self-avoiding walks
   - skip-gram
-  - node2vec
+  - DeepWalk
   - negative sampling
   - embeddings
   - graph ML
@@ -29,10 +30,17 @@ abstract: >
   PyTorch backends. Artifacts are stored as compressed Zarr archives with rich metadata
   for reproducibility and downstream analysis.
 preferred-citation:
-  type: software
+  type: article
   title: "SAWNERGY"
   authors:
     - family-names: Mishchyriak
       given-names: Yehor
+      orcid: 0009-0001-8371-7159
+    - family-names: Thayer
+      given-names: Kelly M.
+      orcid: 0000-0001-7437-9517
+    - family-names: Stetson
+      given-names: Sean
+      orcid: 0009-0007-9759-5977
   url: https://github.com/Yehor-Mishchyriak/SAWNERGY
-  version: 1.1.3
+  version: 1.1.4
