@@ -47,6 +47,10 @@
 !JOSS/*.md
 !JOSS/*.bib
 # ----------------------------
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
+# ----------------------------
 !.gitignore
 !pkg_meta.json
 !README.md

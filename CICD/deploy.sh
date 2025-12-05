@@ -147,6 +147,7 @@ CANDIDATES=(
   example_MD_for_quick_start
   test_logs
   JOSS
+  .github
   docs.md
 )
 SELECTED=()
