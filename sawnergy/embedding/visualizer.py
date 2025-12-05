@@ -168,9 +168,8 @@ class Visualizer:
         if isinstance(node_colors, str):
             node_cmap = self._plt.get_cmap(node_colors)
             return node_cmap(self._residue_norm(idx))
-        arr = np.asarray(node_colors) if node_colors is not None else None
-        if isinstance(arr, np.ndarray) and arr.ndim == 2 and arr.shape[0] == self.N and arr.shape[1] in (3, 4):
-            return arr[idx]
+        if isinstance(node_colors, np.ndarray) and node_colors.ndim == 2 and node_colors.shape[0] == self.N and node_colors.shape[1] in (3, 4):
+            return node_colors[idx]
         full = visualizer_util.map_groups_to_colors(
             N=self.N,
             groups=node_colors,
