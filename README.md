@@ -27,6 +27,9 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (DeepW
 
 # UPDATES:
 
+## v1.1.5 — What’s new:
+- **Embedding visualizer color API.** `sawnergy.embedding.Visualizer` now accepts the same group/color tuples as the RIN visualizer (e.g., `(indices, sawnergy.visual.BLUE)`), so embedding plots and RIN plots share a unified coloring interface.
+
 ## v1.1.4 — What’s new:
 - **SAW dead-end guard.** When self-avoidance zeroes out a transition row, the walker now logs a warning and takes an unconstrained RW step instead of raising, so sampling runs finish even on disconnected nodes.
 

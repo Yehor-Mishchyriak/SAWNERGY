@@ -168,16 +168,14 @@ class Visualizer:
         if isinstance(node_colors, str):
             node_cmap = self._plt.get_cmap(node_colors)
             return node_cmap(self._residue_norm(idx))
-        if node_colors is None:
-            full = visualizer_util.map_groups_to_colors(
-                N=self.N, groups=None, default_color=self.default_node_color, one_based=True
-            )
-            return np.asarray(full)[idx]
-        arr = np.asarray(node_colors)
-        if arr.ndim == 2 and arr.shape[0] == self.N and arr.shape[1] in (3, 4):
+        arr = np.asarray(node_colors) if node_colors is not None else None
+        if isinstance(arr, np.ndarray) and arr.ndim == 2 and arr.shape[0] == self.N and arr.shape[1] in (3, 4):
             return arr[idx]
         full = visualizer_util.map_groups_to_colors(
-            N=self.N, groups=node_colors, default_color=self.default_node_color, one_based=True
+            N=self.N,
+            groups=node_colors,
+            default_color=self.default_node_color,
+            one_based=True,
         )
         return np.asarray(full)[idx]
 
