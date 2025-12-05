@@ -145,7 +145,6 @@ CANDIDATES=(
   assets
   tests
   example_MD_for_quick_start
-  example_analysis
   test_logs
   JOSS
   docs.md
