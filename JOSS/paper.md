@@ -159,13 +159,11 @@ viz.build_frame(15, show=True, show_node_labels=True)
 - Walks: default to random walks; optionally mix a small fraction of self-avoiding walks for longer-range coverage.
 - Embeddings: use PyTorch if GPU is available; otherwise PureML on CPU works well.
 
-## Visual example:
+## Visual example produced by SAWNERGY
 
-### Residue Interaction Network of the Full Length p53 Tumor Suppressor Protein produced by SAWNERGY
-![FL_p53_RIN](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/FL_p53_RIN.png)
+![RIN of p53 Tumor Suppressor Protein](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/FL_p53_RIN.png)
 
-### The above network embedded and visualized in 3D by SAWNERGY
-![FL_p53_RIN](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/FL_p53_embedding.png)
+![Embedding of p53 Tumor Suppressor Protein](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/FL_p53_embedding.png)
 
 ## Potential applications
 - Feature engineering for ML models informed by MD (e.g., embedding vectors as inputs for classification/regression tasks on stability, binding, or mutational effects).

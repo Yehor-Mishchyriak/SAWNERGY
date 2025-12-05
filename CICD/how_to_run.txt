@@ -27,7 +27,12 @@ Automated deploy pipeline
 
 Usage:
 A) Test + build + push (no upload)
-       bash CICD/deploy.sh
+bash CICD/deploy.sh
+
+# To build the JOSS PDF via GitHub Actions:
+# - ensure .github/workflows/joss-draft.yml is present on the branch you push
+# - push changes to JOSS/paper.md or JOSS/paper.bib (or images under JOSS/)
+# - or trigger manually from the Actions tab (JOSS PDF Draft -> Run workflow)
 
 B) Test + build + upload to PyPI
        export PYPI_API_TOKEN="pypi-XXXXXXXXXXXXXXXX"

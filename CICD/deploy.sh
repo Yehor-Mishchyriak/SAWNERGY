@@ -56,6 +56,12 @@ if [[ $TEST_STATUS -ne 0 ]]; then
 fi
 echo "✅ Tests passed. Log: ${LOG_FILE}"
 
+# Commit the new test log (keeps public mirror in sync)
+git add "${LOG_FILE}" || true
+if ! git diff --cached --quiet; then
+  git commit -m "chore: add test log ${LOG_FILE##*/}" || true
+fi
+
 # ---------- 3) Build sdist + wheel (also bumps pkg_meta.json version) ----------
 section "Building sdist and wheel"
 "$PY" CICD/build_whl.py sdist bdist_wheel
