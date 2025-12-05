@@ -112,6 +112,17 @@ MD Trajectory + Topology
 Each stage consumes the archive produced by the previous one. Metadata embedded in the archives ensures frame order,
 node indexing, and RNG seeds stay consistent across the toolchain.
 
+## Quick-start MD example
+
+A minimal dataset is included in `example_MD_for_quick_start/` on GitHub to let you run the full SAWNERGY pipeline immediately:
+
+- `p53_DBD.prmtop` (topology), `p53_DBD.pdb` (reference), `p53_DBD.nc` (trajectory)
+- 1 µs production trajectory of the p53 DNA-binding domain, 1000 snapshots saved every 1 ns
+- Credits: MD simulation produced by Sean Stetson (ORCID: 0009-0007-9759-5977)
+- Intended use: quick-start tutorial for building RINs, sampling walks, and training embeddings without setting up your own MD run
+
+See `example_MD_for_quick_start/brief_description.md`.
+
 ---
 
 ## Archive Layouts (Zarr v3 in .zip)
