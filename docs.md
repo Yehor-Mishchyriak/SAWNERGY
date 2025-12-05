@@ -36,6 +36,7 @@ pip install sawnergy
 ---
 
 ## End-to-End Quick Start (make sure cpptraj is discoverable)
+New here? This is the shortest possible runnable script. Point it at your own `topology/trajectory` pair or at the bundled p53 example (see **Quick-start MD example** below).
 ```python
 from pathlib import Path
 import logging
@@ -112,6 +113,13 @@ MD Trajectory + Topology
 Each stage consumes the archive produced by the previous one. Metadata embedded in the archives ensures frame order,
 node indexing, and RNG seeds stay consistent across the toolchain.
 
+### Biophysical intuition (why these steps exist)
+- Residue Interaction Networks treat each amino acid as a node and the non-bonded interaction energy it exchanges with neighbors as a weighted edge. We split energies into attractive (Coulomb + vdW < 0) and repulsive (> 0) channels to respect the underlying physics: attractive edges guide paths along likely contact surfaces; repulsive edges highlight clashes or steric barriers.
+- Quantile pruning removes the weakest interactions (default: bottom 85% of each row) so transient noise or solvent “fuzz” does not dominate the walk statistics. We keep the strongest contributors that are most likely to mediate allosteric communication.
+- Row-wise L1 normalization converts the energy map into a transition probability matrix. The walker then behaves like a residue-to-residue diffusion process biased by interaction strength, which is a reasonable proxy for signal or force propagation paths through the protein.
+- Random walks explore common routes; self-avoiding walks emphasize diverse, non-redundant paths. Time-aware walks allow transitions between frames when transition matrices remain similar, capturing slowly evolving conformations.
+- Skip-gram embeddings treat walk paths like sentences: residues that frequently co-occur along walks share similar vectors. This encodes community structure (e.g., domains, loops around a binding pocket) and how it shifts over time.
+
 ## Quick-start MD example
 
 A minimal dataset is included in `example_MD_for_quick_start/` on GitHub to let you run the full SAWNERGY pipeline immediately:
@@ -122,6 +130,13 @@ A minimal dataset is included in `example_MD_for_quick_start/` on GitHub to let 
 - Intended use: quick-start tutorial for building RINs, sampling walks, and training embeddings without setting up your own MD run
 
 See `example_MD_for_quick_start/brief_description.md`.
+
+### Five-minute “first run” for newcomers
+1) Install: `pip install sawnergy` (and `pip install torch` if you want GPU training). Confirm `cpptraj -h` works in your shell or set `CPPTRAJ=/path/to/cpptraj`.
+2) Download the p53 quick-start folder and `cd` into the repo root.
+3) Run the quick-start script above with `topology_file="example_MD_for_quick_start/p53_DBD.prmtop"` and `trajectory_file="example_MD_for_quick_start/p53_DBD.nc"`.
+4) Inspect the outputs: `RIN_demo.zip`, `WALKS_demo.zip`, and `EMBEDDINGS_demo.zip` (all are Zarr-in-zip archives). Try `sawnergy.visual.Visualizer("RIN_demo.zip").build_frame(1, show=True)` to see the network.
+5) Swap in your own trajectory/topology once you’ve seen the expected behavior.
 
 ---
 
@@ -172,6 +187,9 @@ All archives are Zarr v3 groups and can be opened directly with `sawnergy.sawner
     - Per-node counts: `num_SAWs = round(walks_per_node * saw_frac)`, `num_RWs = walks_per_node - num_SAWs`.
     - Walk tensors are shaped `(T, total_walks, L+1)` with dtype `uint16`; time-aware walks live in the layer of their **start** time.
     - Metadata includes seeds, worker counts, and dataset names (`ATTRACTIVE_RWs`, `ATTRACTIVE_SAWs`, etc.; missing channels are stored as `None`).
+  - Why walks: they approximate how “signals” or perturbations might diffuse through the contact network. SAWs reduce backtracking, biasing toward alternative corridors; RWs keep a faithful probability flow.
+  - Recommended usage: keep to regular (time-stationary) walks on the **attractive** network for now. Mix in a modest SAW fraction (e.g., 0.1–0.3) when you want to encourage exploration of farther residues from each node, similar to the DFS/BFS tradeoff in node2vec’s `p`/`q` tuning.
+  - Experimental flag: time-aware walks are provided for research use but are less battle-tested than stationary walks; prefer the stationary API unless you specifically need temporal hopping.
 
 ### Embedder (`sawnergy.embedding.Embedder`)
 - Purpose: turn walk corpora into skip-gram training pairs and fit embeddings per frame with either PureML (default) or PyTorch backends.
@@ -185,6 +203,7 @@ All archives are Zarr v3 groups and can be opened directly with `sawnergy.sawner
   - Seeds: master seed stored; per-frame seeds derived deterministically and recorded in `per_frame_seeds`.
   - Warm start across frames: each frame initializes from the previous frame’s embeddings (`out` transposed for SG so shapes match).
   - Output dataset `FRAME_EMBEDDINGS` is float32 with shape `(T,N,D)`, where `T` is the walk archive’s `time_stamp_count`.
+  - Why embeddings: residues that share walk context get nearby vectors, revealing communities or binding-site neighborhoods. Comparing embeddings across frames highlights how those communities reorganize over time (possible allosteric shifts).
 
 Backends:
 - `model_base="pureml"` (default): uses `SGNS_PureML` or `SG_PureML` (no biases). Device hint is ignored (PureML is CPU-only).
@@ -203,6 +222,33 @@ Backends:
   - `build_frame(frame_id, *, node_colors="rainbow", displayed_nodes="ALL", show_node_labels=False, show=False)` projects the selected frame to 3D via SVD-based PCA (pads to 3 coordinates if `D<3`). Node selectors are 1-based and validated.
   - Shares color semantics with the RIN visualizer (`node_colors` can be a colormap string, per-node RGBA array shaped `(N,3|4)`, or group tuples).
 
+### Example code
+
+```python
+from sawnergy.visual import Visualizer
+
+v = Visualizer("./RIN_demo.zip")
+v.build_frame(1,
+    node_colors="rainbow",
+    displayed_nodes="ALL",
+    displayed_pairwise_attraction_for_nodes="DISPLAYED_NODES",
+    displayed_pairwise_repulsion_for_nodes="DISPLAYED_NODES",
+    show_node_labels=True,
+    show=True
+)
+```
+
+`Visualizer` lazily loads datasets and works even in headless environments (falls back to the `Agg` backend).
+
+```python
+from sawnergy.embedding import Visualizer
+
+viz = Visualizer("./EMBEDDINGS_demo.zip", normalize_rows=True)
+viz.build_frame(1, show=True)
+```
+
+---
+
 ### Utilities
 - `ArrayStorage`: thin wrapper over Zarr v3 groups backed by a `.zarr` directory or read-only `.zip`. Handles per-block chunk metadata, JSON-safe attrs, block iteration, and compression via `compress(into=..., compression_level)` or context-managed `compress_and_cleanup(output_pth, compression_level)`.
   - `write` appends along axis 0; `read` and `block_iter` return NumPy arrays (copies). Default chunk length when unset is 10 with a warning.
@@ -217,6 +263,24 @@ Backends:
 - Transition matrices coming from `RINBuilder` are row-normalized probabilities; `_step_node` renormalizes again after any avoidance masks to keep probabilities valid.
 - Frame dimension `T` equals the number of **frame batches**, not necessarily the raw frame count if `frame_batch_size > 1`.
 - Missing channels are represented by `None` in attrs; downstream stages skip them gracefully (e.g., repulsive walks/edges/embeddings are absent if never built).
+- Stability note: time-aware walks remain experimental; stick to stationary walks on the attractive network plus a small SAW fraction when you want deeper-but-not-hopping exploration.
+
+---
+
+## Project Structure
+
+```
+├── sawnergy/
+│   ├── rin/           # RINBuilder and cpptraj integration helpers
+│   ├── walks/         # Walker class and shared-memory utilities
+│   ├── embedding/     # Embedder + SG/SGNS backends (PureML / PyTorch)
+│   ├── visual/        # Visualizer and palette utilities
+│   │
+│   ├── logging_util.py
+│   └── sawnergy_util.py
+│
+└── README.md
+```
 
 ---
 
