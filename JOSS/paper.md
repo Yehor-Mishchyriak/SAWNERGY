@@ -101,6 +101,7 @@ $$
 with optional centering and reflection control, enabling post-hoc alignment of embeddings from different frames or runs.
 
 Training backends include PureML (NumPy) [@mishchyriak2025pureml] and optional PyTorch [@paszke2019pytorch]. Per-frame embeddings are stored in the same compressed Zarr format with metadata; RINs and embeddings can be visualized via `sawnergy.visual.Visualizer` and `sawnergy.embedding.Visualizer`.
+For temporal consistency and faster convergence, training warm-starts each frame from the embedding of the previous frame before further optimization.
 
 *Note: these steps are performed for every frame or batch of frames, with in-batch interaction averaging during TRIN construction, specified via `frame_batch_size`.*
 
