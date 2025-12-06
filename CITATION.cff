@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: "SAWNERGY: Residue Interaction Networks, Random Walks, and node2vec Embeddings for Molecular Dynamics"
+title: "SAWNERGY: A Python framework for dynamic residue-interaction networks and walk-based embeddings from molecular dynamics simulations"
 message: "If you use SAWNERGY in your work, please cite this software."
 type: software
 authors:
@@ -9,8 +9,8 @@ authors:
 repository-code: https://github.com/Yehor-Mishchyriak/SAWNERGY
 url: https://github.com/Yehor-Mishchyriak/SAWNERGY
 license: Apache-2.0
-version: 1.1.4
-date-released: 2025-12-3
+version: 1.1.5
+date-released: 2025-12-5
 keywords:
   - molecular dynamics
   - residue interaction networks
@@ -31,16 +31,16 @@ abstract: >
   for reproducibility and downstream analysis.
 preferred-citation:
   type: article
-  title: "SAWNERGY"
+  title: "SAWNERGY: A Python framework for dynamic residue-interaction networks and walk-based embeddings from molecular dynamics simulations"
   authors:
     - family-names: Mishchyriak
       given-names: Yehor
       orcid: 0009-0001-8371-7159
-    - family-names: Thayer
-      given-names: Kelly M.
-      orcid: 0000-0001-7437-9517
     - family-names: Stetson
       given-names: Sean
       orcid: 0009-0007-9759-5977
+    - family-names: Thayer
+      given-names: Kelly
+      orcid: 0000-0001-7437-9517
   url: https://github.com/Yehor-Mishchyriak/SAWNERGY/JOSS/paper.md
-  version: 1.1.4
+  version: 1.1.5

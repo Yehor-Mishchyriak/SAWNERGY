@@ -33,15 +33,15 @@ bibliography: paper.bib
 SAWNERGY is a Python toolkit that turns molecular dynamics (MD) trajectories into temporal residue interaction networks (TRINs), samples random walks, and trains DeepWalk-style skip-gram embeddings. It yields compact low-dimensional representations of residue interaction patterns, replacing bulky framewise adjacencies, and stores them as compressed Zarr archives with metadata for reproducibility and visualization. Here “residue” denotes a biopolymer building block, particularly amino acids in proteins, although the approach can extend to other biomolecules when residue mappings and non-bonded energies are available.
 
 # Statement of need
-MD simulations yield framewise pairwise interaction data that scales as $O(N^2)$ in the number of residues, and each residue’s interaction vector captures only its immediate neighborhood rather than the broader network context. The combination of high dimensionality and locality makes raw MD data cumbersome for analysis or machine learning. Yet long-range interaction patterns are essential for understanding allosteric[^1] effects caused by mutations or ligand binding, which is key in drug design, for example. Hence, we need compact, context-rich representations to make MD-derived features usable.
+MD simulations yield framewise pairwise interaction data that scales as $O(N^2)$ in the number of residues, and each residue’s interaction vector captures only its immediate neighborhood rather than the broader network context. The combination of high dimensionality and locality makes raw MD data cumbersome for analysis or machine learning. Yet long-range interaction patterns are essential for understanding allosteric[^1] effects caused by mutations or ligand binding, which is key in drug design. Hence, we need compact, context-rich representations to make MD-derived features usable.
 A well-established solution is DeepWalk, a random-walk-based representation learning technique that summarizes multi-hop context in low-dimensional vectors and outperforms linear projections like PCA on graph benchmarks [@perozzi2014deepwalk].
-To apply this to residue interaction networks, moving from raw weighted adjacencies to embeddings, one would need to glue together a large multi-stage workflow, which is error-prone, likely to be inefficient, and lack output reproducibility.
-SAWNERGY adapts DeepWalk algorithm to weighted residue interaction graphs and packages the full pipeline from MD outputs to embeddings into a light Python framework. The framework is MD-format agnostic, involves parallel computation, post-execution clean-up, visualization and animation capabilities, data compression along with meta-data for reproducibilty, documentation, and tests.
+To apply this to residue interaction networks, moving from raw weighted adjacencies to embeddings, one would need to glue together a large multi-stage workflow, which is error-prone, likely to be inefficient, and lacks output reproducibility.
+SAWNERGY adapts the DeepWalk algorithm to weighted residue interaction graphs and packages the full pipeline from MD outputs to embeddings into a light Python framework. The framework is MD-format agnostic, involves parallel computation, post-execution clean-up, visualization and animation capabilities, data compression along with metadata for reproducibility, documentation, and tests.
 
 [^1]: *Allostery is when a change at one site in a protein alters the structure or function at a distant site.*
 
 # Interactions in question
-SAWNERGY focuses on non-bonded interaction energies, namely electrostatic and van der Waals, computed from standard MD force fields [REF].
+SAWNERGY focuses on non-bonded interaction energies, namely electrostatic and van der Waals, computed from standard MD force fields [@maier2015ff14sb].
 They follow the Coulomb and Lennard-Jones forms, respectively:
 $$
 E_{\mathrm{elec}}(i,j) = \frac{q_i q_j}{4\pi\varepsilon_0 r_{ij}}, \qquad
@@ -50,13 +50,14 @@ $$
 Using these equations `cpptraj` derives attractive and repulsive interaction energies between atoms in the system.
 
 ## Why electrostatic and van der Waals
-Electrostatic and van der Waals interaction energies are the dominant non-bonded terms shaping residue–residue communication in folded proteins, and multiple studies from our group have shown that these quantities capture the functional reorganization of allosteric networks under mutation or ligand rescue. In p53 Y220C, electrostatic interaction networks differentiate native and mutant substates, reveal long-range communication pathways, and track shifts induced by allosteric effectors [@han2022insights; @han2024reconnaissance; @cowan2025network]. Energetic network comparisons also identify residues whose interaction patterns revert toward wild-type upon successful rescue, linking changes in local interaction energies to global structural response [@stetson2025restoration]. Across these studies, electrostatics and van der Waals contributions together provide a sensitive, low-level physical signal from which meaningful RINs can be constructed.
+Electrostatic and van der Waals interaction energies are the dominant non-bonded terms shaping residue–residue communication in folded proteins, and multiple studies from our group have shown that these quantities capture the functional reorganization of allosteric networks under mutation or ligand rescue. In p53 Y220C[^2], electrostatic interaction networks differentiate native and mutant substates, reveal long-range communication pathways, and track shifts induced by allosteric effectors [@han2022insights; @han2024reconnaissance; @cowan2025network]. Energetic network comparisons also identify residues whose interaction patterns revert toward wild-type upon successful rescue, linking changes in local interaction energies to global structural response [@stetson2025restoration]. Across these studies, electrostatics and van der Waals contributions together provide a sensitive, low-level physical signal from which meaningful RINs can be constructed.
 Additionally, these terms encode the energetic consequences of common inter-residue contacts, including salt bridges, hydrogen bonds, and packing interactions—since such contacts manifest as characteristic patterns in the underlying Coulomb and Lennard-Jones potentials.
+[^2]: *Y220C mutates a tyrosine to cysteine in the p53 DNA-binding domain, destabilizing the protein and impairing tumor-suppressor function.*
 
 # Pipeline description
 
 ## RIN construction
-Given a topology/trajectory files and molecule ID in the system, SAWNERGY calls `cpptraj` [@roe2013cpptraj] to compute atomic interaction matrices, parsing EMAP/VMAP blocks, projecting to residues, pruning, symmetrizing, and normalizing to transitions, then writing Zarr archives with metadata.
+Given topology and trajectory files and a molecule ID in the system, SAWNERGY calls `cpptraj` [@roe2013cpptraj] to compute atomic interaction matrices, parsing EMAP/VMAP blocks, projecting to residues, pruning, symmetrizing, and normalizing to transitions, then writing Zarr archives with metadata.
 
 Let $A \in \mathbb{R}^{n_a \times n_a}$ be the atomic matrix and $P \in \{0,1\}^{n_a \times n_r}$ map atoms to residues. The residue interaction matrix is
 $$
@@ -76,13 +77,13 @@ Outputs are chunked into Zarr v3 groups and can be compressed to read-only ZIP s
 For embeddings we recommend using the attractive channel, because stabilizing contacts (hydrogen bonds, salt bridges, hydrophobic packing) hold the fold together and define the meaningful co-occurrence structure along walks, whereas repulsive contributions are transient exclusions that add noise without encoding the binding network.
 
 ## Walk sampling
-Given a transition matrix $T$ and length $L$, we treat residues as states in Markov process and draw walk sequences $v_{0:L}$ from $T$, starting at each residue in turn and recording the visited nodes. Transition stacks are loaded into shared memory so parallel workers sample without copies, and the sampler cleans up shared segments when done.
+Given a transition matrix $T$ and length $L$, we treat residues as states in a Markov process and draw walk sequences $v_{0:L}$ from $T$, starting at each residue in turn and recording the visited nodes. Transition stacks are loaded into shared memory so parallel workers sample without copies, and the sampler cleans up shared segments when done.
 
 Self-avoiding walks enforce no node revisits.
 SAWNERGY lets users mix in a fraction of SAWs (`saw_frac`) alongside plain random walks. This trade-off loosely mirrors node2vec’s $p,q$ biases [@grover2016node2vec]: plain walks revisit neighborhoods (BFS-like), while higher `saw_frac` encourages exploration of more distant regions of the graph like DFS.
 
 ## Embedding
-SAWNERGY trains skip-gram (full softmax) or SGNS models over the sequences of random walk visits to predict pairs of co-occuring residues. For SGNS, given a true pair $(u, v)$ from a walk sample and set of random pairs $\mathcal{N}$ sampled from a distribution proportional to frequency counts across all the walks, we use gradient descent to minimize the following loss
+SAWNERGY trains skip-gram (full softmax) or SGNS models over the sequences of random walk visits to predict pairs of co-occurring residues. For SGNS, given a true pair $(u, v)$ from a walk sample and set of random pairs $\mathcal{N}$ sampled from a distribution proportional to frequency counts across all the walks, we use gradient descent to minimize the following loss
 $$
 \mathcal{L}_{\mathrm{SGNS}} = -\left[\log \sigma(\mathbf{u}^{\top}\mathbf{v}) + \sum_{n \in \mathcal{N}} \log \sigma(-\mathbf{u}^{\top}\mathbf{n})\right],
 $$
@@ -168,13 +169,12 @@ viz.build_frame(15, show=True, show_node_labels=True)
 
 ![Embedding of p53 Tumor Suppressor Protein Projected onto 3 leading PCs](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/FL_p53_embedding.png)
 
-*Note the visual resemblance of the two images despite the first one being center of mass coordinates of amino acid residues and the second one having been derived purely from random walks over the energetic network*
+*Note the visual resemblance: the first plot uses residue centers of mass, while the second plot is derived purely from random walks on the energetic network.*
 
-## Potential applications (TO BE EDITED OR MOVED)
-- Feature engineering for ML models informed by MD (e.g., embedding vectors as inputs for classification/regression tasks on stability, binding, or mutational effects).
-- Conformational dynamics: clustering or dimensionality reduction on per-frame embeddings to identify states, transitions, and rare events.
-- Comparative analysis: aligning embeddings across trajectories/conditions to quantify perturbations (mutations, ligands, pH/temperature changes).
-- Visualization and interpretation: TRIN animations and embedding plots to communicate interaction changes over time.
+## Potential applications
+- Feature engineering: use framewise embeddings as inputs to ML models for stability, binding, or mutational effects.
+- Dynamics: cluster or reduce per-frame embeddings to map states, transitions, and rare events.
+- Comparative analysis: align embeddings across trajectories/conditions to quantify perturbations (mutations, ligands, pH/temperature shifts).
 
 # Availability
 Source code: https://github.com/Yehor-Mishchyriak/SAWNERGY  
@@ -182,7 +182,7 @@ PyPI: https://pypi.org/project/sawnergy/
 Documentation: https://ymishchyriak.com/docs/SAWNERGY-DOCS  
 License: Apache-2.0 (see `LICENSE`)
 
-# Acknowledgements (TO BE EDITED)
-Supported by NSF CNS-0619508 and CNS-095985 (high-performance computing facilities at Wesleyan), NIH R15 GM128102-02, and NSF CHE-2320718. We thank Henk Meij for technical assistance with the HPC cluster. We also acknowledge the AmberTools/cpptraj and PyTorch communities.
+# Acknowledgements
+We thank the Molecules to Medicine consortium for fruitful discussions, especially Dr. David L. Beveridge and Dr. Michael P. Weir and their lab members. We are grateful to Henk Meij for technical support with Wesleyan’s high-performance computing resources. This work was supported by NIH R15 GM128102-02, NSF CHE-2320718, and NSF CNS-0619508/CNS-095985 (Wesleyan HPC facilities).
 
 # References
