@@ -12,12 +12,16 @@ authors:
   - name: Yehor Mishchyriak
     orcid: 0009-0001-8371-7159
     affiliation: 1
+    corresponding: true
+    email: ymishchyriak@wesleyan.edu
   - name: Sean Stetson
     orcid: 0009-0007-9759-5977
     affiliation: "1, 2"
+    email: sstetson@wesleyan.edu
   - name: Kelly M. Thayer
     orcid: 0000-0001-7437-9517
     affiliation: "1, 2, 3"
+    email: kthayer@wesleyan.edu
 affiliations:
   - name: Department of Computer Science, Wesleyan University, Middletown, CT, United States
     index: 1
@@ -121,13 +125,13 @@ from sawnergy.rin import RINBuilder
 RINBuilder().build_rin(
     topology_file="topo.prmtop",
     trajectory_file="traj.nc",
-    molecule_of_interest=1,          # which molecule ID to process
-    frame_batch_size=10,             # frames per batch for averaging (if testing, increase to, say, 500)
-    prune_low_energies_frac=0.85,    # drop lowest 85% per row
-    include_attractive=True,         # write attractive channel
-    include_repulsive=False,         # skip repulsive channel
-    num_matrices_in_compressed_blocks=10,  # matrices per compressed block in the Zarr archive
-    compression_level=3,             # Blosc compression level
+    molecule_of_interest=1, # which molecule ID to process
+    frame_batch_size=10, # frames per batch for averaging (increase for more throughput)
+    prune_low_energies_frac=0.85, # drop lowest 85% per row
+    include_attractive=True, # write attractive channel
+    include_repulsive=False, # skip repulsive channel
+    num_matrices_in_compressed_blocks=10, # matrices per compressed archive block
+    compression_level=3, # Blosc compression level (3/9)
     output_path="RIN.zip"
 )
 ```
@@ -136,12 +140,12 @@ RINBuilder().build_rin(
 from sawnergy.walks import Walker
 with Walker("RIN.zip") as w:
   w.sample_walks(
-      walk_length=20,           # steps per walk
-      walks_per_node=100,       # walks per residue
-      saw_frac=0.25,            # fraction of walks that are self-avoiding
-      include_attractive=True,  # use attractive interactions
-      include_repulsive=False,  # skip repulsive interactions
-      in_parallel=False,        # sample serially (not multi-process)
+      walk_length=20, # steps per walk
+      walks_per_node=100, # walks per residue
+      saw_frac=0.25, # fraction of walks that are self-avoiding
+      include_attractive=True, # use attractive interactions
+      include_repulsive=False, # skip repulsive interactions
+      in_parallel=False, # sample serially (not multi-process)
       output_path="WALKS.zip"
   )
 ```
@@ -150,16 +154,16 @@ with Walker("RIN.zip") as w:
 from sawnergy.embedding import Embedder
 emb = Embedder("WALKS.zip")
 emb.embed_all(
-    RIN_type="attr",              # choose attractive RIN
-    using="merged",               # merge plain and self-avoiding walks
-    num_epochs=5,                 # training epochs
-    negative_sampling=True,       # use SGNS
-    window_size=5,                # context window for co-occurrence
-    num_negative_samples=10,      # fake samples per true sample
-    dimensionality=128,           # embedding dimension
-    model_base="pureml",          # backend ('pureml' or 'torch')
-    shuffle_data=True,            # shuffle training pairs
-    kind="in",                    # return embeddings from the 1st layer of the model
+    RIN_type="attr", # choose attractive RIN
+    using="merged", # merge plain and self-avoiding walks
+    num_epochs=5, # training epochs
+    negative_sampling=True, # use SGNS
+    window_size=5, # context window for co-occurrence
+    num_negative_samples=10, # fake samples per true sample
+    dimensionality=128, # embedding dimension
+    model_base="pureml", # backend ('pureml' or 'torch')
+    shuffle_data=True, # shuffle training pairs
+    kind="in", # return embeddings from the first layer of the model
     output_path="EMBEDDINGS.zip"
 )
 ```
