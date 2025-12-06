@@ -30,13 +30,15 @@ bibliography: paper.bib
 ---
 
 # Summary
-SAWNERGY is a Python toolkit that turns molecular dynamics (MD) trajectories into temporal residue interaction networks (TRINs), samples random walks, and trains DeepWalk-style skip-gram embeddings. It yields compact low-dimensional representations of residue interaction patterns, replacing bulky framewise adjacencies, and stores them as compressed Zarr archives with metadata for reproducibility and visualization.
+SAWNERGY is a Python toolkit that turns molecular dynamics (MD) trajectories into temporal residue interaction networks (TRINs), samples random walks, and trains DeepWalk-style skip-gram embeddings. It yields compact low-dimensional representations of residue interaction patterns, replacing bulky framewise adjacencies, and stores them as compressed Zarr archives with metadata for reproducibility and visualization. Here “residue” denotes a biopolymer building block, particularly amino acids in proteins, although the approach can extend to other biomolecules when residue mappings and non-bonded energies are available.
 
 # Statement of need
-MD simulations yield framewise pairwise interaction data that scales as $O(N^2)$ in the number of residues, and each residue’s interaction vector captures only its immediate neighborhood rather than the broader network context. The combination of high dimensionality and locality makes raw MD data cumbersome for analysis or machine learning. Yet long-range interaction patterns are essential for understanding allosteric effects caused by mutations or ligand binding, which is key in drug design. Hence, we need compact, context-rich representations to make MD-derived features usable.
+MD simulations yield framewise pairwise interaction data that scales as $O(N^2)$ in the number of residues, and each residue’s interaction vector captures only its immediate neighborhood rather than the broader network context. The combination of high dimensionality and locality makes raw MD data cumbersome for analysis or machine learning. Yet long-range interaction patterns are essential for understanding allosteric[^1] effects caused by mutations or ligand binding, which is key in drug design, for example. Hence, we need compact, context-rich representations to make MD-derived features usable.
 A well-established solution is DeepWalk, a random-walk-based representation learning technique that summarizes multi-hop context in low-dimensional vectors and outperforms linear projections like PCA on graph benchmarks [@perozzi2014deepwalk].
 To apply this to residue interaction networks, moving from raw weighted adjacencies to embeddings, one would need to glue together a large multi-stage workflow, which is error-prone, likely to be inefficient, and lack output reproducibility.
 SAWNERGY adapts DeepWalk algorithm to weighted residue interaction graphs and packages the full pipeline from MD outputs to embeddings into a light Python framework. The framework is MD-format agnostic, involves parallel computation, post-execution clean-up, visualization and animation capabilities, data compression along with meta-data for reproducibilty, documentation, and tests.
+
+[^1]: *Allostery is when a change at one site in a protein alters the structure or function at a distant site.*
 
 # Interactions in question
 SAWNERGY focuses on non-bonded interaction energies, namely electrostatic and van der Waals, computed from standard MD force fields [REF].
