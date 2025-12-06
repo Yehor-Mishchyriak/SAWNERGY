@@ -52,6 +52,7 @@ Using these equations `cpptraj` derives attractive and repulsive interaction ene
 ## Why electrostatic and van der Waals
 Electrostatic and van der Waals interaction energies are the dominant non-bonded terms shaping residue–residue communication in folded proteins, and multiple studies from our group have shown that these quantities capture the functional reorganization of allosteric networks under mutation or ligand rescue. In p53 Y220C[^2], electrostatic interaction networks differentiate native and mutant substates, reveal long-range communication pathways, and track shifts induced by allosteric effectors [@han2022insights; @han2024reconnaissance; @cowan2025network]. Energetic network comparisons also identify residues whose interaction patterns revert toward wild-type upon successful rescue, linking changes in local interaction energies to global structural response [@stetson2025restoration]. Across these studies, electrostatics and van der Waals contributions together provide a sensitive, low-level physical signal from which meaningful RINs can be constructed.
 Additionally, these terms encode the energetic consequences of common inter-residue contacts, including salt bridges, hydrogen bonds, and packing interactions—since such contacts manifest as characteristic patterns in the underlying Coulomb and Lennard-Jones potentials.
+
 [^2]: *Y220C mutates a tyrosine to cysteine in the p53 DNA-binding domain, destabilizing the protein and impairing tumor-suppressor function.*
 
 # Pipeline description
@@ -107,19 +108,25 @@ Training backends include PureML (NumPy) [@mishchyriak2025pureml] and optional P
 The GitHub repository includes a `tests/` suite invoked via `pytest` covering storage helpers, walk sampling, embedding utilities, and math helpers. These tests run in continuous integration on each commit to the public repository and before PyPI releases to ensure reproducibility and stability. SAWNERGY is actively used within ThayerLab, including ongoing analyses of the 12 known p53 isoforms.
 
 # Example usage
+## 0. Configure logging:
+```python
+from sawnergy.logging_util import configure_logging
+import logging
+configure_logging("logs", console_level=logging.INFO, file_level=logging.ERROR)
+```
 ## 1. Build a RIN archive from an MD trajectory:
 ```python
 from sawnergy.rin import RINBuilder
 RINBuilder().build_rin(
     topology_file="topo.prmtop",
     trajectory_file="traj.nc",
-    molecule_of_interest=1,
-    frame_batch_size=10,
-    prune_low_energies_frac=0.85,
-    include_attractive=True,
-    include_repulsive=False,
-    num_matrices_in_compressed_blocks=10,
-    compression_level=3,
+    molecule_of_interest=1,          # which molecule ID to process
+    frame_batch_size=10,             # frames per batch for averaging (if testing, increase to, say, 500)
+    prune_low_energies_frac=0.85,    # drop lowest 85% per row
+    include_attractive=True,         # write attractive channel
+    include_repulsive=False,         # skip repulsive channel
+    num_matrices_in_compressed_blocks=10,  # matrices per compressed block in the Zarr archive
+    compression_level=3,             # Blosc compression level
     output_path="RIN.zip"
 )
 ```
@@ -128,13 +135,12 @@ RINBuilder().build_rin(
 from sawnergy.walks import Walker
 with Walker("RIN.zip") as w:
   w.sample_walks(
-      walk_length=20,
-      walks_per_node=100,
-      saw_frac=0.25,
-      include_attractive=True,
-      include_repulsive=False,
-      time_aware=False,
-      in_parallel=False,
+      walk_length=20,           # steps per walk
+      walks_per_node=100,       # walks per residue
+      saw_frac=0.25,            # fraction of walks that are self-avoiding
+      include_attractive=True,  # use attractive interactions
+      include_repulsive=False,  # skip repulsive interactions
+      in_parallel=False,        # sample serially (not multi-process)
       output_path="WALKS.zip"
   )
 ```
@@ -143,24 +149,30 @@ with Walker("RIN.zip") as w:
 from sawnergy.embedding import Embedder
 emb = Embedder("WALKS.zip")
 emb.embed_all(
-    RIN_type="attr",
-    using="merged",
-    num_epochs=5,
-    negative_sampling=True,
-    window_size=5,
-    num_negative_samples=10,
-    dimensionality=128,
-    model_base="pureml",
-    shuffle_data=True,
-    kind="in",
+    RIN_type="attr",              # choose attractive RIN
+    using="merged",               # merge plain and self-avoiding walks
+    num_epochs=5,                 # training epochs
+    negative_sampling=True,       # use SGNS
+    window_size=5,                # context window for co-occurrence
+    num_negative_samples=10,      # fake samples per true sample
+    dimensionality=128,           # embedding dimension
+    model_base="pureml",          # backend ('pureml' or 'torch')
+    shuffle_data=True,            # shuffle training pairs
+    kind="in",                    # return embeddings from the 1st layer of the model
     output_path="EMBEDDINGS.zip"
 )
 ```
-## 4. Visualize per-frame embeddings:
+## 4. Visualize embedding of the first frame/frame-batch:
 ```python
 from sawnergy.embedding import Visualizer
-viz = Visualizer("EMBEDDINGS.zip", normalize_rows=True)
-viz.build_frame(15, show=True, show_node_labels=True)
+v = Visualizer("EMBEDDINGS.zip", normalize_rows=True)
+v.build_frame(1, show=True)
+```
+## 5. Visualize the RIN:
+```python
+from sawnergy.visual import Visualizer
+v = Visualizer("RIN.zip", antialiased=True)
+v.build_frame(1, node_colors="rainbow", show=True)
 ```
 
 ## Visual example produced by SAWNERGY
