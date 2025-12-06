@@ -44,14 +44,15 @@ SAWNERGY adapts the DeepWalk algorithm to weighted residue interaction graphs an
 
 [^1]: *Allostery is when a change at one site in a protein alters the structure or function at a distant site.*
 
-# Interactions in question
+# Interaction model
 SAWNERGY focuses on non-bonded interaction energies, namely electrostatic and van der Waals, computed from standard MD force fields [@maier2015ff14sb].
-They follow the Coulomb and Lennard-Jones forms, respectively:
+They follow the Coulomb and Lennard–Jones forms, respectively:
 $$
 E_{\mathrm{elec}}(i,j) = \frac{q_i q_j}{4\pi\varepsilon_0 r_{ij}}, \qquad
 E_{\mathrm{vdW}}(i,j) = 4\varepsilon_{ij}\left[\left(\frac{\sigma_{ij}}{r_{ij}}\right)^{12} - \left(\frac{\sigma_{ij}}{r_{ij}}\right)^{6}\right].
 $$
-Using these equations `cpptraj` derives attractive and repulsive interaction energies between atoms in the system.
+Here, $i,j$ index atoms, $q_i$ and $q_j$ are their partial charges, $r_{ij}$ is the interatomic distance, $\varepsilon_0$ is the vacuum permittivity, and $\varepsilon_{ij}, \sigma_{ij}$ are the Lennard–Jones well depth and size (zero-crossing distance) parameters from the underlying force field.
+Using these forms, `cpptraj` evaluates pairwise non-bonded energies between atoms in the system, which SAWNERGY then aggregates into attractive and repulsive residue–residue interaction energies.
 
 ## Why electrostatic and van der Waals interactions?
 Electrostatic and van der Waals interaction energies are the dominant non-bonded terms shaping residue–residue communication in folded proteins, and multiple studies from our group have shown that these quantities capture the functional reorganization of allosteric networks under mutation or ligand rescue. In p53 Y220C[^2], electrostatic interaction networks differentiate native and mutant substates, reveal long-range communication pathways, and track shifts induced by allosteric effectors [@han2022insights; @han2024reconnaissance; @cowan2025network]. Energetic network comparisons also identify residues whose interaction patterns revert toward wild-type upon successful rescue, linking changes in local interaction energies to global structural response [@stetson2025restoration]. Across these studies, electrostatics and van der Waals contributions together provide a sensitive, low-level physical signal from which meaningful RINs can be constructed.
