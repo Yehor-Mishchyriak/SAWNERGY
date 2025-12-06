@@ -11,22 +11,20 @@ tags:
 authors:
   - name: Yehor Mishchyriak
     orcid: 0009-0001-8371-7159
+    affiliation: 1
+  - name: Sean Stetson
+    orcid: 0009-0007-9759-5977
     affiliation: "1, 2"
   - name: Kelly M. Thayer
     orcid: 0000-0001-7437-9517
-    affiliation: "1, 2, 3, 4"
-  - name: Sean Stetson
-    orcid: 0009-0007-9759-5977
     affiliation: "1, 2, 3"
 affiliations:
-  - name: ThayerLab, Wesleyan University, Middletown, CT, United States
-    index: 1
   - name: Department of Computer Science, Wesleyan University, Middletown, CT, United States
-    index: 2
+    index: 1
   - name: College of Integrative Sciences, Wesleyan University, Middletown, CT, United States
-    index: 3
+    index: 2
   - name: Department of Chemistry, Wesleyan University, Middletown, CT, United States
-    index: 4
+    index: 3
 date: 5 December 2025
 bibliography: paper.bib
 ---
@@ -178,6 +176,8 @@ Documentation: https://ymishchyriak.com/docs/SAWNERGY-DOCS
 License: Apache-2.0 (see `LICENSE`)
 
 # Acknowledgements
-The project was directed and supervised by Professor Kelly M. Thayer, MD simulations were produced by Sean Stetson, and the software was developed by Yehor Mishchyriak. We acknowledge the AmberTools/cpptraj community and the developers of PyTorch.
+[HERE GO THE GRANT REFERENCES]
+[thank Henk Meij]
+We also acknowledge the AmberTools/cpptraj community and the developers of PyTorch.
 
 # References
