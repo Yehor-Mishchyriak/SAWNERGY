@@ -27,6 +27,9 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (DeepW
 
 # UPDATES:
 
+## v1.1.6 — What’s new:
+- **Dependency refresh.** Bumped PureML to v1.2.7.
+
 ## v1.1.5 — What’s new:
 - **Embedding visualizer color API.** `sawnergy.embedding.Visualizer` now accepts the same group/color tuples as the RIN visualizer (e.g., `(indices, sawnergy.visual.BLUE)`), so embedding plots and RIN plots share a unified coloring interface.
 
