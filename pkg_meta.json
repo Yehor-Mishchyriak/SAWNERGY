@@ -1,6 +1,6 @@
 {
   "name": "sawnergy",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "Toolkit for transforming molecular dynamics (MD) trajectories into rich graph representations",
   "long_description": "[PLACE_HOLDER]",
   "long_description_content_type": "text/markdown",
@@ -14,7 +14,7 @@
     "threadpoolctl>=3.0",
     "matplotlib>=3.7",
     "psutil>=5.9",
-    "ym-pure-ml==1.2.4"
+    "ym-pure-ml==1.2.7"
   ],
   "packages": {
     "find": {
