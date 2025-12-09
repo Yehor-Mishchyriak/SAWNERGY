@@ -23,7 +23,7 @@ authors:
     affiliation: "1, 2, 3"
     email: kthayer@wesleyan.edu
 affiliations:
-  - name: Department of Computer Science, Wesleyan University, Middletown, CT, United States
+  - name: Department of Mathematics and Computer Science, Wesleyan University, Middletown, CT, United States
     index: 1
   - name: College of Integrative Sciences, Wesleyan University, Middletown, CT, United States
     index: 2
@@ -39,8 +39,8 @@ SAWNERGY is a Python toolkit that turns molecular dynamics (MD) trajectories int
 # Statement of need
 MD simulations yield framewise pairwise interaction data that scales as $O(N^2)$ in the number of residues $N$, and each residue’s interaction vector captures only its immediate neighborhood rather than the broader network context. The combination of high dimensionality and locality makes raw MD data cumbersome for analysis or machine learning. Yet long-range interaction patterns are essential for understanding allosteric[^1] effects caused by mutations or ligand binding, which is key in drug design. Hence, we need compact, context-rich representations to make MD-derived features usable.
 A well-established solution is DeepWalk, a random-walk-based representation learning technique that summarizes multi-hop context in low-dimensional vectors and outperforms linear projections like PCA on graph benchmarks [@perozzi2014deepwalk].
-To apply this to residue interaction networks, moving from raw weighted adjacencies to embeddings, one would need to glue together a large multi-stage workflow, which is error-prone, likely to be inefficient, and lacks output reproducibility.
-SAWNERGY adapts the DeepWalk algorithm to weighted residue interaction graphs and packages the full pipeline from MD outputs to embeddings into a light Python framework. The framework is MD-format agnostic, involves parallel computation, post-execution clean-up, visualization and animation capabilities, data compression along with metadata for reproducibility, documentation, and tests.
+To apply this to residue interaction networks, moving from raw weighted adjacencies to embeddings, one would need to glue together a large multi-stage workflow, which is error-prone, likely to be inefficient, and often lacks reproducible outputs.
+SAWNERGY adapts the DeepWalk algorithm to weighted residue interaction graphs and packages the full pipeline from MD outputs to embeddings into a light Python framework. It is MD-format agnostic, involves parallel computation, post-run clean-up, visualization and animation capabilities, data compression along with metadata for reproducibility, documentation, and tests.
 
 [^1]: *Allostery is when a change at one site in a protein alters the structure or function at a distant site.*
 
@@ -89,21 +89,25 @@ Self-avoiding walks enforce no node revisits.
 SAWNERGY lets users mix in a fraction of SAWs (`saw_frac`) alongside plain random walks. This trade-off loosely mirrors node2vec’s $p,q$ biases [@grover2016node2vec]: plain walks revisit neighborhoods (BFS-like), while higher `saw_frac` encourages exploration of more distant regions of the graph like DFS.
 
 ## Embedding
-SAWNERGY trains skip-gram (full softmax) or SGNS models over the sequences of random walk visits to predict pairs of co-occurring residues. For SGNS, given a true pair $(u, v)$ from a walk sample and set of random pairs $\mathcal{N}$ sampled from a distribution proportional to frequency counts across all the walks, we use gradient descent to minimize the following loss
+SAWNERGY trains skip-gram (full softmax) or SGNS (skip-gram with negative sampling) models over the sequences of random walk visits to predict pairs of co-occurring residues.
+
+For SGNS, given a true pair $(u, v)$ from a walk sample and set of random pairs $\mathcal{N}$ sampled from a distribution proportional to frequency counts across all the walks, we use gradient descent to minimize the following loss
 $$
 \mathcal{L}_{\mathrm{SGNS}} = -\left[\log \sigma(\mathbf{u}^{\top}\mathbf{v}) + \sum_{n \in \mathcal{N}} \log \sigma(-\mathbf{u}^{\top}\mathbf{n})\right],
 $$
-learning embeddings $\mathbf{u}, \mathbf{v} \in \mathbb{R}^d$. For plain skip-gram with full softmax, the model minimizes
-$$ 
-\mathcal{L}_{\mathrm{SG}} = - \sum_{(u,v)} \log \frac{\exp(\mathbf{u}^{\top}\mathbf{v})}{\sum_{w \in V} \exp(\mathbf{u}^{\top}\mathbf{w})},
-$$ 
-training a single classifier over the vocabulary instead of using negative sampling. Both objectives yield compact vectors that encode interaction context.
+where $\sigma$ is the logistic sigmoid. SGNS learns to distinguish true co-occurrences from sampled noise, implicitly learning embeddings $\mathbf{u}, \mathbf{v} \in \mathbb{R}^d$.
+
+Full-softmax skip-gram learns $P(\text{context}\mid \text{target})$ over the entire vocabulary for each target node, also learning embeddings $\mathbf{u}, \mathbf{v} \in \mathbb{R}^d$. The model minimizes
+$$
+\mathcal{L}_{\mathrm{SG}} = - \sum_{(u,v)} \log \frac{\exp(\mathbf{u}^{\top}\mathbf{v})}{\sum_{w \in V} \exp(\mathbf{u}^{\top}\mathbf{w})}.
+$$
+Both objectives yield compact vectors that encode interaction context.
 
 For cross-frame comparisons, SAWNERGY includes an orthogonal alignment helper (`align_frames`) that solves the Procrustes problem
 $$
-\min_{R \in O(d)} \| X R - Y \|_F \quad\Rightarrow\quad R = U V^{\top} \ \text{for}\ \mathrm{SVD}(X^{\top}Y) = U \Sigma V^{\top},
+\min_{R \in O(d)} \| X R - Y \|_F \quad\Rightarrow\quad R^{*} = U V^{\top} \ \text{for}\ \mathrm{SVD}(X^{\top}Y) = U \Sigma V^{\top},
 $$
-with optional centering and reflection control, enabling post-hoc alignment of embeddings from different frames or runs.
+with optional centering and reflection control, enabling post-hoc alignment of embeddings from different frames or runs, where $X$ and $Y$ are embedding matrices and $R^{*}$ is the optimal orthogonal transformation aligning $X$ to $Y$.
 
 Training backends include PureML (NumPy) [@mishchyriak2025pureml; @harris2020array] and optional PyTorch [@paszke2019pytorch]. Per-frame embeddings are stored in the same compressed Zarr format [@zarrpython2025] with metadata; RINs and embeddings are visualized via Matplotlib-based components [@hunter2007matplotlib] in `sawnergy.visual.Visualizer` and `sawnergy.embedding.Visualizer`.
 For temporal consistency and faster convergence, training warm-starts each frame from the embedding of the previous frame before further optimization.
