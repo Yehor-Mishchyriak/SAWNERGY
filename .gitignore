@@ -47,6 +47,12 @@
 !JOSS/*.md
 !JOSS/*.bib
 # ----------------------------
+!pre-print/
+!pre-print/*.pdf
+!pre-print/*.png
+!pre-print/*.template
+!pre-print/*.tex
+# ----------------------------
 !.github/
 !.github/workflows/
 !.github/workflows/*.yml
