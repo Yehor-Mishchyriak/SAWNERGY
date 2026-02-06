@@ -1,4 +1,0 @@
-Traceback (most recent call last):
-  File "/Users/yehormishchyriak/Desktop/ThayerLab/sawnergy/CICD/test_runner.py", line 5, in <module>
-    import pytest
-ModuleNotFoundError: No module named 'pytest'

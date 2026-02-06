@@ -40,9 +40,6 @@
 !example_analysis/*.png
 !example_analysis/*.md
 # ----------------------------
-!test_logs/
-!test_logs/*
-# ----------------------------
 !JOSS/
 !JOSS/*.md
 !JOSS/*.bib
@@ -66,3 +63,4 @@
 !NOTICE
 !docs.md
 !requirements.txt
+!pyproject.toml

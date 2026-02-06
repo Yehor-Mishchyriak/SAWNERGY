@@ -2,6 +2,8 @@ name: JOSS PDF Draft
 
 on:
   push:
+    branches:
+      - main
     paths:
       - JOSS/paper.md
       - JOSS/paper.bib

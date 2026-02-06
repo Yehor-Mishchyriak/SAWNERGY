@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sawnergy"
+version = "1.1.6"
+description = "Toolkit for transforming molecular dynamics (MD) trajectories into rich graph representations"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Yehor Mishchyriak" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "numpy>=2.0",
+  "zarr>=3.0",
+  "threadpoolctl>=3.0",
+  "matplotlib>=3.7",
+  "psutil>=5.9",
+  "pytest>=8.0",
+  "ym-pure-ml==1.2.7",
+]
+
+[project.urls]
+Source = "https://github.com/Yehor-Mishchyriak/SAWNERGY"
+Tracker = "https://github.com/Yehor-Mishchyriak/SAWNERGY/issues"
+
+[tool.setuptools]
+packages = { find = { include = ["sawnergy*"] } }
+include-package-data = true
+zip-safe = false
