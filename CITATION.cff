@@ -38,7 +38,7 @@ abstract: >
   PyTorch backends. Artifacts are stored as compressed Zarr archives with rich metadata
   for reproducibility and downstream analysis.
 preferred-citation:
-  type: article
+  type: software
   title: "SAWNERGY: A Python framework for dynamic residue-interaction networks and walk-based embeddings from molecular dynamics simulations"
   authors:
     - family-names: Mishchyriak
@@ -50,5 +50,6 @@ preferred-citation:
     - family-names: Thayer
       given-names: Kelly
       orcid: 0000-0001-7437-9517
-  url: https://github.com/Yehor-Mishchyriak/SAWNERGY/JOSS/paper.md
   version: 1.1.7
+  doi: 10.5281/zenodo.18512893
+  url: https://doi.org/10.5281/zenodo.18512893
