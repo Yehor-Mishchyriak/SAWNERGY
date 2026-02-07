@@ -10,6 +10,14 @@ repository-code: https://github.com/Yehor-Mishchyriak/SAWNERGY
 url: https://github.com/Yehor-Mishchyriak/SAWNERGY
 license: Apache-2.0
 version: 1.1.7
+doi: 10.5281/zenodo.18512893
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.18512893
+    description: Version-specific Zenodo DOI
+  - type: doi
+    value: 10.5281/zenodo.18277559
+    description: Zenodo concept DOI (all versions)
 date-released: 2025-12-5
 keywords:
   - molecular dynamics
