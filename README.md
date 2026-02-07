@@ -27,6 +27,9 @@ keeps the full workflow — from `cpptraj` output to skip-gram embeddings (DeepW
 
 # UPDATES:
 
+## v1.1.7 — What’s new
+- **Modernization of packaging and CI/CD.**
+
 ## v1.1.6 — What’s new:
 - **Dependency refresh.** Bumped PureML to v1.2.7.
 
