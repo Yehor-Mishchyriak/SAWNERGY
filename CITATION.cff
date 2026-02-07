@@ -9,7 +9,7 @@ authors:
 repository-code: https://github.com/Yehor-Mishchyriak/SAWNERGY
 url: https://github.com/Yehor-Mishchyriak/SAWNERGY
 license: Apache-2.0
-version: 1.1.5
+version: 1.1.7
 date-released: 2025-12-5
 keywords:
   - molecular dynamics
@@ -43,4 +43,4 @@ preferred-citation:
       given-names: Kelly
       orcid: 0000-0001-7437-9517
   url: https://github.com/Yehor-Mishchyriak/SAWNERGY/JOSS/paper.md
-  version: 1.1.5
+  version: 1.1.7
