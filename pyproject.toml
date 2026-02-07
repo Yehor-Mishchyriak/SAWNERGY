@@ -20,15 +20,27 @@ dependencies = [
   "threadpoolctl>=3.0",
   "matplotlib>=3.7",
   "psutil>=5.9",
-  "pytest>=8.0",
   "ym-pure-ml==1.2.7",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0",
+]
+torch = [
+  "torch>=2.0",
 ]
 
 [project.urls]
 Source = "https://github.com/Yehor-Mishchyriak/SAWNERGY"
 Tracker = "https://github.com/Yehor-Mishchyriak/SAWNERGY/issues"
+Documentation = "https://ymishchyriak.com/docs/SAWNERGY-DOCS"
 
 [tool.setuptools]
-packages = { find = { include = ["sawnergy*"] } }
+package-dir = { "" = "src" }
 include-package-data = true
 zip-safe = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["sawnergy*"]

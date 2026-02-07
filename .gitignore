@@ -2,20 +2,21 @@
 *
 
 # except for
-!sawnergy/
-!sawnergy/*.py
+!src/
+!src/sawnergy/
+!src/sawnergy/*.py
 # ----------------------------
-!sawnergy/embedding/
-!sawnergy/embedding/*.py
+!src/sawnergy/embedding/
+!src/sawnergy/embedding/*.py
 # ----------------------------
-!sawnergy/walks/
-!sawnergy/walks/*.py
+!src/sawnergy/walks/
+!src/sawnergy/walks/*.py
 # ----------------------------
-!sawnergy/rin/
-!sawnergy/rin/*.py
+!src/sawnergy/rin/
+!src/sawnergy/rin/*.py
 # ----------------------------
-!sawnergy/visual/
-!sawnergy/visual/*.py
+!src/sawnergy/visual/
+!src/sawnergy/visual/*.py
 # ----------------------------
 !tests/
 !tests/*.py

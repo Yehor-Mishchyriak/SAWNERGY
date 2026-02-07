@@ -49,5 +49,5 @@ torch==2.9.0
 twine==6.2.0
 typing_extensions==4.15.0
 urllib3==2.5.0
-ym-pure-ml==1.2.0
+ym-pure-ml==1.2.7
 zarr==3.1.2

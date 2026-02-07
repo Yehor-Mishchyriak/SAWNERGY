@@ -34,14 +34,41 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e .
+          python -m pip install -e ".[test]"
 
       - name: Run tests
         run: python -m pytest tests
 
+  tests_torch:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure tag commit is on main branch
+        run: |
+          git fetch --depth=1 origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies (torch backend)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+          python -m pip install "torch>=2.0"
+
+      - name: Run tests (torch backend available)
+        run: python -m pytest tests
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: tests
+    needs: [tests, tests_torch]
     runs-on: ubuntu-latest
 
     permissions:
