@@ -342,16 +342,6 @@ viz.build_frame(1, show=True)
 Issues, enhancement suggestions, and discussions are always welcome!
 Also, please tell your friends about the project!
 
-A quick note:
-Currently, the repository is view-only and updated only through a CI/CD pipeline connected to a private development repository.
-Unfortunately, this means that if you submit a pull request and it gets merged, you won’t receive contributor credit on GitHub — which I know isn’t ideal.
-
-That said (!), if you contribute via a PR at this stage, you’ll be permanently credited in both CREDITS.md and README.md.
-I promise that as the project grows and I start relying more on community contributions, I’ll fix this by setting up a proper CI/CD workflow via GitHub Actions,
-so everyone gets visible and fair credit for their work.
-
-Thank you, and apologies for the inconvenience!
-
 ## Acknowledgments
 
 SAWNERGY builds on the AmberTools `cpptraj` ecosystem, NumPy, Matplotlib, Zarr, and PyTorch (for GPU acceleration if necessary; PureML is available by default).
