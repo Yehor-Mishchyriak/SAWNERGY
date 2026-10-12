@@ -240,12 +240,14 @@ class ArrayStorage:
             return block
 
         # otherwise, create the appendable array (length 0 along axis 0)
+        # Empty array axes are valid, but chunk dimensions must stay positive.
+        chunks = (int(apc),) + tuple(max(1, dim) for dim in shape)
         _logger.debug("Creating array '%s' with shape=(0,%s), chunks=(%s,%s), dtype=%s",
-                    named, shape, apc, shape, dtype)
+                    named, shape, apc, chunks[1:], dtype)
         return self.root.create_array(
             name=named,
             shape=(0,) + shape,
-            chunks=(int(apc),) + shape,
+            chunks=chunks,
             dtype=dtype,
         )
 
