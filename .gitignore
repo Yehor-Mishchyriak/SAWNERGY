@@ -65,3 +65,6 @@
 !docs.md
 !requirements.txt
 !pyproject.toml
+# ----------- TMP ------------
+!V2_migration.md
+# ----------------------------
