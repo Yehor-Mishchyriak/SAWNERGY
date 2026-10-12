@@ -62,7 +62,8 @@
 !CREDITS.md
 !LICENSE
 !NOTICE
-!docs.md
+!docs/
+!docs/*.md
 !requirements.txt
 !pyproject.toml
 # ----------- TMP ------------
