@@ -18,6 +18,12 @@
 !src/sawnergy/visual/
 !src/sawnergy/visual/*.py
 # ----------------------------
+!src/sawnergy/v2/
+!src/sawnergy/v2/*.py
+# ----------------------------
+!src/sawnergy/v2/traj_features/
+!src/sawnergy/v2/traj_features/*.py
+# ----------------------------
 !tests/
 !tests/*.py
 # ----------------------------
