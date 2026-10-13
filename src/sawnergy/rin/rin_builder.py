@@ -55,14 +55,15 @@ class RINBuilder:
     #                                         CPPTRAJ HELPERS
     # ---------------------------------------------------------------------------------------------- #
 
-    # NOTE: the pattern might be version specific
-    _elec_vdw_pattern = re.compile(r"""
-        ^\s*\[printdata\s+PW\[EMAP\]\s+square2d\s+noheader\]\s*\r?\n
-        ([0-9.eE+\-\s]+?)
-        ^\s*\[printdata\s+PW\[VMAP\]\s+square2d\s+noheader\]\s*\r?\n
-        ([0-9.eE+\-\s]+?)
-        (?=^\s*\[|^\s*TIME:|\Z)
-    """, re.MULTILINE | re.DOTALL | re.VERBOSE)
+    _emap_block_header = re.compile(
+        r"^\s*\[printdata\s+PW\[EMAP\]\s+square2d\s+noheader\]\s*$",
+        re.MULTILINE,
+    )
+    _vmap_block_header = re.compile(
+        r"^\s*\[printdata\s+PW\[VMAP\]\s+square2d\s+noheader\]\s*$",
+        re.MULTILINE,
+    )
+    _next_output_section = re.compile(r"^\s*(?:\[|TIME:)", re.MULTILINE)
 
     # NOTE: the pattern might be version specific
     _com_block_pattern = lambda _, N: re.compile(rf"""
@@ -72,6 +73,40 @@ class RINBuilder:
     """, re.MULTILINE | re.DOTALL | re.VERBOSE)
 
     _com_row_pattern = re.compile(r'^\s*\d+\s+(.+?)\s*$', re.MULTILINE)
+
+    @classmethod
+    def _extract_printdata_square2d_block(cls, output: str, dataset: str) -> str:
+        """Extract raw square2d `printdata` payload for a given pairwise dataset.
+
+        Args:
+            output (str): Full stdout emitted by cpptraj.
+            dataset (str): Dataset tag inside `PW[...]`, e.g. `"EMAP"` or `"VMAP"`.
+
+        Returns:
+            str: Raw text block containing numeric payload lines.
+
+        Raises:
+            ValueError: If the header cannot be located.
+        """
+        headers = {
+            "EMAP": cls._emap_block_header,
+            "VMAP": cls._vmap_block_header,
+        }
+        try:
+            header = headers[dataset]
+        except KeyError as e:
+            raise ValueError(f"Unsupported dataset tag: {dataset}") from e
+
+        m = header.search(output)
+        if not m:
+            raise ValueError(f"{dataset} block header not found")
+
+        payload_start = m.end()
+        tail = output[payload_start:]
+        stop = cls._next_output_section.search(tail)
+        if stop is None:
+            return tail
+        return tail[:stop.start()]
 
     def _get_number_frames(self,
                         topology_file: str,
@@ -200,13 +235,15 @@ class RINBuilder:
         output = rin_util.run_cpptraj(self.cpptraj, script=script, env=subprocess_env, timeout=timeout)
         _logger.debug("cpptraj pairwise output length: %d", len(output))
 
-        m = self._elec_vdw_pattern.search(output)
-        if not m:
+        try:
+            emap_txt = self._extract_printdata_square2d_block(output, dataset="EMAP")
+            vmap_txt = self._extract_printdata_square2d_block(output, dataset="VMAP")
+        except ValueError:
             _logger.error("EMAP/VMAP blocks not found in cpptraj output.")
-            raise ValueError("Could not find EMAP/VMAP blocks in cpptraj output. "
-                             "Potentially due to cpptraj version mismatch. "
-                             "The data retrieval is stable for CPPTRAJ of Version V6.18.1 (AmberTools)")
-        emap_txt, vmap_txt = m.group(1), m.group(2)
+            raise ValueError(
+                "Could not locate EMAP/VMAP printdata blocks in cpptraj output. "
+                "The output may be malformed or truncated."
+            )
 
         # Robust to wrapped lines: read all numbers, ignore line structure
         emap_flat = np.fromstring(emap_txt, dtype=np.float32, sep=' ')
@@ -215,16 +252,33 @@ class RINBuilder:
 
         if emap_flat.size != vmap_flat.size:
             _logger.error("Size mismatch EMAP(%d) vs VMAP(%d)", emap_flat.size, vmap_flat.size)
-            raise ValueError(f"EMAP and VMAP sizes differ: {emap_flat.size} vs {vmap_flat.size} "
-                             "Potentially due to cpptraj version mismatch. "
-                             "The data retrieval is stable for CPPTRAJ of Version V6.18.1 (AmberTools)")
+            raise ValueError(
+                f"EMAP and VMAP sizes differ: {emap_flat.size} vs {vmap_flat.size}. "
+                "cpptraj output is inconsistent for this frame range."
+            )
+
+        emap_non_finite = int(np.count_nonzero(~np.isfinite(emap_flat)))
+        vmap_non_finite = int(np.count_nonzero(~np.isfinite(vmap_flat)))
+        if emap_non_finite or vmap_non_finite:
+            _logger.error(
+                "Non-finite pairwise values detected for frames %s..%s (EMAP=%d, VMAP=%d)",
+                start_frame, end_frame, emap_non_finite, vmap_non_finite,
+            )
+            raise ValueError(
+                f"Non-finite values (inf/nan) detected in cpptraj pairwise output for frames "
+                f"{start_frame}..{end_frame} (EMAP={emap_non_finite}, VMAP={vmap_non_finite}). "
+                "This usually indicates a corrupted trajectory frame (e.g., overlapping atoms "
+                "or invalid box vectors). Consider running `cpptraj check ... nobondcheck` "
+                "to identify problematic frames."
+            )
 
         n = int(round(math.sqrt(emap_flat.size)))
         if n * n != emap_flat.size:
             _logger.error("Non-square block: %d values (cannot form nxn)", emap_flat.size)
-            raise ValueError(f"Block is not square: {emap_flat.size} values (cannot reshape to nxn). "
-                             "Potentially due to cpptraj version mismatch. "
-                             "The data retrieval is stable for CPPTRAJ of Version V6.18.1 (AmberTools)")
+            raise ValueError(
+                f"Block is not square: {emap_flat.size} values (cannot reshape to nxn). "
+                "cpptraj output is malformed for this frame range."
+            )
 
         elec_matrix = emap_flat.reshape(n, n)
         vdw_matrix  = vmap_flat.reshape(n, n)
