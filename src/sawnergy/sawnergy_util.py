@@ -514,7 +514,9 @@ class ArrayStorage:
         """Write a read-only ZipStore clone of the current store.
 
         Copies the single root group (its attrs and all child arrays with their
-        attrs) into a new ``.zip`` file.
+        attrs) into a temporary sibling ZIP, then atomically replaces the
+        destination after the ZIP closes successfully. Failures before replacement
+        leave the destination unchanged and trigger temporary-file cleanup.
 
         Args:
         into: Optional destination. If a path ending with ``.zip``, that exact
@@ -572,30 +574,42 @@ class ArrayStorage:
             except Exception:
                 return dict(attrs)
 
-        with ZipStore(zip_path, mode="w") as z:
-            dst_root = zarr.group(store=z)
+        with tempfile.NamedTemporaryFile(dir=zip_path.parent, prefix=f".{zip_path.name}.",
+                                         suffix=".tmp", delete=False) as tmp_file:
+            tmp_path = Path(tmp_file.name)
+        try:
+            with ZipStore(tmp_path, mode="w") as z:
+                dst_root = zarr.group(store=z)
 
-            dst_root.attrs.update(_attrs_dict(self.root.attrs))
+                dst_root.attrs.update(_attrs_dict(self.root.attrs))
 
-            copied = 0
-            for key, src in self.root.arrays():
+                copied = 0
+                for key, src in self.root.arrays():
 
-                dst = dst_root.create_array(
-                    name=key,
-                    shape=src.shape,
-                    chunks=src.chunks,
-                    dtype=src.dtype,
-                    compressors=BloscCodec(
-                        cname=BloscCname.zstd,
-                        clevel=clevel,
-                        shuffle=BloscShuffle.shuffle,
+                    dst = dst_root.create_array(
+                        name=key,
+                        shape=src.shape,
+                        chunks=src.chunks,
+                        dtype=src.dtype,
+                        compressors=BloscCodec(
+                            cname=BloscCname.zstd,
+                            clevel=clevel,
+                            shuffle=BloscShuffle.shuffle,
+                        )
                     )
-                )
 
-                dst.attrs.update(_attrs_dict(src.attrs))
-                dst[...] = src[...]
-                copied += 1
-                _logger.debug("Compressed array '%s' shape=%s dtype=%s", key, src.shape, src.dtype)
+                    dst.attrs.update(_attrs_dict(src.attrs))
+                    dst[...] = src[...]
+                    copied += 1
+                    _logger.debug("Compressed array '%s' shape=%s dtype=%s", key, src.shape, src.dtype)
+
+            os.replace(tmp_path, zip_path)
+        except BaseException:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                _logger.warning("Failed to remove temporary archive %s", tmp_path, exc_info=True)
+            raise
 
         _logger.info("Compression complete: %d arrays -> %s", copied, zip_path)
         return str(zip_path)

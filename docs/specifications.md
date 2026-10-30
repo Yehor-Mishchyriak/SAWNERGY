@@ -310,26 +310,38 @@ explicit `.zip` suffix matching is case-insensitive; otherwise `into` is a
 directory. Explicit destination parents are created as needed.
 
 For a ZIP source, return its existing path without copying or validating level;
-`into` is ignored. Local-source compression uses ZIP mode `w`, overwriting an
-existing destination. Invalid levels raise conversion errors or `ValueError`;
-I/O/codec errors propagate. No atomic replacement/rollback is guaranteed; errors
-may leave partial output or overwrite previous output. ZIP bytes and original
-codec settings are not preserved as part of this contract.
+`into` is ignored. For a local source, build a temporary ZIP file in the
+destination's directory and close it successfully before atomically replacing
+the destination. Successful calls still replace existing output. Readers see
+either the previous complete file or the replacement, rather than a partially
+written destination.
+
+Invalid levels raise conversion errors or `ValueError`; creation, copying,
+closing, and replacement errors propagate. Failures before successful replacement
+leave an existing destination byte-for-byte unchanged, or leave no destination
+if none existed. Attempt to remove temporary output on failure, including
+interruption; ordinary removal errors are logged without replacing the original
+exception. Cleanup cannot be guaranteed against filesystem errors. Atomic
+replacement does not promise durability across power loss or preserve ZIP bytes,
+original codec settings, or destination filesystem metadata.
 
 ### `ArrayStorage.compress_and_cleanup(output_pth, compression_level)`
 
 **Preconditions:** Same destination/level obligations as compression.
-**Normal postconditions:** Yield one writable temporary storage; on exit,
-compress it, close it, and remove the temporary directory.
+**Normal postconditions:** Yield one writable temporary storage; compress only
+after the body completes successfully, then close it and remove its temporary
+directory. The public signature and successful archive layout are unchanged.
 
-**Current failure behavior:** Compression runs in `finally`, even if the body
-raises, so incomplete output may be published. If compression succeeds, closing
-occurs and the body error propagates. If compression fails, its error escapes
-(with any body error as context), and the following explicit `close()` is
-skipped. The temporary-directory context still attempts cleanup. There is no
-guarantee of no output on extraction failure, preserving previous output,
-atomic publication, or explicit closure on all failure paths. Define the desired
-policy and write its tests before V2 reuse or behavioral changes.
+**Failure postconditions:** A body exception (including interruption) skips
+compression, leaving the destination untouched. Attempt store closure on both
+body and compression failure, and temporary-directory cleanup on every exit,
+including storage-construction failure. Body/compression exceptions propagate;
+cleanup errors are logged rather than replacing an active error. With no active
+error, a temporary-directory cleanup failure propagates. `close()` retains its
+existing best-effort behavior (ordinary store-closing errors are logged).
+
+Archive publication uses the safe replacement behavior of `compress` above.
+Cleanup is attempted, not guaranteed against filesystem failures.
 
 ## Other reusable helpers (`sawnergy_util.py`)
 
@@ -394,6 +406,9 @@ internals, and neural backend implementations are outside this reuse scope.
 
 Current tests in `tests/test_storage.py` cover basic stacked writes, chunk
 defaults, within-batch mismatches, read-only deletion, and block listing.
+They also cover context-manager cleanup and exception preservation, complete
+archive publication, destination preservation on compression failures, temporary
+output cleanup, and existing destination-path/ZIP-source behavior.
 `tests/test_rin.py` checks synthetic parsing, RIN data flow, candidate
 deduplication, and rejection of non-finite pairwise output. Walk/embedding tests
 exercise ordered archives, seed forwarding, and warm starts; plotting fixtures
@@ -401,6 +416,7 @@ replace GUI setup. CPPTRAJ calls and pipeline shared memory are mocked.
 
 These tests are not complete coverage of the contracts above. Before changing
 reused code, add contract-based tests for its relevant success, boundary, and
-failure cases, including preservation of existing public behavior. Storage
-failure-policy tests and real CPPTRAJ extraction checks are separate from the
-existing mocked suite. This document does not claim new runtime verification.
+failure cases, including preservation of existing public behavior. Real CPPTRAJ
+extraction checks remain separate from the existing mocked suite; storage
+failure tests do not establish power-loss durability or guaranteed cleanup when
+the filesystem refuses removal.

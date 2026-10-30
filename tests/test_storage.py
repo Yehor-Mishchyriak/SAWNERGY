@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 import numpy as np
 import pytest
 from sawnergy import sawnergy_util
@@ -180,3 +181,151 @@ def test_compress_and_cleanup_cleanup_failure(tmp_path, monkeypatch, failure_sta
 
     assert caught.value is expected
     assert not working_path.exists()
+
+
+@pytest.mark.parametrize("destination", ["default", "file", "directory"])
+@pytest.mark.parametrize("existing_output", [False, True])
+def test_compress_publishes_complete_archive(tmp_path, monkeypatch, destination, existing_output):
+    output = tmp_path / "source.zip" if destination == "default" else tmp_path / "exports" / "source.zip"
+    if existing_output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with sawnergy_util.ArrayStorage(tmp_path / "previous", "w") as previous:
+            previous.write(np.array([[99]], dtype=np.int16), "OLD", arrays_per_chunk=1)
+            previous.compress(output, compression_level=0)
+    before = output.read_bytes() if existing_output else None
+    replace = sawnergy_util.os.replace
+    replacements = []
+    data = np.arange(12, dtype=np.float32).reshape(3, 2, 2)
+
+    def publish(src, dst):
+        src, dst = Path(src), Path(dst)
+        assert src != dst and src.parent == output.parent
+        assert dst == output
+        assert (output.read_bytes() if output.exists() else None) == before
+        # Opening a separate reader verifies the ZIP was finalized before publication.
+        with sawnergy_util.ZipStore(src, mode="r") as archive:
+            root = sawnergy_util.zarr.open_group(store=archive, mode="r")
+            np.testing.assert_array_equal(root["BLOCK"][:], data)
+            np.testing.assert_array_equal(root["OTHER"][:], np.array([[7]], dtype=np.int16))
+            assert root["BLOCK"].dtype == data.dtype
+            assert root["BLOCK"].chunks == (2, 2, 2)
+            assert dict(root.attrs) == root_attrs
+            assert dict(root["BLOCK"].attrs) == {"unit": "test unit"}
+        replacements.append(src)
+        replace(src, dst)
+
+    with sawnergy_util.ArrayStorage(tmp_path / "source", "w") as storage:
+        storage.write(data, "BLOCK", arrays_per_chunk=2)
+        storage.write(np.array([[7]], dtype=np.int16), "OTHER", arrays_per_chunk=1)
+        storage.add_attr("description", "replacement")
+        storage.root["BLOCK"].attrs["unit"] = "test unit"
+        root_attrs = dict(storage.root.attrs)
+        monkeypatch.setattr(sawnergy_util.os, "replace", publish)
+        into = None if destination == "default" else output if destination == "file" else output.parent
+        assert storage.compress(into, compression_level=3) == str(output)
+        np.testing.assert_array_equal(storage.read("BLOCK"), data)
+
+    assert len(replacements) == 1
+    assert not replacements[0].exists()
+    assert {p for p in output.parent.iterdir() if p.is_file()} == {output}
+    with sawnergy_util.ArrayStorage(output, "r") as archive:
+        np.testing.assert_array_equal(archive.read("BLOCK"), data)
+        assert archive.list_blocks() == ["BLOCK", "OTHER"]
+
+
+@pytest.mark.parametrize("existing_output", [False, True])
+@pytest.mark.parametrize("stage,error_type", [
+    ("temporary file", OSError), ("metadata", OSError), ("copy", OSError),
+    ("close", OSError), ("replace", OSError),
+    ("copy", KeyboardInterrupt),
+])
+def test_compress_failure_preserves_destination(tmp_path, monkeypatch, existing_output, stage, error_type):
+    output = tmp_path / "archive.zip"
+    error = error_type("compression failed")
+    with sawnergy_util.ArrayStorage(tmp_path / "source", "w") as storage:
+        storage.write(np.arange(4, dtype=np.float32).reshape(2, 2), "BLOCK", arrays_per_chunk=1)
+        if existing_output:
+            storage.compress(output, compression_level=0)
+        before = output.read_bytes() if existing_output else None
+        entries = set(tmp_path.iterdir())
+
+        if stage == "temporary file":
+            def fail_temporary_file(*args, **kwargs):
+                raise error
+
+            monkeypatch.setattr(sawnergy_util.tempfile, "NamedTemporaryFile", fail_temporary_file)
+        elif stage == "metadata":
+            group = sawnergy_util.zarr.group
+
+            def fail_metadata(*args, **kwargs):
+                group(*args, **kwargs)
+                raise error
+
+            monkeypatch.setattr(sawnergy_util.zarr, "group", fail_metadata)
+        elif stage == "copy":
+            assign = sawnergy_util.zarr.Array.__setitem__
+
+            def fail_copy(self, key, value):
+                assign(self, key, value)
+                raise error
+
+            monkeypatch.setattr(sawnergy_util.zarr.Array, "__setitem__", fail_copy)
+        elif stage == "close":
+            close = sawnergy_util.ZipStore.close
+
+            def fail_close(self):
+                close(self)
+                raise error
+
+            monkeypatch.setattr(sawnergy_util.ZipStore, "close", fail_close)
+        else:
+            def fail_replace(src, dst):
+                raise error
+
+            monkeypatch.setattr(sawnergy_util.os, "replace", fail_replace)
+
+        with pytest.raises(error_type) as caught:
+            storage.compress(output, compression_level=3)
+
+        assert caught.value is error
+        assert (output.read_bytes() if output.exists() else None) == before
+        assert set(tmp_path.iterdir()) == entries
+
+
+def test_compress_cleanup_error_preserves_original_failure(tmp_path, monkeypatch, caplog):
+    error = OSError("copy failed")
+    output = tmp_path / "archive.zip"
+    leftovers = []
+    unlink = Path.unlink
+
+    def fail_copy(self, key, value):
+        raise error
+
+    def fail_unlink(self, *args, **kwargs):
+        leftovers.append(self)
+        raise OSError("temporary file removal failed")
+
+    with sawnergy_util.ArrayStorage(tmp_path / "source", "w") as storage:
+        storage.write(np.array([[1]], dtype=np.int16), "BLOCK", arrays_per_chunk=1)
+        with monkeypatch.context() as patch:
+            patch.setattr(sawnergy_util.zarr.Array, "__setitem__", fail_copy)
+            patch.setattr(Path, "unlink", fail_unlink)
+            with pytest.raises(OSError) as caught:
+                storage.compress(output, compression_level=0)
+        assert caught.value is error
+        assert not output.exists()
+        assert "Failed to remove temporary archive" in caplog.text
+        assert len(leftovers) == 1 and leftovers[0].is_file()
+        unlink(leftovers[0])
+
+
+def test_compress_zip_source_remains_noop(tmp_path):
+    output = tmp_path / "archive.zip"
+    with sawnergy_util.ArrayStorage(tmp_path / "source", "w") as storage:
+        storage.write(np.array([[1]], dtype=np.int16), "BLOCK", arrays_per_chunk=1)
+        storage.compress(output, compression_level=0)
+    before = output.read_bytes()
+    with sawnergy_util.ArrayStorage(output, "r") as archive:
+        assert archive.compress(tmp_path / "other.zip", compression_level=-1) == str(output)
+    assert output.read_bytes() == before
+    assert not (tmp_path / "other.zip").exists()
