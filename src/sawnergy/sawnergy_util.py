@@ -605,7 +605,9 @@ class ArrayStorage:
     def compress_and_cleanup(cls, output_pth: str | Path, compression_level: int) -> Iterator[ArrayStorage]:
         """
         Create a temporary ArrayStorage, yield it for writes, then compress it into `output_pth`.
-        The temporary local store is deleted after compression.
+        Compress only if the body succeeds. Always attempt to close the store
+        and delete its temporary directory. Cleanup errors do not replace an
+        active body or compression exception.
 
         Args:
             output_pth: Destination .zip file or directory (delegated to `compress(into=...)`).
@@ -615,14 +617,26 @@ class ArrayStorage:
         """
         output_pth = Path(output_pth)
         _logger.info("compress_and_cleanup: creating temp store (suffix .zarr)")
-        with tempfile.TemporaryDirectory(suffix=".zarr") as tmp_dir:
-            arr_storage = cls(tmp_dir, mode="w")
-            try:
+        tmp_dir = tempfile.TemporaryDirectory(suffix=".zarr")
+        try:
+            arr_storage = cls(tmp_dir.name, mode="w")
+            try:     # -+-+- needed to always close the storage -+-+-
                 yield arr_storage
-            finally:
                 _logger.info("compress_and_cleanup: compressing to %s (compression level of %d)", output_pth, compression_level)
-                arr_storage.compress(output_pth, compression_level=compression_level)
-                arr_storage.close()
+                arr_storage.compress(output_pth, compression_level=compression_level) # runs at exit from the CM
+            finally: # -+-+- needed to always close the storage -+-+-
+                arr_storage.close() # finally will run no matter what -- even after we move to the outer except branch
+        except BaseException:
+            # Preserve the active error, including interruption, if cleanup fails --
+            # so that when we run `raise` it will propagate the error caught before compression
+            # -- not the error caught during cleanup.
+            try:
+                tmp_dir.cleanup()
+            except Exception:
+                _logger.warning("Failed to clean up temporary store %s", tmp_dir.name, exc_info=True)
+            raise
+        else:
+            tmp_dir.cleanup()
         _logger.info("compress_and_cleanup: temp store cleaned up")
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #

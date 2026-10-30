@@ -50,3 +50,133 @@ def test_repr_lists_blocks_sorted(tmp_path):
         assert blocks == ["A", "B"]
         rep = repr(st)
         assert "ArrayStorage" in rep and "blocks=2" in rep
+
+
+def test_compress_and_cleanup_success(tmp_path, monkeypatch):
+    output = tmp_path / "archive.zip"
+    data = np.arange(12, dtype=np.float32).reshape(3, 2, 2)
+    closed = []
+    close = sawnergy_util.ArrayStorage.close
+
+    def record_close(self):
+        closed.append(self.store_path)
+        close(self)
+
+    monkeypatch.setattr(sawnergy_util.ArrayStorage, "close", record_close)
+    with sawnergy_util.ArrayStorage.compress_and_cleanup(output, 0) as storage:
+        working_path = storage.store_path
+        storage.write(data, "BLOCK", arrays_per_chunk=1)
+        storage.add_attr("description", "round trip")
+        assert working_path.is_dir()
+        assert not output.exists()
+
+    assert working_path in closed
+    assert not working_path.exists()
+    with sawnergy_util.ArrayStorage(output, "r") as archive:
+        np.testing.assert_array_equal(archive.read("BLOCK"), data)
+        assert archive.get_attr("description") == "round trip"
+
+
+@pytest.mark.parametrize("existing_output", [False, True])
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
+def test_compress_and_cleanup_body_failure(tmp_path, monkeypatch, existing_output, error_type):
+    output = tmp_path / "archive.zip"
+    if existing_output:
+        output.write_bytes(b"previous output")
+    error = error_type("extraction failed")
+    closed = []
+
+    def unexpected_compress(*args, **kwargs):
+        pytest.fail("Compression must not run after a body failure")
+
+    monkeypatch.setattr(sawnergy_util.ArrayStorage, "compress", unexpected_compress)
+    with pytest.raises(error_type) as caught:
+        with sawnergy_util.ArrayStorage.compress_and_cleanup(output, 0) as storage:
+            working_path = storage.store_path
+
+            def failing_close():
+                closed.append(True)
+                raise OSError("store close failed")
+
+            # The public close() already logs ordinary underlying close errors.
+            monkeypatch.setattr(storage.store, "close", failing_close)
+            raise error
+
+    assert caught.value is error
+    assert closed
+    assert not working_path.exists()
+    if existing_output:
+        assert output.read_bytes() == b"previous output"
+    else:
+        assert not output.exists()
+
+
+def test_compress_and_cleanup_compression_failure(tmp_path, monkeypatch):
+    error = OSError("compression failed")
+    closed = []
+    close = sawnergy_util.ArrayStorage.close
+
+    def record_close(self):
+        closed.append(self.store_path)
+        close(self)
+
+    def failing_compress(self, into, *, compression_level):
+        assert self.store_path.is_dir()
+        raise error
+
+    monkeypatch.setattr(sawnergy_util.ArrayStorage, "close", record_close)
+    monkeypatch.setattr(sawnergy_util.ArrayStorage, "compress", failing_compress)
+    with pytest.raises(OSError) as caught:
+        with sawnergy_util.ArrayStorage.compress_and_cleanup(tmp_path / "archive.zip", 0) as storage:
+            working_path = storage.store_path
+
+    assert caught.value is error
+    assert working_path in closed
+    assert not working_path.exists()
+
+
+def test_compress_and_cleanup_initialization_failure(tmp_path, monkeypatch):
+    error = OSError("store initialization failed")
+    paths = []
+
+    def failing_init(self, pth, mode):
+        path = sawnergy_util.Path(pth)
+        assert path.is_dir()
+        paths.append(path)
+        raise error
+
+    monkeypatch.setattr(sawnergy_util.ArrayStorage, "__init__", failing_init)
+    with pytest.raises(OSError) as caught:
+        with sawnergy_util.ArrayStorage.compress_and_cleanup(tmp_path / "archive.zip", 0):
+            pytest.fail("A failed store must not be yielded")
+
+    assert caught.value is error
+    assert len(paths) == 1
+    assert not paths[0].exists()
+
+
+@pytest.mark.parametrize("failure_stage", ["body", "compress", None])
+def test_compress_and_cleanup_cleanup_failure(tmp_path, monkeypatch, failure_stage):
+    error = RuntimeError("work failed")
+    cleanup_error = OSError("directory cleanup failed")
+    cleanup = sawnergy_util.tempfile.TemporaryDirectory.cleanup
+
+    def failing_cleanup(self):
+        cleanup(self)
+        raise cleanup_error
+
+    def compress(self, into, *, compression_level):
+        if failure_stage == "compress":
+            raise error
+
+    monkeypatch.setattr(sawnergy_util.tempfile.TemporaryDirectory, "cleanup", failing_cleanup)
+    monkeypatch.setattr(sawnergy_util.ArrayStorage, "compress", compress)
+    expected = cleanup_error if failure_stage is None else error
+    with pytest.raises(type(expected)) as caught:
+        with sawnergy_util.ArrayStorage.compress_and_cleanup(tmp_path / "archive.zip", 0) as storage:
+            working_path = storage.store_path
+            if failure_stage == "body":
+                raise error
+
+    assert caught.value is expected
+    assert not working_path.exists()
