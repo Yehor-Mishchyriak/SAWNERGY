@@ -84,3 +84,18 @@ def test_block_iter_positive_step_on_empty_and_scalar_arrays(tmp_path):
         chunks = list(st.block_iter("SCALAR", step=2))
         assert len(chunks) == 1 and chunks[0].shape == ()
         assert chunks[0] == 7
+
+
+@pytest.mark.parametrize("item_shape", [(0, 2), (2, 0), (2, 2), ()])
+def test_write_and_append_preserve_item_shape_with_positive_chunks(tmp_path, item_shape):
+    first = np.ones((2,) + item_shape, dtype=np.float32)
+    second = np.full((1,) + item_shape, 2, dtype=np.float32)
+    with sawnergy_util.ArrayStorage(tmp_path / "empty_dimensions", mode="w") as st:
+        st.write(first, to_block_named="BLOCK", arrays_per_chunk=2)
+        st.write(second, to_block_named="BLOCK")
+        stored = st.read("BLOCK", slice(None))
+        assert stored.shape == (3,) + item_shape
+        assert stored.dtype == first.dtype
+        np.testing.assert_array_equal(stored, np.concatenate([first, second]))
+        assert st.root["BLOCK"].chunks == (2,) + tuple(max(1, dim) for dim in item_shape)
+        assert tuple(st.root.attrs["array_shape_in_block"]["BLOCK"]) == item_shape

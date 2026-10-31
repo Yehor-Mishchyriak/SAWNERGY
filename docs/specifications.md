@@ -8,3 +8,10 @@
 - Chunks are detached NumPy copies: modifying a yielded chunk does not change the stored block.
 - Empty arrays yield no chunks. Scalar arrays yield one scalar NumPy array for any positive step.
 - Missing blocks still raise `KeyError`; named members that are not Zarr arrays still raise `TypeError`.
+
+## Empty item dimensions
+
+`ArrayStorage.write` preserves zero-length item dimensions when creating and
+appending blocks. Zarr chunk dimensions are always positive: an empty item axis
+uses a chunk extent of one, while the stored array shape and item-shape metadata
+keep the zero extent. Normal arrays and scalar items keep their existing chunks.

@@ -245,7 +245,7 @@ class ArrayStorage:
         return self.root.create_array(
             name=named,
             shape=(0,) + shape,
-            chunks=(int(apc),) + shape,
+            chunks=(int(apc),) + tuple(max(1, dim) for dim in shape),
             dtype=dtype,
         )
 
