@@ -50,3 +50,37 @@ def test_repr_lists_blocks_sorted(tmp_path):
         assert blocks == ["A", "B"]
         rep = repr(st)
         assert "ArrayStorage" in rep and "blocks=2" in rep
+
+
+@pytest.mark.parametrize("step", [0, -1, -4])
+@pytest.mark.parametrize("shape", [(0, 2), (5, 2), ()])
+def test_block_iter_rejects_nonpositive_steps(tmp_path, step, shape):
+    with sawnergy_util.ArrayStorage(tmp_path / "invalid_step", mode="w") as st:
+        st.root.create_array("BLOCK", data=np.zeros(shape, dtype=np.float32))
+        with pytest.raises(ValueError, match="step must be positive"):
+            list(st.block_iter("BLOCK", step=step))
+
+
+@pytest.mark.parametrize("step", [1, 2, 5, 8])
+def test_block_iter_preserves_order_shapes_and_detached_copies(tmp_path, step):
+    data = np.arange(20, dtype=np.float32).reshape(5, 2, 2)
+    with sawnergy_util.ArrayStorage(tmp_path / "chunks", mode="w") as st:
+        st.write(data, to_block_named="BLOCK", arrays_per_chunk=2)
+        chunks = list(st.block_iter("BLOCK", step=step))
+        assert [chunk.shape for chunk in chunks] == [
+            (min(step, len(data) - start), 2, 2) for start in range(0, len(data), step)
+        ]
+        assert all(chunk.dtype == data.dtype for chunk in chunks)
+        np.testing.assert_array_equal(np.concatenate(chunks), data)
+        chunks[0][...] = -1
+        np.testing.assert_array_equal(st.read("BLOCK", slice(None)), data)
+
+
+def test_block_iter_positive_step_on_empty_and_scalar_arrays(tmp_path):
+    with sawnergy_util.ArrayStorage(tmp_path / "edge_shapes", mode="w") as st:
+        st.root.create_array("EMPTY", data=np.zeros((0, 2), dtype=np.int32))
+        st.root.create_array("SCALAR", data=np.array(7, dtype=np.int32))
+        assert list(st.block_iter("EMPTY", step=2)) == []
+        chunks = list(st.block_iter("SCALAR", step=2))
+        assert len(chunks) == 1 and chunks[0].shape == ()
+        assert chunks[0] == 7
