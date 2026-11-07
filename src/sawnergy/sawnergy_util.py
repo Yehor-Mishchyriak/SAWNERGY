@@ -43,13 +43,14 @@ class ArrayStorage:
         Args:
           pth: Base path. If it ends with ``.zip`` a read-only ZipStore is used;
             otherwise a LocalStore at ``<pth>.zarr`` is used.
-          mode: Zarr open mode. For ZipStore this must be ``"r"``.
-            For LocalStore, an existing store is opened with this mode; if
-            missing, a new root group is created.
+          mode: Zarr open mode: ``"r"``, ``"r+"``, ``"a"``, ``"w"``, or ``"w-"``.
+            ZipStore requires ``"r"``. LocalStore respects the requested mode;
+            read-only opens never initialize metadata. Failed initialization
+            attempts to close the store before propagating the original error.
 
         Raises:
-          ValueError: If `pth` type is invalid or ZipStore mode is not ``"r"``.
-          FileNotFoundError: If a ZipStore was requested but the file is missing.
+          ValueError: If `pth` type or mode is invalid, or ZipStore mode is not ``"r"``.
+          FileNotFoundError: If a required existing store is missing.
           TypeError: If the root object is an array instead of a group.
         """
         _logger.info("ArrayStorage init: pth=%s mode=%s", pth, mode)
@@ -57,6 +58,9 @@ class ArrayStorage:
         if not isinstance(pth, (str, Path)):
             _logger.error("Invalid 'pth' type: %s", type(pth))
             raise ValueError(f"Expected 'str' or 'Path' for 'pth'; got: {type(pth)}")
+
+        if mode not in ("r", "r+", "a", "w", "w-"):
+            raise ValueError(f"Invalid mode: {mode!r}; expected 'r', 'r+', 'a', 'w', or 'w-'.")
 
         p = Path(pth)
         self.mode = mode
@@ -77,33 +81,31 @@ class ArrayStorage:
             # local directory store at <pth>.zarr
             self.store_path = p.with_suffix(".zarr").resolve()
             _logger.info("Using LocalStore backend at %s", self.store_path)
-            self.store = LocalStore(self.store_path)
+            if mode in ("r", "r+") and not self.store_path.exists():
+                raise FileNotFoundError(f"No LocalStore at: {self.store_path}")
+            self.store = LocalStore(self.store_path, read_only=(mode == "r"))
 
         # open existing or create new root group
         try:
-            # try to open the store
             _logger.info("Opening store at %s with mode=%s", self.store_path, mode)
-            self.root = zarr.open(self.store, mode=mode)
+            # Creation must explicitly request a group, not an unspecified array.
+            open_root = zarr.open_group if mode in ("w", "w-") else zarr.open
+            self.root = open_root(self.store, mode=mode)
             # the root must be a group. if it's not -- schema error then
             if not isinstance(self.root, zarr.Group):
                 _logger.error("Root is not a group at %s", self.store_path)
                 raise TypeError(f"Root at {self.store_path} must be a group.")
-        except Exception:
-            # if we can't open:
-            # for ZipStore or read-only modes, we must not create, so re-raise
-            if isinstance(self.store, ZipStore) or mode == "r":
-                _logger.exception("Failed to open store in read-only context; re-raising")
-                raise
-            # otherwise, create a new group
-            _logger.info("Creating new root group at %s", self.store_path)
-            self.root = zarr.group(store=self.store, mode="a")
 
-        # metadata attrs (JSON-safe)
-        self._attrs = self.root.attrs
-        self._attrs.setdefault("array_chunk_size_in_block", {})
-        self._attrs.setdefault("array_shape_in_block", {})
-        self._attrs.setdefault("array_dtype_in_block", {})
-        _logger.debug("Metadata attrs initialized: keys=%s", list(self._attrs.keys()))
+            # Initialize metadata only when writes are permitted.
+            self._attrs = self.root.attrs
+            if mode != "r":
+                self._attrs.setdefault("array_chunk_size_in_block", {})
+                self._attrs.setdefault("array_shape_in_block", {})
+                self._attrs.setdefault("array_dtype_in_block", {})
+            _logger.debug("Metadata attrs available: keys=%s", list(self._attrs.keys()))
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
         """Close the underlying store if it supports closing."""
@@ -132,12 +134,11 @@ class ArrayStorage:
     # --------- PRIVATE ----------
         
     def _array_chunk_size_in_block(self, named: str, *, given: int | None) -> int:
-        """Resolve per-block chunk length along axis 0; set default if unset."""
+        """Resolve per-block chunk length along axis 0 without changing metadata."""
         apc = self._attrs["array_chunk_size_in_block"]
         cached = apc.get(named)
         if cached is None:
             if given is None:
-                apc[named] = 10
                 _logger.warning(
                     "array_chunk_size_in_block not provided for '%s'; defaulting to 10", named
                 )
@@ -147,14 +148,12 @@ class ArrayStorage:
                     RuntimeWarning,
                     stacklevel=2,
                 )
+                return 10
             else:
                 if given <= 0:
                     _logger.error("Non-positive arrays_per_chunk for block '%s': %s", named, given)
                     raise ValueError("'array_chunk_size_in_block' must be positive")
-                apc[named] = int(given)
-            self._attrs["array_chunk_size_in_block"] = apc
-            _logger.debug("Set arrays_per_chunk for '%s' to %s", named, apc[named])
-            return apc[named]
+                return int(given)
 
         if given is None:
             return int(cached)
@@ -172,13 +171,10 @@ class ArrayStorage:
         return int(cached)
 
     def _array_shape_in_block(self, named: str, *, given: tuple[int, ...]) -> tuple[int, ...]:
-        """Resolve per-item shape for a block; enforce consistency if already set."""
+        """Resolve per-item shape without changing metadata; enforce consistency."""
         shp = self._attrs["array_shape_in_block"]
         cached = shp.get(named)
         if cached is None:
-            shp[named] = list(map(int, given))
-            self._attrs["array_shape_in_block"] = shp
-            _logger.debug("Set shape for '%s' to %s", named, shp[named])
             return tuple(given)
 
         cached_t = tuple(int(x) for x in cached)
@@ -194,14 +190,11 @@ class ArrayStorage:
         return cached_t
 
     def _array_dtype_in_block(self, named: str, *, given: np.dtype) -> np.dtype:
-        """Resolve dtype for a block; store/recover via dtype.str."""
+        """Resolve dtype without changing metadata; recover via dtype.str."""
         dty = self._attrs["array_dtype_in_block"]
         given = np.dtype(given)
         cached = dty.get(named)
         if cached is None:
-            dty[named] = given.str
-            self._attrs["array_dtype_in_block"] = dty
-            _logger.debug("Set dtype for '%s' to %s", named, dty[named])
             return given
 
         cached_dt = np.dtype(cached)
@@ -227,27 +220,42 @@ class ArrayStorage:
         shape = self._array_shape_in_block(named, given=shape)
         dtype = self._array_dtype_in_block(named, given=dtype)
         apc   = self._array_chunk_size_in_block(named, given=arrays_per_chunk)
+        if apc <= 0:
+            raise ValueError("'array_chunk_size_in_block' must be positive")
 
-        # if it already exists, validate and return it
+        # Validate the existing member before filling any missing metadata.
         if named in self.root:
             block = self.root[named]
             if not isinstance(block, zarr.Array):
                 raise TypeError(f"Member '{named}' is not a Zarr array")
-            if block.shape[1:] != shape:
+            if block.ndim == 0 or block.shape[1:] != shape:
                 raise TypeError(f"Incompatible existing shape {block.shape} vs (0,{shape})")
             if np.dtype(block.dtype) != np.dtype(dtype):
                 raise TypeError(f"Incompatible dtype {block.dtype} vs {dtype}")
-            return block
+            if block.chunks[0] != apc:
+                raise RuntimeError(f"Incompatible axis-0 chunk length {block.chunks[0]} vs {apc}")
+        else:
+            # Empty array axes are valid, but chunk dimensions must stay positive.
+            chunks = (int(apc),) + tuple(max(1, dim) for dim in shape)
+            _logger.debug("Creating array '%s' with shape=(0,%s), chunks=(%s,%s), dtype=%s",
+                        named, shape, apc, chunks[1:], dtype)
+            block = self.root.create_array(
+                name=named,
+                shape=(0,) + shape,
+                chunks=chunks,
+                dtype=dtype,
+            )
 
-        # otherwise, create the appendable array (length 0 along axis 0)
-        _logger.debug("Creating array '%s' with shape=(0,%s), chunks=(%s,%s), dtype=%s",
-                    named, shape, apc, shape, dtype)
-        return self.root.create_array(
-            name=named,
-            shape=(0,) + shape,
-            chunks=(int(apc),) + tuple(max(1, dim) for dim in shape),
-            dtype=dtype,
-        )
+        for key, value in (
+            ("array_shape_in_block", list(shape)),
+            ("array_dtype_in_block", dtype.str),
+            ("array_chunk_size_in_block", apc),
+        ):
+            metadata = dict(self._attrs[key])
+            if metadata.get(named) is None:
+                metadata[named] = value
+                self._attrs[key] = metadata
+        return block
 
     # --------- PUBLIC ----------
 
@@ -267,6 +275,9 @@ class ArrayStorage:
         Appends a batch of arrays (all the same shape and dtype) to the Zarr array
         named `to_block_named`. The array grows along axis 0; chunk length is
         resolved per-block and stored in group attrs.
+        Validate and materialize the full batch and check block compatibility
+        before creating arrays or changing metadata. Storage I/O failures after
+        validation are not rolled back.
 
         Args:
         these_arrays: A sequence of NumPy arrays **or** a stacked ndarray with
@@ -295,11 +306,7 @@ class ArrayStorage:
         arr0 = np.asarray(these_arrays[0])
         _logger.info("Appending %d arrays to block '%s' (item_shape=%s, dtype=%s)",
                     len(these_arrays), to_block_named, arr0.shape, arr0.dtype)
-        block = self._setdefault(
-            to_block_named, tuple(arr0.shape), arr0.dtype, arrays_per_chunk
-        )
-
-        # quick validation
+        # Validate the full batch before creating a block or updating metadata.
         for i, a in enumerate(these_arrays[1:], start=1):
             a = np.asarray(a)
             if a.shape != arr0.shape:
@@ -309,7 +316,13 @@ class ArrayStorage:
                 _logger.error("Dtype mismatch at index %d: %s != %s", i, a.dtype, arr0.dtype)
                 raise ValueError(f"these_arrays[{i}] dtype {a.dtype} != {arr0.dtype}")
 
-        data = np.asarray(these_arrays, dtype=block.dtype)
+        data = np.asarray(these_arrays, dtype=arr0.dtype)
+        expected_shape = (len(these_arrays),) + arr0.shape
+        if data.shape != expected_shape:
+            raise ValueError(f"Converted batch shape {data.shape} != {expected_shape}")
+        block = self._setdefault(
+            to_block_named, tuple(arr0.shape), arr0.dtype, arrays_per_chunk
+        )
         k = data.shape[0]
         start = block.shape[0]
         block.resize((start + k,) + arr0.shape)
@@ -516,7 +529,9 @@ class ArrayStorage:
         """Write a read-only ZipStore clone of the current store.
 
         Copies the single root group (its attrs and all child arrays with their
-        attrs) into a new ``.zip`` file.
+        attrs) into a temporary sibling ZIP, then atomically replaces the
+        destination after the ZIP closes successfully. Failures before replacement
+        leave the destination unchanged and trigger temporary-file cleanup.
 
         Args:
         into: Optional destination. If a path ending with ``.zip``, that exact
@@ -574,30 +589,42 @@ class ArrayStorage:
             except Exception:
                 return dict(attrs)
 
-        with ZipStore(zip_path, mode="w") as z:
-            dst_root = zarr.group(store=z)
+        with tempfile.NamedTemporaryFile(dir=zip_path.parent, prefix=f".{zip_path.name}.",
+                                         suffix=".tmp", delete=False) as tmp_file:
+            tmp_path = Path(tmp_file.name)
+        try:
+            with ZipStore(tmp_path, mode="w") as z:
+                dst_root = zarr.group(store=z)
 
-            dst_root.attrs.update(_attrs_dict(self.root.attrs))
+                dst_root.attrs.update(_attrs_dict(self.root.attrs))
 
-            copied = 0
-            for key, src in self.root.arrays():
+                copied = 0
+                for key, src in self.root.arrays():
 
-                dst = dst_root.create_array(
-                    name=key,
-                    shape=src.shape,
-                    chunks=src.chunks,
-                    dtype=src.dtype,
-                    compressors=BloscCodec(
-                        cname=BloscCname.zstd,
-                        clevel=clevel,
-                        shuffle=BloscShuffle.shuffle,
+                    dst = dst_root.create_array(
+                        name=key,
+                        shape=src.shape,
+                        chunks=src.chunks,
+                        dtype=src.dtype,
+                        compressors=BloscCodec(
+                            cname=BloscCname.zstd,
+                            clevel=clevel,
+                            shuffle=BloscShuffle.shuffle,
+                        )
                     )
-                )
 
-                dst.attrs.update(_attrs_dict(src.attrs))
-                dst[...] = src[...]
-                copied += 1
-                _logger.debug("Compressed array '%s' shape=%s dtype=%s", key, src.shape, src.dtype)
+                    dst.attrs.update(_attrs_dict(src.attrs))
+                    dst[...] = src[...]
+                    copied += 1
+                    _logger.debug("Compressed array '%s' shape=%s dtype=%s", key, src.shape, src.dtype)
+
+            os.replace(tmp_path, zip_path)
+        except BaseException:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                _logger.warning("Failed to remove temporary archive %s", tmp_path, exc_info=True)
+            raise
 
         _logger.info("Compression complete: %d arrays -> %s", copied, zip_path)
         return str(zip_path)
@@ -607,7 +634,9 @@ class ArrayStorage:
     def compress_and_cleanup(cls, output_pth: str | Path, compression_level: int) -> Iterator[ArrayStorage]:
         """
         Create a temporary ArrayStorage, yield it for writes, then compress it into `output_pth`.
-        The temporary local store is deleted after compression.
+        Compress only if the body succeeds. Always attempt to close the store
+        and delete its temporary directory. Cleanup errors do not replace an
+        active body or compression exception.
 
         Args:
             output_pth: Destination .zip file or directory (delegated to `compress(into=...)`).
@@ -617,14 +646,26 @@ class ArrayStorage:
         """
         output_pth = Path(output_pth)
         _logger.info("compress_and_cleanup: creating temp store (suffix .zarr)")
-        with tempfile.TemporaryDirectory(suffix=".zarr") as tmp_dir:
-            arr_storage = cls(tmp_dir, mode="w")
-            try:
+        tmp_dir = tempfile.TemporaryDirectory(suffix=".zarr")
+        try:
+            arr_storage = cls(tmp_dir.name, mode="w")
+            try:     # -+-+- needed to always close the storage -+-+-
                 yield arr_storage
-            finally:
                 _logger.info("compress_and_cleanup: compressing to %s (compression level of %d)", output_pth, compression_level)
-                arr_storage.compress(output_pth, compression_level=compression_level)
-                arr_storage.close()
+                arr_storage.compress(output_pth, compression_level=compression_level) # runs at exit from the CM
+            finally: # -+-+- needed to always close the storage -+-+-
+                arr_storage.close() # finally will run no matter what -- even after we move to the outer except branch
+        except BaseException:
+            # Preserve the active error, including interruption, if cleanup fails --
+            # so that when we run `raise` it will propagate the error caught before compression
+            # -- not the error caught during cleanup.
+            try:
+                tmp_dir.cleanup()
+            except Exception:
+                _logger.warning("Failed to clean up temporary store %s", tmp_dir.name, exc_info=True)
+            raise
+        else:
+            tmp_dir.cleanup()
         _logger.info("compress_and_cleanup: temp store cleaned up")
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= #
@@ -1003,12 +1044,13 @@ def batches_of(iterable: Iterable,
 
     When `ranges=True`, yields 0-based index ranges based on consumption
     order: `(start, end_exclusive)` (or `(start, end_inclusive)` if
-    `inclusive_end=True`) without materializing the data.
+    `inclusive_end=True`). Generic iterables are consumed into lists even
+    in range mode. Empty inputs yield nothing in either mode.
 
     Args:
       iterable: Any iterable to batch (sequence or generator).
-      batch_size: Number of items per batch. If <= 0, the entire iterable is
-        yielded as a single batch. Defaults to -1.
+      batch_size: Number of items per batch. If <= 0, the entire nonempty
+        iterable is yielded as a single batch. Defaults to -1.
       out_as: Constructor to wrap each yielded batch (e.g., `list`, `tuple`)
         or to wrap the index pair when `ranges=True`. Defaults to `list`.
       ranges: If True, yield index ranges instead of data batches. Defaults to False.
@@ -1026,7 +1068,7 @@ def batches_of(iterable: Iterable,
       [[1, 2], [3, 4], [5]]
 
       >>> list(batches_of(range(10), batch_size=4, ranges=True))
-      [(0, 4), (4, 8), (8, 10)]
+      [[0, 4], [4, 8], [8, 10]]
 
       >>> gen = (i*i for i in range(7))
       >>> list(batches_of(gen, batch_size=3, out_as=tuple))
@@ -1042,6 +1084,8 @@ def batches_of(iterable: Iterable,
         is_sliceable = False
 
     if is_sliceable:
+        if n == 0:
+            return
         if batch_size <= 0:
             batch_size = n
         for start in range(0, n, batch_size):
@@ -1058,6 +1102,8 @@ def batches_of(iterable: Iterable,
     if batch_size <= 0:
         # consume everything into a single batch
         chunk = list(it)
+        if not chunk:
+            return
         if ranges:
             end_excl = len(chunk)
             yield out_as((0, end_excl - 1)) if inclusive_end else out_as((0, end_excl))

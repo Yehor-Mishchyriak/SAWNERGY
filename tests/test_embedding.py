@@ -12,6 +12,7 @@ from .conftest import FRAME_COUNT, _StubSGNS
 def test_embeddings_preserve_order(embeddings_archive_path):
     with sawnergy_util.ArrayStorage(embeddings_archive_path, mode="r") as storage:
         name = storage.get_attr("frame_embeddings_name")
+        assert name == "FRAME_EMBEDDINGS"
         embeddings = storage.read(name, slice(None))
         assert embeddings.dtype == np.float32
         assert storage.get_attr("time_stamp_count") == FRAME_COUNT
@@ -29,6 +30,12 @@ def test_embeddings_preserve_order(embeddings_archive_path):
         assert storage.get_attr("RIN_type") == "attr"
         assert storage.get_attr("using") == "RW"
         assert storage.get_attr("master_seed") == 999
+        for key in ("source_WALKS_path", "walk_length", "num_RWs", "num_SAWs",
+                    "attractive_RWs_name", "repulsive_RWs_name", "attractive_SAWs_name",
+                    "repulsive_SAWs_name", "lr_step_per_batch", "shuffle_data", "device_hint",
+                    "model_kwargs_repr", "arrays_per_chunk", "compression_level", "created_at"):
+            assert key in storage.root.attrs
+        per_frame_seeds = storage.get_attr("per_frame_seeds")
 
     assert embeddings.shape[0] == FRAME_COUNT
     assert len(_StubSGNS.call_log) == FRAME_COUNT
@@ -36,6 +43,7 @@ def test_embeddings_preserve_order(embeddings_archive_path):
     master = np.random.SeedSequence(999)
     expected_seeds = [int(seq.generate_state(1, dtype=np.uint32)[0]) for seq in master.spawn(FRAME_COUNT)]
     assert _StubSGNS.call_log == expected_seeds
+    assert per_frame_seeds == expected_seeds
 
     for idx, seed in enumerate(expected_seeds):
         rng = np.random.default_rng(seed)

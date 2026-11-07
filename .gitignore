@@ -18,6 +18,12 @@
 !src/sawnergy/visual/
 !src/sawnergy/visual/*.py
 # ----------------------------
+!src/sawnergy/v2/
+!src/sawnergy/v2/*.py
+# ----------------------------
+!src/sawnergy/v2/traj_features/
+!src/sawnergy/v2/traj_features/*.py
+# ----------------------------
 !tests/
 !tests/*.py
 # ----------------------------
@@ -58,10 +64,15 @@
 !.gitignore
 !pkg_meta.json
 !README.md
+!CONTRIBUTING.md
 !CITATION.cff
 !CREDITS.md
 !LICENSE
 !NOTICE
-!docs.md
+!docs/
+!docs/*.md
 !requirements.txt
 !pyproject.toml
+# ----------- TMP ------------
+!V2_migration.md
+# ----------------------------

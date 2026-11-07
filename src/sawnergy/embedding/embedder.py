@@ -9,7 +9,7 @@ from typing import Literal
 import logging
 
 # local
-from .. import sawnergy_util
+from .. import __version__, sawnergy_util
 
 # *----------------------------------------------------*
 #                        GLOBALS
@@ -705,6 +705,10 @@ class Embedder:
                 to_block_named=block_name,
                 arrays_per_chunk=num_matrices_in_compressed_blocks
             )
+
+            storage.add_attr("producer_version", __version__)
+            storage.add_attr("schema_name", "shallow_residue_embeddings")
+            storage.add_attr("schema_version", 1)
 
             # Core dataset discovery (for consumers like the Embeddings Visualizer)
             storage.add_attr("frame_embeddings_name", block_name)

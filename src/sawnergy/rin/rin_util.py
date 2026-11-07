@@ -233,14 +233,17 @@ def run_cpptraj(cpptraj: str,
     """Run `cpptraj` and return its standard output.
 
     If `script` text is provided, it is sent to cpptraj via STDIN. A trailing
-    `quit` line is appended automatically if the script does not already end
-    with one. Alternatively, you can pass command-line arguments via `argv`
-    (e.g., `["-i", "script.in"]`) and leave `script=None`.
+    `quit` line is appended automatically unless the last non-comment command
+    is already `quit`. Blank lines and `#` comments are ignored for this check;
+    already terminated scripts are forwarded unchanged. Alternatively, you can
+    pass command-line arguments via `argv` (e.g., `["-i", "script.in"]`) and
+    leave `script=None`.
 
     Args:
         cpptraj: Path to the `cpptraj` executable.
         script: Complete cpptraj script to feed on STDIN. If not `None` and not
-            already terminated by `quit`, the function appends `quit\\n`.
+            already terminated by `quit`, the function appends `quit\\n` on a
+            separate line, inserting a newline if needed.
         argv: Additional command-line arguments to pass to `cpptraj`.
         timeout: Maximum wall time in seconds for the subprocess.
         env: Environment variables for the child process. Values must be strings.
@@ -253,8 +256,12 @@ def run_cpptraj(cpptraj: str,
         Exception: For unexpected errors during subprocess execution.
     """
     if script is not None:
-        if not script.rstrip().lower().endswith("quit"):
-            script = script + "quit\n"
+        commands = [line.split("#", 1)[0].strip() for line in script.splitlines()]
+        last_command = next((command for command in reversed(commands) if command), "")
+        if last_command.lower() != "quit":
+            if script and not script.endswith("\n"):
+                script += "\n"
+            script += "quit\n"
 
     args = [cpptraj] + (argv or [])
     try:

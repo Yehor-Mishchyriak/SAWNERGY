@@ -10,7 +10,7 @@ import logging
 import os
 # local
 from . import walker_util
-from .. import sawnergy_util
+from .. import __version__, sawnergy_util
 
 # *----------------------------------------------------*
 #                        GLOBALS
@@ -806,6 +806,9 @@ class Walker:
                 )
 
             # useful metadata
+            storage.add_attr("producer_version", __version__)
+            storage.add_attr("schema_name", "rin_walks")
+            storage.add_attr("schema_version", 1)
             storage.add_attr("time_created", current_time)
             storage.add_attr("seed", int(self._seed))
             storage.add_attr("rng_scheme", "SeedSequence.spawn_per_batch_v1")

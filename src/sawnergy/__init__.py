@@ -1,3 +1,7 @@
+from importlib.metadata import version
+
+__version__ = version("sawnergy")
+
 from . import sawnergy_util
 from . import logging_util
 from . import rin
