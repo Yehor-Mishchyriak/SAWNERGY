@@ -64,6 +64,7 @@
 !.gitignore
 !pkg_meta.json
 !README.md
+!CONTRIBUTING.md
 !CITATION.cff
 !CREDITS.md
 !LICENSE
