@@ -56,3 +56,38 @@ def test_displayed_nodes_require_integers(rin_archive_path_both, patched_visuali
             displayed_pairwise_repulsion_for_nodes=None,
             show=False,
         )
+
+
+def test_real_visualizer_handles_empty_edge_collections(rin_archive_path_both, monkeypatch):
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.axes3d import Axes3D
+    from mpl_toolkits.mplot3d.art3d import Line3DCollection
+
+    add_collection3d = Axes3D.add_collection3d
+
+    def autoscale_collection(self, collection, *args, **kwargs):
+        # Reproduce CI's Matplotlib 3.11 empty-segment autoscaling failure on
+        # older Matplotlib too, while retaining the real axes and artists.
+        if isinstance(collection, Line3DCollection) and kwargs.get("autolim", True):
+            np.concatenate(collection._segments3d)
+        return add_collection3d(self, collection, *args, **kwargs)
+
+    monkeypatch.setattr(Axes3D, "add_collection3d", autoscale_collection)
+    monkeypatch.setattr(visualizer_module.Visualizer, "no_instances", False)
+    before = set(plt.get_fignums())
+    try:
+        vis = visualizer_module.Visualizer(rin_archive_path_both, show=False)
+        for artist in (vis._attr, vis._repuls):
+            assert artist.axes is vis._ax and artist in vis._ax.collections
+            assert len(artist._segments3d) == 0
+        vis._fig.canvas.draw()
+        vis.build_frame(1, frac_node_interactions_displayed=1.0, show=False)
+        assert len(vis._attr._segments3d) > 0
+        assert len(vis._repuls._segments3d) > 0
+        vis._fig.canvas.draw()
+        vis._update_attr_edges(np.empty((0, 2, 3)))
+        vis._update_repuls_edges(np.empty((0, 2, 3)))
+        vis._fig.canvas.draw()
+    finally:
+        for number in set(plt.get_fignums()) - before:
+            plt.close(number)

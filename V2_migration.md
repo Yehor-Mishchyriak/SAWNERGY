@@ -16,10 +16,15 @@
 - [x] Reject incompatible archives before loading their datasets in `Walker.__init__`, `Embedder.__init__`,
     `visual.Visualizer.__init__`, and `embedding.Visualizer.__init__`. These checks must remain active under
     `python -O`. Keep `ArrayStorage` generic; share schema validation through a helper if useful.
-- [ ] Specify and test storage failure behavior before reusing it in v2. In particular,
-    `ArrayStorage.compress_and_cleanup` currently attempts to compress an archive even when its body raises.
+- [x] Specify and test storage failure behavior before reusing it in v2.
+    Contracts are in `docs/specifications.md`; regression tests are in `tests/test_storage.py`.
+    Body failures skip compression, cleanup preserves active errors, failed compression preserves
+    existing destinations, and rejected writes leave storage unchanged. Storage I/O after write
+    validation remains nontransactional, as documented.
 - [x] Add compatibility/regression tests for archive markers, supported and unsupported schemas, and unmarked archives.
-- [ ] Freeze the documented existing API after these changes, preserving public import paths and behavior.
+- [x] Freeze the documented existing API after these changes, preserving public import paths and behavior.
+    See the frozen V1 API in `docs/specifications.md`, the signature/export baseline in
+    `tests/test_public_api.py`, and the existing behavior regression tests.
 
 *V2 work:*
 

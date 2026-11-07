@@ -21,6 +21,51 @@ The prerequisite patch queue is complete. Archive compatibility policy and reade
 enforcement are implemented and tested. Remaining migration work, including
 completion of the V2 extraction/archive specification, is in `V2_migration.md`.
 
+## Frozen V1 public API
+
+The compatibility baseline is the existing V1 API after the prerequisite fixes,
+schema markers, and reader validation specified in this document. V2 work must
+preserve its public import paths, call signatures (parameter names, order,
+positional/keyword rules, defaults, and annotations), return types, and specified
+successful and failure behavior. Constructors and public methods remain
+available through their existing classes.
+
+| Surface | Frozen entry points |
+| --- | --- |
+| `sawnergy.rin` | `RINBuilder`, `CpptrajScript`, `run_cpptraj`, and their documented public operations |
+| `sawnergy.walks` | `Walker` construction, `walk`, `sample_walks`, and resource lifetime; existing package exports remain available |
+| `sawnergy.embedding` | `Embedder` construction, `embed_frame`, `embed_all`, `align_frames`, and `Visualizer` construction/rendering/saving/closure |
+| `sawnergy.visual` | `Visualizer` construction, `build_frame`, `animate_trajectory`, and existing color exports |
+| `sawnergy.rin.rin_util` | Reusable script, executable-discovery/execution, and molecular-composition parser interfaces specified below |
+| `sawnergy.sawnergy_util` | `ArrayStorage` construction, blocks, attributes, compression/lifetime, and the reusable helpers specified below; existing exports remain available |
+| `sawnergy.logging_util` | `configure_logging` import path and signature |
+
+`tests/test_public_api.py` records the fixed signature inventory and required
+exports, and checks that package re-exports retain their implementation objects.
+The existing numerical, storage, archive-schema, and pipeline regression tests
+protect the behavioral contracts below; signature checks alone do not establish
+behavioral equivalence. Legacy chunking and walk utility signatures are also
+recorded without extending this document to all their implementation details.
+Optional backend names remain exported and retain their dependency requirements;
+the freeze does not make PyTorch mandatory or promise its availability.
+
+The archive contracts below, including schema names and version `1` layouts,
+are part of this baseline. Additional V2 formats must use their own interfaces
+and schema identities. Do not repurpose existing V1 entry points or arrays to
+silently return V2 representations. Package releases may change
+`sawnergy.__version__` and `producer_version` without changing schema versions.
+
+The prerequisite boundary corrections listed next, addition of schema markers,
+and explicit rejection of unmarked/incompatible archives are intentional changes
+already included in the baseline. They are not exceptions to be reintroduced
+later. Bug fixes may enforce these documented contracts; an intended contract
+change must be specified and tested explicitly, rather than silently updating
+the frozen signature inventory to accommodate a regression.
+
+Private implementation details and incidental imported names are not frozen.
+The V2 design draft is not an existing public API. Additive APIs may be introduced
+without removing, renaming, or changing the frozen interfaces or their behavior.
+
 ### Compatibility boundary for prerequisite patches
 
 Public import paths, signatures, parameter names/defaults, return types, archive
@@ -261,6 +306,15 @@ Root metadata written by this producer:
 `device_hint` is empty when unspecified; `model_kwargs_repr` is provenance text,
 not an executable serialized configuration. Archive/seed/warm-start tests do not
 establish biological meaning or cross-frame alignment.
+
+### RIN visualizer initialization
+
+For a compatible RIN archive with the required datasets, constructing
+`sawnergy.visual.Visualizer(..., show=False)` creates its scatter and both empty
+3D edge collections successfully. Register empty edge artists without requesting
+data-limit autoscaling; frame rendering sets view limits from COM coordinates.
+Both artists remain attached to the axes and can subsequently receive segments,
+including empty segments. Preserve public signatures and archive interpretation.
 
 ## Reusable CPPTRAJ components (`rin_util.py`)
 
@@ -864,6 +918,11 @@ physical quantities being extracted. Hydrogen-bond definitions remain future wor
 
 ## Verification boundary
 
+`tests/test_public_api.py` checks the fixed signature baseline, required exports,
+package/implementation alias identity, and the distribution-derived package
+version. The behavior tests below remain necessary alongside these interface
+checks.
+
 `tests/test_archive_schemas.py` checks the producer and schema markers after
 ZIP reopening for all three writers, including single/both-channel RINs,
 mixed/empty walk channels, time-aware walks, and the embedding pipeline. It also
@@ -915,7 +974,10 @@ Walk tests check every node's transition vector in every frame, archive block
 names/shapes/dtypes/counts, 1-based starts in repetition order, empty enabled
 channels, disabled channels, and time-aware layout. Embedding tests check ordered
 values, archive metadata, persisted frame seeds, seed forwarding, and warm starts.
-Plotting fixtures replace GUI setup. CPPTRAJ calls and pipeline shared memory
+Most plotting fixtures replace GUI setup. A real RIN visualizer test reproduces
+empty-edge autoscaling failure during artist registration, verifies both artists
+remain attached, and renders before/after populating and clearing edge segments.
+CPPTRAJ calls and pipeline shared memory
 are mocked; these checks do not establish native extraction or process-worker
 correctness.
 

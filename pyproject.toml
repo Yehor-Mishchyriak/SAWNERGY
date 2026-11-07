@@ -44,3 +44,9 @@ zip-safe = false
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["sawnergy*"]
+
+[tool.pytest.ini_options]
+markers = [
+  "torch: tests exercising the real optional PyTorch backend",
+  "pureml: tests exercising the real PureML backend",
+]

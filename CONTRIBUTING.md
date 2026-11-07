@@ -46,6 +46,10 @@ planned behavior; the current stubs do not implement the complete workflow.
   existing helpers before introducing another abstraction.
 - Preserve existing public import paths, signatures, and successful archive
   behavior. Explain any intentional contract or failure-behavior correction.
+- The [frozen V1 API](docs/specifications.md#frozen-v1-public-api) and
+  `tests/test_public_api.py` define the compatibility baseline for V2 work.
+  Keep the existing behavior tests passing; do not change the signature baseline
+  merely to silence a compatibility failure.
 - For behavior changes, specify the expected contract, add targeted regression
   tests before implementation, then update `docs/specifications.md` to match.
 - V2 implementation uses `icontract` for preconditions, postconditions, and
@@ -53,6 +57,28 @@ planned behavior; the current stubs do not implement the complete workflow.
   under `python -O`.
 - Explain what changed, why, and how it was verified in the PR description.
   Include relevant test results, skips, and backend validation limits.
+
+## CI test selection
+
+Pushes and PRs targeting `main`, and release-tag workflows, run the full suite,
+including the Torch job. Pushes and PRs targeting `development` select affected
+test groups using `CICD/select_tests.py`, including downstream pipeline tests.
+The Python 3.11/3.12 jobs exclude tests marked `torch` on selective runs; the
+Torch job runs those tests only when the backend, embedding core, relevant tests,
+or dependencies change. PureML backend tests are marked `pureml` separately.
+
+Shared storage/RIN changes can affect downstream visualizers. Visualization
+tests therefore still run when affected, even if no plotting source changed.
+Mixed archive-schema tests are selected per reader/writer parameter. Public API
+checks accompany source changes. Documentation-only changes run no tests; the
+Python matrix reports successful no-op checks to retain required check names.
+Workflow/selector, dependency, package initialization, or shared-fixture changes,
+unmapped source/test files, and unavailable diff history trigger a full run.
+If the selection job fails, both test jobs also fall back to the full suite.
+Pushes compare the previous and new commit; PRs compare against the merge base.
+Keep the dependency map current when adding components; new unclassified tests
+are retained rather than silently deselected. With no selection environment
+variable, local pytest continues to run all tests.
 
 ## Local setup and tests
 

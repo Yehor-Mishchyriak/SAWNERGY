@@ -154,7 +154,9 @@ class Visualizer:
         self._scatter: PathCollection  = self._ax.scatter([], [], [], s=node_size, depthshade=depthshade, edgecolors="none")
         self._attr: Line3DCollection   = Line3DCollection(np.empty((0,2,3)), linewidths=edge_width, antialiased=antialiased)
         self._repuls: Line3DCollection = Line3DCollection(np.empty((0,2,3)), linewidths=edge_width, antialiased=antialiased)
-        self._ax.add_collection3d(self._attr); self._ax.add_collection3d(self._repuls) # set pointers to the attractive and repulsive collections
+        # Collections are already 3D; do not autoscale their initially empty data.
+        self._ax.add_collection(self._attr, autolim=False)
+        self._ax.add_collection(self._repuls, autolim=False)
         _logger.debug("Artists created | scatter(empty), attr_lines(empty), repuls_lines(empty).")
 
         # ---------- HELPER FIELDS --------- #

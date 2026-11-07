@@ -113,6 +113,7 @@ def test_soft_unigram_properties():
         embedder_module.Embedder._soft_unigram(np.zeros_like(f))
 
 
+@pytest.mark.pureml
 def test_sgns_pureml_smoke(monkeypatch):
     pureml = pytest.importorskip("pureml")
     Tensor = pureml.machinery.Tensor
@@ -177,6 +178,7 @@ def test_sgns_pureml_smoke(monkeypatch):
     assert np.isfinite(embeddings).all()
 
 
+@pytest.mark.torch
 def test_sgns_torch_smoke():
     torch = pytest.importorskip("torch")
     from sawnergy.embedding.SGNS_torch import SGNS_Torch
@@ -229,6 +231,7 @@ def test_sgns_torch_smoke():
     assert np.isfinite(weights).all()
 
 
+@pytest.mark.pureml
 def test_sg_pureml_smoke(monkeypatch):
     """Plain SG (full softmax) with PureML — loss drops, embeddings finite."""
     pureml = pytest.importorskip("pureml")
@@ -272,6 +275,7 @@ def test_sg_pureml_smoke(monkeypatch):
     assert np.isfinite(W).all()
 
 
+@pytest.mark.torch
 def test_sg_torch_smoke():
     """Plain SG (full softmax) with Torch — loss drops, embeddings finite."""
     torch = pytest.importorskip("torch")
@@ -313,6 +317,7 @@ def test_sg_torch_smoke():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.torch
 def test_sgns_torch_warm_start_copies_inputs():
     torch = pytest.importorskip("torch")
     from sawnergy.embedding.SGNS_torch import SGNS_Torch
@@ -346,6 +351,7 @@ def test_sgns_torch_warm_start_copies_inputs():
     np.testing.assert_allclose(model.out_embeddings, out_expected)
 
 
+@pytest.mark.torch
 def test_sg_torch_warm_start_transposes_out_weights():
     torch = pytest.importorskip("torch")
     from sawnergy.embedding.SGNS_torch import SG_Torch
@@ -379,6 +385,7 @@ def test_sg_torch_warm_start_transposes_out_weights():
     np.testing.assert_allclose(model.out_embeddings, out_expected)
 
 
+@pytest.mark.torch
 def test_sg_torch_warm_start_validates_out_shape():
     torch = pytest.importorskip("torch")
     from sawnergy.embedding.SGNS_torch import SG_Torch
@@ -406,6 +413,7 @@ def test_sg_torch_warm_start_validates_out_shape():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.pureml
 def test_sgns_pureml_warm_start_copies_inputs():
     pureml = pytest.importorskip("pureml")
     from sawnergy.embedding.SGNS_pml import SGNS_PureML
@@ -439,6 +447,7 @@ def test_sgns_pureml_warm_start_copies_inputs():
     np.testing.assert_allclose(model.out_embeddings, emb_out)
 
 
+@pytest.mark.pureml
 def test_sg_pureml_warm_start_transposes_out_weights():
     pureml = pytest.importorskip("pureml")
     from sawnergy.embedding.SGNS_pml import SG_PureML
@@ -471,6 +480,7 @@ def test_sg_pureml_warm_start_transposes_out_weights():
     np.testing.assert_allclose(model.out_embeddings, emb_out)
 
 
+@pytest.mark.pureml
 def test_sg_pureml_warm_start_validates_out_shape():
     pureml = pytest.importorskip("pureml")
     from sawnergy.embedding.SGNS_pml import SG_PureML
