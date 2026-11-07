@@ -1,996 +1,460 @@
 # Specifications
 
-## Scope and status
+## Scope and notation
 
-This document specifies the existing archive formats and reusable public behavior
-needed for V2 feature extraction. The V1 baseline is based on
-`src/sawnergy/rin/rin_util.py`, `src/sawnergy/sawnergy_util.py`, and the current
-V1 archive writers/readers. The V2 design below specifies proposed interfaces
-and structural contracts; it is not an implemented API or a complete new archive
-format. It does not specify every V1 internal.
+| Symbol/status | Definition |
+| --- | --- |
+| PRE | Caller obligation; enforcement only where specified |
+| POST | Successful-return guarantee |
+| INV | Valid-state invariant |
+| RAISES | Required failure behavior |
+| LIMIT | Excluded guarantee or dependency limitation |
+| V1 | Implemented: archive formats, reusable utilities, prerequisite fixes, schema validation, API freeze |
+| V2 | Design draft: proposed interfaces; implementation/tests pending |
 
-**Preconditions** are caller obligations, not claims that every obligation is
-currently checked. **Postconditions** apply after successful return.
-**Invariants** describe valid objects/data. Explicit checks and limitations are
-identified separately. No `icontract` decorators are added by this document;
-essential input/archive validation must remain active under `python -O` when
-contracts are implemented. Known defects below are recorded for tests and later
-fixes, not requirements to preserve them.
-
-The prerequisite patch queue is complete. Archive compatibility policy and reader
-enforcement are implemented and tested. Remaining migration work, including
-completion of the V2 extraction/archive specification, is in `V2_migration.md`.
+- Scope: V1 archives/reusable utilities; V2 extraction/publication.
+- Exclusions: exhaustive V1 internals, legacy chunking/neural implementations, V2 learning.
+- Enforcement: essential input/output/archive checks survive `python -O`.
+- V2: `icontract` + shared predicates; tests before code; essential checks independent of decorator enablement.
+- Remaining work: [V2_migration.md](../V2_migration.md).
 
 ## Frozen V1 public API
 
-The compatibility baseline is the existing V1 API after the prerequisite fixes,
-schema markers, and reader validation specified in this document. V2 work must
-preserve its public import paths, call signatures (parameter names, order,
-positional/keyword rules, defaults, and annotations), return types, and specified
-successful and failure behavior. Constructors and public methods remain
-available through their existing classes.
+**INV:** preserve paths/exports/alias identity, constructors/public methods, signatures (names/order/kinds/defaults/annotations), return types/behavior.
 
-| Surface | Frozen entry points |
+| Module | Frozen surface |
 | --- | --- |
-| `sawnergy.rin` | `RINBuilder`, `CpptrajScript`, `run_cpptraj`, and their documented public operations |
-| `sawnergy.walks` | `Walker` construction, `walk`, `sample_walks`, and resource lifetime; existing package exports remain available |
-| `sawnergy.embedding` | `Embedder` construction, `embed_frame`, `embed_all`, `align_frames`, and `Visualizer` construction/rendering/saving/closure |
-| `sawnergy.visual` | `Visualizer` construction, `build_frame`, `animate_trajectory`, and existing color exports |
-| `sawnergy.rin.rin_util` | Reusable script, executable-discovery/execution, and molecular-composition parser interfaces specified below |
-| `sawnergy.sawnergy_util` | `ArrayStorage` construction, blocks, attributes, compression/lifetime, and the reusable helpers specified below; existing exports remain available |
-| `sawnergy.logging_util` | `configure_logging` import path and signature |
+| `sawnergy.rin` | `RINBuilder`, `build_rin`; `CpptrajScript`; `run_cpptraj` |
+| `sawnergy.walks` | `Walker`, `walk`, `sample_walks`, resource lifetime; existing exports |
+| `sawnergy.embedding` | `Embedder`, `embed_frame`, `embed_all`, `align_frames`; `Visualizer`, `build_frame`, `savefig`, `close` |
+| `sawnergy.visual` | `Visualizer`, `build_frame`, `animate_trajectory`; color exports |
+| `sawnergy.rin.rin_util` | Specified reusable CPPTRAJ interfaces |
+| `sawnergy.sawnergy_util` | `ArrayStorage`; specified helpers; existing exports |
+| `sawnergy.logging_util` | `configure_logging` path/signature |
 
-`tests/test_public_api.py` records the fixed signature inventory and required
-exports, and checks that package re-exports retain their implementation objects.
-The existing numerical, storage, archive-schema, and pipeline regression tests
-protect the behavioral contracts below; signature checks alone do not establish
-behavioral equivalence. Legacy chunking and walk utility signatures are also
-recorded without extending this document to all their implementation details.
-Optional backend names remain exported and retain their dependency requirements;
-the freeze does not make PyTorch mandatory or promise its availability.
+- Baseline: `tests/test_public_api.py` + contracts/regressions below; legacy chunking/walk signatures included.
+- Optional backend exports/dependencies preserved; PyTorch optional.
+- Archives: version-1 layouts below; V2 requires separate interfaces/schema identities.
+- Baseline includes intentional corrections: cleanup/error preservation; atomic compression; opening/read-only modes; write validation; script termination; empty batching; positive iteration steps; schema markers; rejection of incompatible/unmarked archives.
+- Contract changes: explicit specifications/tests; no baseline replacement hiding regressions.
+- Additions permitted; private/incidental names and V2 drafts excluded; package/producer releases independent of schemas.
 
-The archive contracts below, including schema names and version `1` layouts,
-are part of this baseline. Additional V2 formats must use their own interfaces
-and schema identities. Do not repurpose existing V1 entry points or arrays to
-silently return V2 representations. Package releases may change
-`sawnergy.__version__` and `producer_version` without changing schema versions.
-
-The prerequisite boundary corrections listed next, addition of schema markers,
-and explicit rejection of unmarked/incompatible archives are intentional changes
-already included in the baseline. They are not exceptions to be reintroduced
-later. Bug fixes may enforce these documented contracts; an intended contract
-change must be specified and tested explicitly, rather than silently updating
-the frozen signature inventory to accommodate a regression.
-
-Private implementation details and incidental imported names are not frozen.
-The V2 design draft is not an existing public API. Additive APIs may be introduced
-without removing, renaming, or changing the frozen interfaces or their behavior.
-
-### Compatibility boundary for prerequisite patches
-
-Public import paths, signatures, parameter names/defaults, return types, archive
-layouts, and successful non-boundary behavior are retained. The following
-failure/boundary corrections are intentional compatibility exceptions:
-
-- `compress_and_cleanup` skips publication after body failure, attempts cleanup
-  on every exit, and preserves the active error if cleanup also fails.
-- `compress` publishes only a fully closed temporary ZIP, preserving an existing
-  destination on failure before replacement.
-- Construction respects opening modes, avoids read-only attribute writes, and
-  propagates opening errors instead of retrying with group creation.
-- `write` rejects incompatible batches and chunk settings before mutation;
-  conversion errors and promoted default-chunk warnings also leave storage intact.
-- `run_cpptraj` recognizes a standalone terminal `quit` and appends a separate
-  command when needed, including scripts without a final newline.
-- `batches_of` yields nothing for every empty input and valid batch size, rather
-  than raising for empty sequences or fabricating empty batches/ranges.
-- `block_iter` rejects zero/negative steps, including on empty/scalar arrays.
-
-The detailed contracts below define the precise limits of these corrections;
-they do not promise general transactional writes or infallible filesystem cleanup.
-
-## Existing archive contracts and public behavior to preserve
+## Existing archive contracts
 
 ### Common layout
 
-- V1 writes Zarr v3 root groups containing named arrays and JSON-compatible root
-  attributes. Working stores are `.zarr` directories; final archives are `.zip`
-  files opened read-only through `ArrayStorage`.
-- Each block has shape `(K, *item_shape)`, with axis 0 used for appends. Successful
-  compression/reopening preserves array names, values, shape, dtype, chunk shape,
-  root attributes, and array attributes for immediate root arrays.
-- Readers resolve dataset names through root attributes. A name value of `None`
-  means unavailable; this differs from a missing key (`KeyError`) and from a
-  present array with a zero-sized dimension.
-- Three root mappings, keyed by block name, describe storage:
-  `array_chunk_size_in_block` holds the axis-0 chunk length,
-  `array_shape_in_block` the item shape as a list, and
-  `array_dtype_in_block` the NumPy dtype string (`np.dtype(...).str`).
-  Chunk shape is `(arrays_per_chunk, *[max(1, d) for d in item_shape])`;
-  data dimensions may be zero although chunk dimensions must be positive.
-- Writers add the root attributes `producer_version`, `schema_name`, and
-  `schema_version` as specified below. The four readers listed in the compatibility
-  policy validate these markers before accessing dataset metadata or values.
-- `ArrayStorage` stays generic: feature meanings, physical validity, identity
-  ordering, and schema compatibility belong to producers/consumers.
+**INV:** Zarr v3 root group; named arrays; JSON root attributes; working `.zarr`; published read-only `.zip`.
 
-Preserve the public paths `sawnergy.rin.RINBuilder`, `sawnergy.walks.Walker`,
-`sawnergy.embedding.Embedder`, `sawnergy.embedding.align_frames`,
-`sawnergy.visual.Visualizer`, and `sawnergy.embedding.Visualizer`. Reused utilities
-retain their current module paths; V2 imports suitable helpers rather than
-duplicating them. This does not extend the extraction milestone to new learning
-components.
+| Property | Contract |
+| --- | --- |
+| Block | `(K, *item_shape)`; append axis = 0 |
+| Chunks | `(arrays_per_chunk, *[max(1, d) for d in item_shape])`; logical zero dimensions retained |
+| Metadata maps | `array_chunk_size_in_block`: axis-0 chunk length; `array_shape_in_block`: item-shape list; `array_dtype_in_block`: `np.dtype(...).str`; keyed by block |
+| Dataset discovery | Attribute -> block name; `None` = unavailable; missing = `KeyError`; zero-sized != unavailable |
+| Compression round trip | Preserve immediate-array names/values/shapes/dtypes/chunks, root/array attributes |
+| Responsibility | `ArrayStorage`: generic storage; producers/consumers: semantics, identities, units, schemas |
 
-### Archive schema markers
+### Schema markers and compatibility
 
-**Writer postcondition:** Every archive successfully returned by the following
-writers contains these three JSON-compatible root attributes after compression
-and reopening:
+**Writer POST:** root markers `producer_version: str = sawnergy.__version__`, `schema_name: str`, `schema_version: int = 1`; no input-marker inheritance.
 
-| Writer | `schema_name` (string) | `schema_version` (integer) |
+| Schema | Writer | Readers |
 | --- | --- | --- |
-| `RINBuilder.build_rin` | `"rin"` | `1` |
-| `Walker.sample_walks` | `"rin_walks"` | `1` |
-| `Embedder.embed_all` | `"shallow_residue_embeddings"` | `1` |
+| `rin` | `RINBuilder.build_rin` | `Walker.__init__`, `sawnergy.visual.Visualizer.__init__` |
+| `rin_walks` | `Walker.sample_walks` | `Embedder.__init__` |
+| `shallow_residue_embeddings` | `Embedder.embed_all` | `sawnergy.embedding.Visualizer.__init__` |
 
-`producer_version` is the string `sawnergy.__version__` of the producing package.
-It records which SAWNERGY release wrote the output; downstream writers stamp
-their own output format and producer, rather than inheriting source markers.
-The three schema names identify the corresponding archive contracts below.
+**Acceptance:** all markers present ∧ specified types ∧ nonboolean version ∧ expected `(schema_name,schema_version)`.
 
-Each schema is versioned independently, starting at integer `1`; the version
-identifies the documented format, not the package release or Zarr format version.
-A package-version change alone does not change a schema version. Channel choices,
-window/batch sizes, and walk/embedding options within these contracts do not
-create new schemas or schema versions.
+- Support: integer `1` per schema, independently versioned; no coercion/case normalization.
+- `producer_version`: unparsed provenance; installed-version equality unnecessary.
+- Package/channel/batch/walk/training changes alone do not change schema versions.
+- Validator: `sawnergy._archive_schema.validate_archive_schema(root.attrs, *, schema_name, schema_version) -> None`.
+- RAISES `ValueError`: missing/partial/malformed markers, wrong name, older/newer unsupported version. Diagnostic: offending keys or expected/encountered pair; unmarked = unsupported legacy.
+- Order: validate BEFORE dataset-name lookup/reads/shared-memory allocation; rejection closes context, preserves bytes/attributes.
+- Acceptance permits normal initialization/errors; dataset validity remains separately checked.
+- Forbidden: inference, implicit versions, opening-time rewrite/automatic migration. Legacy support requires explicit migration/compatibility specification.
+- `ArrayStorage`: no semantic marker generation/enforcement.
 
-This change adds only these attributes: existing datasets, values, metadata,
-return values, and public signatures are retained. `ArrayStorage` does not
-generate semantic markers automatically. Historical archives are not rewritten;
-the following compatibility policy governs reader acceptance.
+### RIN archives
 
-### Archive compatibility policy
+**PRE:** residue count `N`; total source frames `F`; `1 <= start <= end <= F`; source frame IDs 1-based/inclusive.
 
-**Status:** Enforced by the four readers below, using the shared internal helper
-`sawnergy._archive_schema.validate_archive_schema` on the root attribute mapping.
-The helper returns `None` for compatible markers and raises `ValueError` otherwise.
+**POST:** `B = frame_batch_size if > 0 else F`; `T = ceil((end-start+1)/B)` samples; final batch may be shorter.
 
-**Required marker contract:** All three root attributes must be present.
-`schema_name` and `producer_version` must be strings. `schema_version` must be
-an integer, excluding booleans; do not coerce strings or floats to integers.
-Missing markers, including partially marked archives, and incorrect marker
-types are rejected.
-
-**Compatibility rule:** Require the exact schema name and supported integer
-version for the reader's input:
-
-| Reader | Required `schema_name` | Supported `schema_version` |
-| --- | --- | --- |
-| `Walker.__init__` | `"rin"` | `1` |
-| `Embedder.__init__` | `"rin_walks"` | `1` |
-| `sawnergy.visual.Visualizer.__init__` | `"rin"` | `1` |
-| `sawnergy.embedding.Visualizer.__init__` | `"shallow_residue_embeddings"` | `1` |
-
-Names are matched exactly, without case normalization. Reject other schema
-names and unsupported versions, whether older or newer; do not assume backward
-or forward compatibility. `producer_version` is provenance only: its string is
-not parsed or compared with the installed package version. A different producer
-version alone is not grounds for rejection.
-
-**Legacy archives:** Reject unmarked archives with an explanation that required
-schema metadata is missing and legacy compatibility is unsupported. Identify
-missing/malformed markers in diagnostics; schema mismatches report the expected
-and encountered name/version. Do not infer schemas from dataset names, silently
-assign version `1`, or rewrite archives on opening. Supporting legacy archives
-later requires an explicitly specified migration or compatibility path.
-
-**Rejection contract:** Missing/malformed markers and incompatible schema pairs
-raise `ValueError` before dataset-name lookup, dataset reads, or shared-memory
-allocation. Close the acquired archive through its context manager on rejection;
-do not change its arrays or attributes. Valid markers permit the existing reader
-initialization to continue, including normal dataset/metadata errors. Marker
-validation does not parse `producer_version` as a release number.
-
-**Enforcement boundary:** Validate root markers before loading datasets in the
-four readers above. Essential checks must remain active under `python -O`.
-Matching markers establish a claim of format compatibility, not that the actual
-datasets or metadata satisfy the schema; their existing checks still apply.
-Keep `ArrayStorage` generic, with no semantic compatibility enforcement. This is
-an intentional rejection of previously accepted unmarked/incompatible archives;
-public import paths, signatures, and supported archive contents remain unchanged.
-
-### RIN archives (`RINBuilder.build_rin`)
-
-Let `N` be the selected molecule's residue count and `T` the number of processed
-frame batches. Public trajectory frame ranges are **1-based and inclusive**,
-with `1 <= start <= end <= total_frames`. For resolved batch size `B > 0`,
-`T = ceil((end - start + 1) / B)`; the last batch may be shorter. A nonpositive
-`frame_batch_size` is resolved to the total trajectory frame count.
-A stored timestamp therefore need not represent one original frame.
-
-| Dataset-name attribute | Default block | Shape | Dtype / meaning |
+| Name attribute | Default block | Shape | Meaning (`float32`) |
 | --- | --- | --- | --- |
-| `com_name` | `COM` | `(T, N, 3)` | `float32`; batch-averaged residue centers of mass |
-| `attractive_energies_name` | `ATTRACTIVE_energies` | `(T, N, N)` | `float32`; processed attractive magnitudes before normalization |
-| `repulsive_energies_name` | `REPULSIVE_energies` | `(T, N, N)` | `float32`; processed repulsive magnitudes before normalization |
-| `attractive_transitions_name` | `ATTRACTIVE_transitions` | `(T, N, N)` | `float32`; row-normalized attractive magnitudes |
-| `repulsive_transitions_name` | `REPULSIVE_transitions` | `(T, N, N)` | `float32`; row-normalized repulsive magnitudes |
+| `com_name` | `COM` | `(T,N,3)` | Batch-mean residue COM |
+| `attractive_energies_name` | `ATTRACTIVE_energies` | `(T,N,N)` | Processed attractive magnitudes |
+| `repulsive_energies_name` | `REPULSIVE_energies` | `(T,N,N)` | Processed repulsive magnitudes |
+| `attractive_transitions_name` | `ATTRACTIVE_transitions` | `(T,N,N)` | Row-normalized attractive magnitudes |
+| `repulsive_transitions_name` | `REPULSIVE_transitions` | `(T,N,N)` | Row-normalized repulsive magnitudes |
 
-Energy blocks depend on `keep_prenormalized_energies`; either channel may also
-be disabled. All five name attributes are written; unavailable blocks have
-value `None`, while `com_name` is always `"COM"`.
+**Processing order:**
 
-The stored quantities depend on this processing order:
+1. `A = mean_atomic_EMAP + mean_atomic_VMAP` over batch.
+2. `E = P.T @ A @ P`; `P[a,r] = 1` iff atom `a` belongs to residue `r`.
+3. Channels: `max(-E,0)`, `max(E,0)`; zero entries below each row's `prune_low_energies_frac` quantile; diagonal := 0; `M := (M+M.T)/2`.
+4. Optional magnitude storage; transitions `Q[i,j] = M[i,j]/max(sum_j M[i,j],1e-12)`; zero rows remain zero.
 
-1. Add CPPTRAJ's batch-averaged atomic electrostatic and van der Waals maps.
-2. Aggregate to residues as `E = P.T @ A @ P`, where `P[a, r]` indicates atom
-   membership. Thus `E[r, s]` is the sum of `A[a, b]` over atoms in residues
-   `r` and `s`.
-3. Split into nonnegative magnitudes `max(-E, 0)` and `max(E, 0)`; prune each
-   channel row below its `prune_low_energies_frac` quantile, zero the diagonal,
-   and symmetrize by `(M + M.T) / 2`.
-4. Optionally save the processed magnitudes. Normalize each channel row by
-   `max(row_sum, 1e-12)` when its sum is positive; leave zero rows zero.
+**INV (finite inputs):** `M` symmetric/nonnegative/zero-diagonal; `Q` nonnegative/zero-diagonal, possibly asymmetric. Row mass >= `1e-12` -> sum ≈ 1; smaller positive mass -> sum < 1.
 
-For finite inputs, prenormalized channels are symmetric, nonnegative, and have
-zero diagonals. Transitions retain nonnegativity and zero diagonals but need not
-be symmetric. Rows with prenormalized mass at least `1e-12` sum to one within
-floating-point tolerance; smaller positive masses yield sums below one because
-of the denominator floor. Unconditional row-stochasticity is not guaranteed.
+- Five discovery attributes required; `com_name="COM"`; disabled/unretained := `None`; magnitude switch: `keep_prenormalized_energies`.
+- Metadata: `time_created`, `molecule_of_interest`, `frame_range`, `frame_batch_size`, `prune_low_energies_frac`.
+- `frame_range`: supplied list or `None`, not necessarily resolved range.
+- Membership order: numeric residue/atom-ID sort; COM order: CPPTRAJ residue loop.
+- Downstream IDs: 1-based local rows; topology identities/units/source-frame arrays absent.
+- LIMIT: no raw/separate V2 feature contract.
 
-Other root metadata: `time_created`, `molecule_of_interest`, `frame_range`,
-`frame_batch_size`, and `prune_low_energies_frac`. `frame_range` retains the
-supplied value (a JSON list or `None`), rather than always recording a resolved
-range. The membership matrix sorts residue IDs and atom IDs numerically; COM
-ordering comes from CPPTRAJ's residue loop. No explicit atom/residue identity
-arrays, units, or original frame-ID array are stored. Public downstream node
-IDs are **1-based local row positions**, not a persisted topology-ID mapping.
+### Walk archives
 
-These combined, processed, batch-averaged channels do not substitute for raw
-per-frame V2 features. V2 must separately specify physical meanings, units,
-identity/order, frame correspondence, missing values, and its archive layout.
+**Definitions:** input `(T,N,N)` transitions; `L=walk_length` steps; `W=walks_per_node`; `S=int(round(W*saw_frac))`; `R=int(W)-S`.
 
-### Walk archives (`Walker.sample_walks`)
-
-`T` and `N` come from the RIN transition stack. `L` counts steps, so a path has
-`L + 1` node IDs. For `W = walks_per_node`, the per-node counts are
-`S = int(round(W * saw_frac))` and `R = int(W) - S`.
-
-| Dataset-name attribute | Default block | Shape |
+| Name attribute | Default block | Shape (`uint16`) |
 | --- | --- | --- |
-| `attractive_RWs_name` | `ATTRACTIVE_RWs` | `(T, N * R, L + 1)` |
-| `attractive_SAWs_name` | `ATTRACTIVE_SAWs` | `(T, N * S, L + 1)` |
-| `repulsive_RWs_name` | `REPULSIVE_RWs` | `(T, N * R, L + 1)` |
-| `repulsive_SAWs_name` | `REPULSIVE_SAWs` | `(T, N * S, L + 1)` |
+| `attractive_RWs_name` | `ATTRACTIVE_RWs` | `(T,N*R,L+1)` |
+| `attractive_SAWs_name` | `ATTRACTIVE_SAWs` | `(T,N*S,L+1)` |
+| `repulsive_RWs_name` | `REPULSIVE_RWs` | `(T,N*R,L+1)` |
+| `repulsive_SAWs_name` | `REPULSIVE_SAWs` | `(T,N*S,L+1)` |
 
-Blocks use `uint16` and 1-based local node IDs. Lossless storage consequently
-requires `N <= 65535`; the writer does not explicitly enforce this bound.
-Disabled channels have name attributes `None`. Enabled channels create both RW
-and SAW blocks, including `(T, 0, L + 1)` when a count is zero. Within each
-timestamp, paths are ordered by starting node, then repetition.
+**INV:** 1-based local IDs; order: timestamp/node/repetition. Enabled channel -> RW+SAW arrays, including zero counts; disabled -> discovery `None`.
 
-`walks_layout` is `"time_leading_3d"`, including time-aware walks: axis 0 then
-denotes the starting timestamp, and intermediate timestamps are not stored.
-SAW sampling can relax avoidance when remaining candidates have zero mass, so
-the archive does not guarantee distinct nodes throughout every SAW.
+- `walks_layout="time_leading_3d"`; time-aware axis 0 = starting timestamp; intermediate timestamps absent.
+- SAW avoidance may relax on zero remaining probability mass; uniqueness not guaranteed.
+- Structural metadata: four discovery attributes, `num_RWs`, `num_SAWs`, `node_count`, `walk_length`, `walks_per_node`, `time_stamp_count`.
+- Other metadata: `time_created`, `seed`, `rng_scheme="SeedSequence.spawn_per_batch_v1"`, `num_workers`, `in_parallel`, `batch_size_nodes`.
+- LIMIT: `N<=65535` for lossless IDs (unchecked); reproducibility depends on seed/batching; no serial/parallel equality. Time-awareness/stickiness/source identities absent.
 
-Structural metadata: the four dataset-name attributes, `num_RWs`, `num_SAWs`,
-`node_count`, `walk_length`, `walks_per_node`, and `time_stamp_count`.
-Other metadata: `time_created`, `seed`, `rng_scheme`
-(`"SeedSequence.spawn_per_batch_v1"`), `num_workers`, `in_parallel`, and
-`batch_size_nodes`. Reproducibility depends on batching configuration as well as
-seed; serial/parallel equality is not promised. Time-awareness, stickiness, and
-original trajectory identities are not recorded by this writer.
+### Shallow embedding archives
 
-### Shallow embedding archives (`Embedder.embed_all`)
+**POST:** `frame_embeddings_name="FRAME_EMBEDDINGS"`; `(T,N,D)`, `float32`; source timestamp/node order; `embedding_kind ∈ {in,out,avg}`; `objective ∈ {sg,sgns}`.
 
-This is an existing V1 format, not a V2 learning specification.
-`frame_embeddings_name = "FRAME_EMBEDDINGS"` resolves a `float32` block shaped
-`(T, N, D)`, preserving walk timestamp/local node order. `embedding_kind` is
-`in`, `out`, or `avg`; `objective` is `sg` or `sgns`. Each model after the first
-is warm-started from the preceding frame's input/output weights; `embed_all`
-does not automatically call `align_frames`.
+**INV:** frame models after first warm-start from preceding input/output weights; no automatic `align_frames`.
 
-Root metadata written by this producer:
+| Metadata category | Keys |
+| --- | --- |
+| Layout | `frame_embeddings_name`, `time_stamp_count`, `node_count`, `embedding_dim` |
+| Provenance | `source_WALKS_path`, `walk_length`, `num_RWs`, `num_SAWs`, four source walk discovery attributes |
+| Training | `objective`, `model_base`, `embedding_kind`, `num_epochs`, `batch_size`, `window_size`, `alpha`, `negative_sampling`, `num_negative_samples`, `lr_step_per_batch`, `shuffle_data`, `device_hint`, `model_kwargs_repr`, `RIN_type`, `using` |
+| Reproducibility/storage | `master_seed`, `per_frame_seeds`, `arrays_per_chunk`, `compression_level`, `created_at` |
 
-- Layout: `frame_embeddings_name`, `time_stamp_count`, `node_count`, `embedding_dim`.
-- Provenance: `source_WALKS_path`, `walk_length`, `num_RWs`, `num_SAWs`, and the
-  four source walk dataset-name attributes.
-- Training: `objective`, `model_base`, `embedding_kind`, `num_epochs`,
-  `batch_size`, `window_size`, `alpha`, `negative_sampling`,
-  `num_negative_samples`, `lr_step_per_batch`, `shuffle_data`, `device_hint`,
-  `model_kwargs_repr`, `RIN_type`, and `using`.
-- Reproducibility/storage: `master_seed`, `per_frame_seeds`, `arrays_per_chunk`,
-  `compression_level`, and `created_at`.
-
-`device_hint` is empty when unspecified; `model_kwargs_repr` is provenance text,
-not an executable serialized configuration. Archive/seed/warm-start tests do not
-establish biological meaning or cross-frame alignment.
+- Defaults/limits: `device_hint=""` if unspecified; `model_kwargs_repr` non-executable; no biological/alignment guarantee; V2 learning excluded.
 
 ### RIN visualizer initialization
 
-For a compatible RIN archive with the required datasets, constructing
-`sawnergy.visual.Visualizer(..., show=False)` creates its scatter and both empty
-3D edge collections successfully. Register empty edge artists without requesting
-data-limit autoscaling; frame rendering sets view limits from COM coordinates.
-Both artists remain attached to the axes and can subsequently receive segments,
-including empty segments. Preserve public signatures and archive interpretation.
+**PRE:** compatible RIN/datasets. **POST:** `show=False` -> scatter + two attached empty 3D edge collections, no empty-data autoscaling; assignment/clearing supported; frame limits from COMs; signatures/interpretation unchanged.
 
-## Reusable CPPTRAJ components (`rin_util.py`)
+## Reusable CPPTRAJ contracts (`rin_util.py`)
 
 ### `CpptrajScript`
 
-**Invariant:** an ordered tuple of command strings. The frozen dataclass prevents
-field reassignment; composition returns new objects without mutating operands.
-Constructor annotations do not enforce tuple/string contents.
+**INV:** ordered string tuple; frozen fields; composition preserves operands; constructor types unchecked.
 
-| Operation | Preconditions | Postconditions / failures |
+| Operation | PRE | POST / RAISES |
 | --- | --- | --- |
-| `from_cmd(cmd)` | String command | New script with `commands == (cmd,)` |
-| `script + other` | String or `CpptrajScript` | Append one command or concatenate command tuples in order; unsupported operands return `NotImplemented` from `__add__`, normally resulting in `TypeError` |
-| `script > target` | For a filename, nonempty script and CPPTRAJ-compatible target string | Append `" out <target>"` to the last command in a new script; a script target instead means concatenation. Empty script plus filename raises `IndexError` |
-| `render()` | Valid command lines / CPPTRAJ syntax | Join with newlines and a trailing newline; append `run` only if the exact string `"run"` is absent from `commands` |
+| `from_cmd(cmd)` | String | `commands == (cmd,)` |
+| `+ other` (`__add__`) | String/script | Ordered append/concatenation; unsupported operand -> `NotImplemented` / operator `TypeError` |
+| `> target` | Script, or filename with nonempty commands | Script concatenation, or append `" out <target>"` to final command; empty+filename -> `IndexError` |
+| `render()` | Valid CPPTRAJ lines/arguments | Newline join + trailing newline; append `run` iff exact `"run"` absent; empty -> `"run\n"` |
 
-An empty script renders as `"run\n"`. Rendering does not add `quit`, parse
-commands, normalize case/whitespace for `run`, or quote paths/masks. Callers
-supply complete lines and valid CPPTRAJ arguments.
+**LIMIT:** no `quit`, syntax parsing, case/whitespace normalization, path/mask quoting.
 
-`PAIRWISE_STDOUT` supplies `run` followed by
-`printdata PW[EMAP] square2d noheader` and
-`printdata PW[VMAP] square2d noheader`. `COM_STDOUT(mol_id)` supplies `run`, the
-residue dataset-coordinate loop, and `printdata COMX* COMY* COMZ*`. These require
-matching upstream dataset names and CPPTRAJ syntax. They neither parse nor
-validate output and are not generic V2 feature extractors.
+| Preset | Required datasets/output |
+| --- | --- |
+| `PAIRWISE_STDOUT` | `run`; `printdata PW[EMAP] square2d noheader`; same for `PW[VMAP]` |
+| `COM_STDOUT(mol_id)` | `run`; residue dataset-coordinate loop; `printdata COMX* COMY* COMZ*` |
+
+**PRE:** matching upstream datasets/syntax. **LIMIT:** presets neither parse/validate output nor implement generic V2 extraction.
 
 ### `locate_cpptraj(explicit=None, verify=True) -> str`
 
-**Preconditions:** `explicit` is `None` or a `Path` to an executable candidate;
-the implementation calls `.resolve()` on it before candidate construction.
-An environment directory is not an executable path: supply its `bin/cpptraj`.
-
-**Postconditions:** Return the resolved absolute path of the first existing,
-executable candidate that, with verification enabled, returns code 0 or 1 for
-`cpptraj -h`. Search order: explicit path, `CPPTRAJ`, PATH searches for
-`cpptraj` and `cpptraj.exe`, `$AMBERHOME/bin/cpptraj`, `$CONDA_PREFIX/bin/cpptraj`.
-Equal `Path` candidates are deduplicated in first-seen order before resolution;
-aliases to the same executable need not be deduplicated. An invalid explicit
-candidate permits fallback.
-
-**Failures/limits:** Verification has a 15-second timeout per candidate;
-timeouts skip candidates, despite the docstring listing `TimeoutExpired` as a
-raised error. Exhaustion raises `CpptrajNotFound` (a `RuntimeError` subclass)
-listing candidates. Other launch errors propagate. A help probe does not verify
-feature support or numerical-output compatibility.
+- PRE: `explicit=None` or executable `Path` (`.resolve()`); not an environment directory.
+- Search order: explicit, `CPPTRAJ`, PATH `cpptraj`, PATH `cpptraj.exe`, `$AMBERHOME/bin/cpptraj`, `$CONDA_PREFIX/bin/cpptraj`.
+- Deduplicate equal Paths before resolution, preserving order; aliases may repeat; invalid explicit permits fallback.
+- POST: resolved absolute string of first existing/executable candidate; if verifying, `cpptraj -h` return code ∈ `{0,1}`.
+- RAISES: exhausted candidates -> `CpptrajNotFound(RuntimeError)`, listing candidates; other launch errors propagate.
+- LIMIT: 15-second timeout -> skip (docstring differs); no feature/numerical-compatibility guarantee.
 
 ### `run_cpptraj(cpptraj, script=None, argv=None, timeout=None, *, env=None)`
 
-**Preconditions:** Runnable executable; argument strings in `argv` if supplied;
-text `script` if supplied; `timeout=None` or a positive subprocess time limit.
-Script text contains complete CPPTRAJ commands on separate lines; a final
-newline is optional.
-`env=None` inherits the environment; a supplied dictionary is a complete child
-environment with string keys/values. Use `create_updated_subprocess_env` for
-inherited overrides. Script and argv may both be supplied.
+**PRE:** executable; string argv; complete script lines (final newline optional); timeout positive/`None`; script+argv permitted. `env=None` inherits; string dictionary replaces environment.
 
-**Postconditions:** Run `[cpptraj] + (argv or [])` without a shell, capture
-stdout/stderr as text, and return stdout unchanged on exit code zero. Send the
-script on stdin. For termination detection, strip `#` comments from each line,
-ignore blank/comment-only lines, and compare the last remaining line with the
-standalone command `quit`, ignoring surrounding whitespace and case. If it is
-already terminated, forward the original script unchanged, including comments
-and whitespace. Otherwise append `quit\n` on its own line, inserting a separating
-newline when the nonempty script does not end in `\n`. An empty script becomes
-`"quit\n"`; with `script=None`, stdin input remains `None`. A filename, dataset
-name, command argument, or comment ending in `quit` is not a terminator. The
-caller's argument list, environment, and script are not mutated.
+**POST:** execute `[cpptraj]+(argv or [])`, no shell; capture text stdout/stderr; return stdout; inputs unchanged.
 
-**Failures/limits:** Nonzero exit raises `subprocess.CalledProcessError` with
-captured output; timeout and launch errors propagate. Successful exit does not
-validate datasets or physical values. Termination detection is a line-based
-check, not a general parser for multiline/continued commands or quoted script
-blocks. Callers remain responsible for valid CPPTRAJ syntax. Tests check exact
-stdin, argument/environment forwarding, and preservation of subprocess failures.
+| Input | stdin |
+| --- | --- |
+| `script=None` | `None` |
+| Empty script | `"quit\n"` |
+| Last effective line = standalone `quit`, case-insensitive | Original script unchanged |
+| Otherwise | `script + sep + "quit\n"`; `sep="\n"` iff nonempty and no final LF |
+
+**Effective line:** strip `#` comment and surrounding whitespace; discard blanks. Filename/argument/comment suffix `quit` is not termination.
+
+**RAISES:** nonzero -> `subprocess.CalledProcessError` with output; timeout/launch errors propagate. **LIMIT:** line-based only; no continued/quoted-block parsing or output/physics validation.
 
 ### `CpptrajMaskParser.hierarchize_molecular_composition(mol_compositions_file)`
 
-**Preconditions:** Readable UTF-8 table with bracketed `[Mnum]`, `[Rnum]`, and
-`[AtNum]` labels in its first line, and integer fields at those positions in
-every nonblank data row. Labels should be unique; duplicate labels are not
-rejected (the last occurrence wins).
+- PRE: readable UTF-8 table; first-line `[Mnum]`, `[Rnum]`, `[AtNum]`; integer fields per nonblank row. Duplicate header labels: last wins.
+- POST: `{molecule_id: {residue_id: set(atom_ids)}}`; IDs unchanged; blank rows ignored; duplicate rows collapse; dictionaries retain first-appearance order; sets unordered; header-only -> `{}`.
+- RAISES: empty file -> `RuntimeError`; missing columns, short rows, nonintegers -> `ValueError`; file errors propagate.
+- LIMIT: no sorting/renumbering, positivity/ownership/correspondence validation. V2 establishes identity invariants separately.
+- Legacy `com_parser`: exactly seven whitespace fields; first four -> CSV; no numeric validation (docstring weaker than implementation).
 
-**Postconditions:** Return `{molecule_id: {residue_id: set(atom_ids)}}` using
-unchanged integer IDs. Ignore blank data lines; repeated rows collapse through
-set insertion. Dictionary insertion order follows first appearance; atom sets
-provide no ordering. A header-only file returns `{}`. Parsing does not sort,
-renumber, validate positive IDs, enforce unique atom ownership, or check
-correspondence with other arrays. V2 must establish these properties explicitly
-where it constructs identity/order mappings.
-
-**Failures:** Empty file raises `RuntimeError`; missing required columns,
-insufficient row fields, and noninteger IDs raise `ValueError`. File errors
-propagate. The legacy `com_parser` is not needed for this reuse boundary: it
-requires exactly seven whitespace-separated fields and emits the first four
-as CSV without numerical validation. Its docstring's weaker field-count claim
-does not describe its implementation.
-
-## Reusable storage components (`sawnergy_util.py`)
+## Storage contracts (`sawnergy_util.py`)
 
 ### `ArrayStorage(pth, mode)` and lifetime
 
-**Preconditions:** String or `Path` and one of `r`, `r+`, `a`, `w`, or `w-`.
-Unsupported modes raise `ValueError` before acquiring a store. Exact lowercase
-suffix `.zip` selects an existing ZIP and requires `mode="r"`. Otherwise the
-suffix is replaced with `.zarr`; stored paths are resolved.
+**PRE:** `pth: str or Path`; mode ∈ `{r,r+,a,w,w-}`. **POST:** expose resolved `store_path`, `store`, group `root`, `mode`; exact `.zip` -> read-only ZIP; otherwise suffix := `.zarr`.
 
-| Local-store mode | Opening behavior |
+| Local mode | Contract |
 | --- | --- |
-| `r` | Open an existing group read-only; do not create directories, initialize attributes, or otherwise write metadata |
-| `r+` | Open an existing group for updates; do not create a missing store/group |
-| `a` | Open an existing group or create a missing group |
-| `w` | Create a group, replacing existing contents |
-| `w-` | Create a group; fail if the store already contains data |
+| `r` | Existing group; no directory/attribute writes |
+| `r+` | Existing group; updates allowed; no creation |
+| `a` | Open/create group |
+| `w` | Create group; replace contents |
+| `w-` | Create group; fail on existing stored data |
 
-Writable opens initialize missing storage metadata mappings without replacing
-existing mappings or unrelated attributes. Read-only opens accept groups missing
-these mappings and leave their attributes untouched; missing attributes still
-raise `KeyError` through `get_attr`. `ArrayStorage` does not add semantic schema
-validation or decide archive compatibility here.
-
-**Postconditions/invariants:** Expose `root`, `store`, `store_path`, and `mode`;
-root is a group. Blocks created through `write` retain fixed item shape, dtype,
-and axis-0 chunk length recorded in the three storage mappings. Direct root
-mutation bypasses helper invariants. Storage does not enforce finite numbers,
-physical units, identity maps, or agreement of semantic metadata with arrays.
-
-**Checks/limits:** Invalid path types/non-read ZIP modes raise `ValueError`;
-missing ZIP files and missing local stores in `r`/`r+` raise `FileNotFoundError`.
-A root array encountered in `r`, `r+`, or `a` raises `TypeError`; it is not
-converted to a group. Opening errors and metadata-initialization errors propagate
-without retrying in another mode. If initialization fails after acquiring a
-store, attempt `close()` before propagating the original exception, including
-interruption. Closing is best-effort: ordinary closing errors are logged and do
-not replace the initialization error. Zarr opening modes are not transactional;
-for example, `w` may already have cleared old data before a subsequent failure.
-`close()` suppresses store-closing errors. Context exit closes the store without
-suppressing the body exception. No operation-after-close guarantee is specified.
-
-**Local dependency limitation:** With Zarr 3.1.2, reopening a valid Zarr v3 group
-under `python -O` fails inside Zarr: `GroupMetadata.from_dict` removes `node_type`
-inside an `assert`, whose side effect is skipped under optimization. SAWNERGY's
-explicit constructor checks remain active, but this dependency prevents complete
-optimized-mode archive workflows in that environment. Do not bypass or suppress
-the resulting metadata error; dependency compatibility requires separate work.
+- Writable: initialize missing maps only. Read-only: missing maps accepted, attributes unchanged; missing `get_attr` -> `KeyError`.
+- INV: fixed item shape/dtype/chunk length per helper-written block. Direct root mutation bypasses invariants; no numeric/physical/identity/semantic validation.
+- RAISES: invalid path/mode/writable ZIP -> `ValueError` before acquisition; missing ZIP/local `r/r+` -> `FileNotFoundError`; array root (`r/r+/a`) -> `TypeError`; opening/metadata errors propagate without fallback.
+- Failure after acquisition -> close attempt; original error/interruption preserved against ordinary closing errors (logged/suppressed).
+- `close()`: best effort; context exit preserves body failure; post-close behavior unspecified.
+- LIMIT: nontransactional modes (`w` may clear before failure). Zarr 3.1.2: side-effecting `assert` in `GroupMetadata.from_dict` retains `node_type` under `-O`, breaking reopening; no error suppression/bypass.
 
 ### Blocks and attributes
 
-| Public operation | Preconditions | Successful postconditions / explicit failures |
+| Operation | PRE | POST / RAISES |
 | --- | --- | --- |
-| `write(these_arrays, to_block_named, *, arrays_per_chunk=None)` | Writable store; finite homogeneous batch or stacked ndarray `(K, *item_shape)`; stable shape/dtype across appends; positive integer chunk length if supplied | Append `K` items in order, retaining old rows; return `None`. Empty input creates no block. Read mode raises `RuntimeError`; within-batch shape/dtype differences raise `ValueError`; cached shape/dtype/chunk conflicts raise `RuntimeError` |
-| `read(from_block_named, ids=None)` | Existing array with an axis 0; valid axis-0 integer, slice, or 1D integer index collection | Detached NumPy copy with stored dtype. `None` reads all; an integer drops axis 0; slices/collections retain it. Collections use orthogonal indexing after NumPy index coercion. Missing name raises `KeyError`; non-array member raises `TypeError`; selection errors propagate |
-| `block_iter(from_block_named, *, step=1)` | Existing array; positive integer step | Detached copies of consecutive slices, at most `step` rows each, covering axis 0 in order, with dtype and trailing dimensions preserved. Zero/negative steps raise `ValueError("step must be positive")`, including for empty/scalar arrays. Missing/non-array members raise `KeyError`/`TypeError`; scalar arrays are yielded once |
-| `list_blocks()` | Open store | Sorted names of immediate root arrays; no recursive subgroup listing |
-| `delete_block(named)` | Writable store; existing block | Remove member and entries from all three storage mappings; read mode raises `RuntimeError`, missing name `KeyError` |
-| `add_attr(key, val)` | Writable store; string key; JSON-compatible value after conversions below | Set/replace root attribute; read mode raises `RuntimeError`; unsupported values may raise serialization errors |
-| `get_attr(key)` | Existing attribute | Return stored JSON-compatible value; missing key raises `KeyError` |
+| `write(these_arrays, to_block_named, *, arrays_per_chunk=None)` | Writable; finite homogeneous batch/stack; fixed shape/dtype; supplied chunk positive integer | Ordered append `(K,*item_shape)`; old rows retained; `None`; empty -> no mutation/chunk validation |
+| `read(from_block_named, ids=None)` | Axis-0 array; integer/slice/1D integer indices | Detached ndarray, stored dtype; `None`: all; int: drop axis; slice/collection: retain axis/order; collections: NumPy-coerced orthogonal indices |
+| `block_iter(from_block_named, *, step=1)` | Array; positive integer step | Ordered detached slices covering axis 0, length <= step; empty -> none; scalar -> one scalar ndarray |
+| `list_blocks()` | Open store | Sorted immediate root-array names; no subgroup recursion |
+| `delete_block(named)` | Writable existing member | Remove member and all three metadata entries |
+| `add_attr(key,val)` | Writable; string key; JSON-compatible converted value | Set/replace root attribute |
+| `get_attr(key)` | Existing attribute | Stored JSON-compatible value |
 
-Attribute conversion is top-level: NumPy scalars via `.item()`, arrays via
-`.tolist()`, sets/tuples to lists, dates/datetimes to ISO strings. Nested
-non-JSON objects are not recursively converted. Original tuple/set types are
-not restored; set order is not guaranteed. Callers must not overwrite storage
-mappings with inconsistent metadata.
+**RAISES:** read-mode mutation (even empty) -> `RuntimeError`; missing member/attribute -> `KeyError`; non-array read/iteration -> `TypeError`; selection/serialization errors propagate. `step<=0` -> `ValueError("step must be positive")` on iteration, even empty/scalar.
 
-First-write omission of `arrays_per_chunk` defaults to 10 with `RuntimeWarning`;
-later omission reuses the stored value. Empty writes in read mode still raise.
-For nonempty writes, validate every item's shape/dtype and materialize the batch
-before creating a block or changing metadata. The materialized shape must be
-`(len(these_arrays), *item_shape)`; a custom conversion cannot silently add/drop
-items or change their shape. Resolve cached shape/dtype/chunk
-settings without mutation, and check an existing member's array type, axis-0
-presence, item shape, dtype, and axis-0 chunk length before filling missing
-metadata. Cached conflicts retain `RuntimeError`; incompatible existing member
-type/shape/dtype raises `TypeError`, and an incompatible existing chunk length
-raises `RuntimeError`. Resolved chunk lengths must be positive.
+**Attribute conversion:** top-level only: NumPy scalar `.item()`, ndarray `.tolist()`, tuple/set -> list, date/datetime -> ISO. No recursive conversion/type restoration; unordered sets; maps remain consistent.
 
-**Failure postcondition:** Rejected shape, dtype, or chunk arguments, batch
-conversion errors, and warnings promoted to errors leave array contents, shapes,
-members, and metadata unchanged. In particular, validation cannot leave a new
-empty block or partially filled metadata mappings. Empty input remains a no-op
-without chunk validation or block creation.
+**Write validation order:** all item shapes/dtypes -> materialize exact `(len(these_arrays),*item_shape)` -> resolve cached settings -> validate existing array/type/axis/item shape/dtype/chunk -> create/fill metadata -> resize/assign.
 
-After validation succeeds, create any new block and record its metadata, then
-resize and assign data. These storage mutations are **not transactional**: an
-I/O/codec failure during creation, metadata persistence, resize, or assignment
-may leave partial state. This patch does not add rollback for such failures.
-
-`block_iter` validates when iteration begins, as with other generator errors.
-For positive steps, empty arrays yield no chunks; scalar arrays yield one scalar
-NumPy array. Modifying a yielded chunk does not modify storage. Writes and appends
-preserve zero-length item dimensions in array shapes and metadata while keeping
-chunk dimensions positive, as described in the common archive layout above.
+| Write condition | Result |
+| --- | --- |
+| First chunk omitted | `10` + `RuntimeWarning`; later reuse cache |
+| Resolved chunk <= 0 | `ValueError` |
+| Within-batch shape/dtype mismatch; converted shape mismatch | `ValueError` |
+| Cached shape/dtype/chunk conflict; existing chunk conflict | `RuntimeError` |
+| Existing member type/axis/item-shape/dtype conflict | `TypeError` |
+| Validation/conversion/promoted-warning failure | Contents/shapes/members/metadata unchanged; no partial metadata/new block |
+| I/O/codec failure after validation | May leave partial creation/metadata/resize/assignment; no rollback |
 
 ### `compress(into=None, *, compression_level)`
 
-**Preconditions:** Open store; for a local source, writable destination and a
-level convertible by `int` to `[0, 9]`. For predictable reuse supply an integer
-level and explicit `.zip` destination. Supported layout is immediate arrays,
-not nested groups. Each source array is materialized in memory when copied.
-
-**Postconditions:** Copy root attributes and immediate arrays with their values,
-shapes, dtypes, chunks, and attributes to a ZIP; return its path string. Use
-Blosc Zstd/shuffle at the requested level (0 still uses a Blosc container).
-Source remains available. `into=None` uses the source path with suffix `.zip`;
-explicit `.zip` suffix matching is case-insensitive; otherwise `into` is a
-directory. Explicit destination parents are created as needed.
-
-For a ZIP source, return its existing path without copying or validating level;
-`into` is ignored. For a local source, build a temporary ZIP file in the
-destination's directory and close it successfully before atomically replacing
-the destination. Successful calls still replace existing output. Readers see
-either the previous complete file or the replacement, rather than a partially
-written destination.
-
-Invalid levels raise conversion errors or `ValueError`; creation, copying,
-closing, and replacement errors propagate. Failures before successful replacement
-leave an existing destination byte-for-byte unchanged, or leave no destination
-if none existed. Attempt to remove temporary output on failure, including
-interruption; ordinary removal errors are logged without replacing the original
-exception. Cleanup cannot be guaranteed against filesystem errors. Atomic
-replacement does not promise durability across power loss or preserve ZIP bytes,
-original codec settings, or destination filesystem metadata.
+- PRE (local): open store, writable destination, `int(level) ∈ [0,9]`; immediate arrays; copy memory = full source array.
+- Destination: `None` -> source `.zip`; explicit case-insensitive `.zip` -> file; otherwise directory/source ZIP name. Create explicit parents.
+- POST: preserve common round-trip fields; Blosc Zstd/shuffle at level (`0` still Blosc); return path string; source usable.
+- Publication: temporary sibling ZIP -> copy -> successful close -> atomic replacement. Existing destinations replaced on success only.
+- Pre-replacement failure: preserve destination bytes/absence; propagate creation/copy/close/replace/conversion errors; invalid range -> `ValueError`; attempt unlink even on interruption; ordinary removal errors logged, original preserved.
+- ZIP source: return existing path; ignore destination/level, no validation/copy.
+- LIMIT: no nested groups, power-loss durability, byte identity, codec/filesystem-metadata preservation, guaranteed cleanup.
 
 ### `ArrayStorage.compress_and_cleanup(output_pth, compression_level)`
 
-**Preconditions:** Same destination/level obligations as compression.
-**Normal postconditions:** Yield one writable temporary storage; compress only
-after the body completes successfully, then close it and remove its temporary
-directory. The public signature and successful archive layout are unchanged.
+**PRE:** compression contract. **POST:** yield temporary writable store; successful body -> compress -> close -> cleanup.
 
-**Failure postconditions:** A body exception (including interruption) skips
-compression, leaving the destination untouched. Attempt store closure on both
-body and compression failure, and temporary-directory cleanup on every exit,
-including storage-construction failure. Body/compression exceptions propagate;
-cleanup errors are logged rather than replacing an active error. With no active
-error, a temporary-directory cleanup failure propagates. `close()` retains its
-existing best-effort behavior (ordinary store-closing errors are logged).
-
-Archive publication uses the safe replacement behavior of `compress` above.
-Cleanup is attempted, not guaranteed against filesystem failures.
-
-## Other reusable helpers (`sawnergy_util.py`)
-
-### `elementwise_processor(in_parallel=False, Executor=None, max_workers=None, capture_output=True)`
-
-**Preconditions:** Runner receives a finite iterable and callable with matching
-extra arguments. Parallel execution requires an executor class and valid worker
-count (use `None` or a positive integer). Process execution also requires
-picklable callables/arguments and a main-entry guard. Callers manage shared
-mutable state.
-
-**Postconditions:** On success, apply `function(item, *args, **kwargs)` once to
-each item. Capture mode returns a list in **input order**, including `[]` for
-empty input; otherwise wait for execution and return `None`. Parallel side
-effects need not follow input order. Missing executor raises `ValueError` upon
-runner invocation, not factory creation. `None` or a falsy worker value resolves
-to `os.cpu_count() or 1`.
-
-Exceptions propagate in both capture modes. Already-started side effects are
-not rolled back; submitted work need not stop immediately. Parallel mode submits
-all input items before collecting results, so this is not bounded streaming.
-`is_main_process()` means no parent process and process name `"MainProcess"`;
-it does not itself establish that application code has a main-entry guard.
-
-### `batches_of(iterable, batch_size=-1, *, out_as=list, ranges=False, inclusive_end=False)`
-
-**Preconditions:** Finite iterable, integer batch size, and constructor `out_as`
-accepting a batch or index pair.
-
-**Postconditions:** Positive size yields consecutive nonempty batches of at most
-that size, preserving each item once and in order. Nonpositive size yields one
-batch for nonempty input. Range mode returns **0-based consumption positions**,
-not input values: `(start, stop_exclusive)` or `(start, end_inclusive)`, wrapped
-with `out_as`. Thus `batches_of([10, 20, 30], 2, ranges=True)` yields `[0, 2]`,
-`[2, 3]` because the default wrapper is `list`.
-`inclusive_end` does not affect data batches.
-
-**Empty-input postcondition:** Empty sequences, NumPy arrays, iterators, and
-generators yield nothing for every valid batch size, including the default,
-zero, and negative sizes. This applies to data batches and exclusive/inclusive
-ranges. There is no empty batch, fabricated range, zero-step error, or call to
-`out_as` for empty input.
-
-Sliceable inputs are sliced; generic inputs are consumed into lists, including
-in range mode. Nonpositive sizes provide no bounded-memory guarantee. These index
-ranges are not CPPTRAJ's 1-based inclusive frame ranges. The signature, default
-wrapper, and nonempty batching/range conventions are preserved.
-
-### Small file/environment/pipeline helpers
-
-| Helper | Preconditions | Postconditions / limits |
-| --- | --- | --- |
-| `read_lines(file_path, skip_header=True)` | Readable UTF-8 file | Lines retaining newline characters (standard text-mode universal newline conversion applies), optionally removing exactly the first; empty file gives `[]`; file/decoding errors propagate |
-| `temporary_file(prefix, suffix)` | Valid filename components; writable system temporary directory | `Path` to a new empty file with its handle already closed; caller owns deletion, including on failure |
-| `create_updated_subprocess_env(**var_vals)` | String environment names; values convertible to strings (path-like values must produce strings for the annotated result) | Copy `os.environ`; remove keys with `None`; booleans become `"TRUE"`/`"FALSE"`, path-like values use `os.fspath`, others `str`; parent environment and omitted variables remain unchanged |
-| `compose_steps(*steps)` | Each step is `(callable, kwargs_or_None)`; kwargs convertible by `dict`; compatible result/input types | Unary pipeline in supplied order; no steps returns input object unchanged; shallow-copy kwargs per call; propagate conversion/step errors; input mutation is allowed and a returned `None` becomes the next input |
-| `current_time()` | None | Local wall-clock text `%Y-%m-%d_%H%M%S`; no timezone, uniqueness, or monotonicity guarantee |
-
-`compose_steps` checks tuple length/callability at construction (`TypeError`),
-but kwargs only at invocation. Copies are shallow: nested mutable values remain
-shared. Legacy memory-based file/directory chunking, private V1 matrix/walk
-internals, and neural backend implementations are outside this reuse scope.
-
-## V2 feature interfaces and representation contracts (design draft)
-
-This section precedes implementation and tests. Signatures and names below are
-proposed V2 interfaces, not changes to existing V1 public APIs. The agreed design
-uses batch feature callables, incremental archive writing, and explicit feature
-dependency registration. Output samples correspond to explicit source-frame
-windows (tiles); a single-frame sample is a window containing one frame.
-Computational batching is separate from the declared window statistic.
-
-Keep `FeatureExtractor` and its execution context in `feature_extractor.py`;
-keep feature specifications, frame representations, and frame/trajectory
-validation in `reprs.py`. No base-class hierarchy or feature subclasses are
-required: a feature is a callable plus its specification.
-
-### Shared extraction context and selection
-
-`selection` maps CPPTRAJ molecule IDs to lists of selected topology residue IDs,
-for example `{1: [10, 12, 15], 3: [40, 45]}`. Proposed input rules:
-
-- Selection is nonempty; each molecule has a nonempty list of distinct residues.
-  IDs are positive integers, excluding booleans. Unknown IDs or residues assigned
-  to the wrong molecule raise `ValueError`; invalid input types raise `TypeError`.
-- Preserve mapping iteration order, then each residue list's order. Flatten to
-  an immutable tuple of `(molecule_id, residue_id)` pairs. For the example, array
-  positions correspond to `((1, 10), (1, 12), (1, 15), (3, 40), (3, 45))`.
-- Resolve all atoms of each selected residue from the topology. Keep one sorted
-  tuple of atom IDs per residue in that same residue order. Validate membership;
-  do not silently discard unavailable residues or select only some of their atoms.
-- Include cross-molecule residue pairs in pairwise feature arrays. Preserve the
-  original topology IDs separately from zero-based NumPy array positions.
-
-The extractor establishes this mapping once, independently of feature outputs,
-and uses it to construct its contracts. Keep the existing
-`CpptrajMaskParser.hierarchize_molecular_composition` signature and behavior;
-selection handling belongs in a new helper or method.
-
-`ExtractionContext` is a small immutable record supplied to feature callables:
-
-| Field | Meaning |
+| Exit | Required behavior |
 | --- | --- |
-| `cpptraj` | Resolved executable path |
+| Body failure/interruption | No compression/publication; destination unchanged; close/cleanup attempted; original failure |
+| Compression failure | Close/cleanup attempted; original failure |
+| Construction failure | No yield; directory cleanup attempted; original failure |
+| Cleanup fails during active failure | Log ordinary cleanup error; preserve active failure |
+| Cleanup fails after success | Propagate cleanup error |
+
+**LIMIT:** `close()` remains best effort; cleanup attempted, not guaranteed.
+
+## Other reusable helpers
+
+| Interface | PRE | POST / RAISES / LIMIT |
+| --- | --- | --- |
+| `elementwise_processor(in_parallel=False, Executor=None, max_workers=None, capture_output=True)` | Finite input; compatible callable/args; parallel executor/workers; process picklability + main guard | Once/item; captured: ordered list (`[]` empty); uncaptured: await, return `None`; propagate errors |
+| `batches_of(iterable, batch_size=-1, *, out_as=list, ranges=False, inclusive_end=False)` | Finite iterable; integer size; batch/pair wrapper | Consecutive nonempty batches; each item once/in order; positive size bounds length; nonpositive -> one batch; empty -> no yields/wrapper calls |
+| `read_lines(file_path, skip_header=True)` | Readable UTF-8 | Retain newline characters with universal-newline conversion; optionally remove exactly first line; empty -> `[]`; file/decoding errors propagate |
+| `temporary_file(prefix,suffix)` | Valid components; writable system temp directory | New empty file, closed handle, `Path`; caller owns deletion, including failures |
+| `create_updated_subprocess_env(**var_vals)` | String names/convertible values; path-like returns string | Copy `os.environ`; `None`: remove; bool: `TRUE/FALSE`; path-like: `os.fspath`; else: `str`; parent/omitted unchanged |
+| `compose_steps(*steps)` | `(callable,kwargs_or_None)` tuples; dict-convertible kwargs; compatible step values | Unary ordered composition; identity for zero steps; shallow kwargs copy per call; `None` output forwarded; errors propagate; input mutation allowed |
+| `current_time()` | None | Local `%Y-%m-%d_%H%M%S`; no timezone/uniqueness/monotonicity guarantee |
+| `is_main_process()` | None | No parent AND process name `MainProcess`; not proof of main guard |
+
+- Processor: missing executor -> invocation-time `ValueError`; workers `None`/positive (falsy -> `os.cpu_count() or 1`); submit-all then collect; side-effect order/cancellation/rollback unspecified; caller owns shared state.
+- Ranges: 0-based consumption `(start,stop_exclusive)`/`(start,end_inclusive)`, wrapped by `out_as`; flag ignored for data; not CPPTRAJ IDs. Slice sequences; materialize generic input, including ranges; nonpositive size unbounded-memory.
+- Composition: tuple length/callability checked at construction (`TypeError`); kwargs conversion at invocation; nested mutable kwargs remain shared.
+
+## V2 extraction contracts — design draft
+
+### Feature decorator — implemented contract
+
+`feature(*, kind: str, scope: str)` decorates subclass methods `(self, ctx)`.
+
+**PRE:** `kind` in `{"pairwise", "global"}`; `scope` in `{"window", "trajectory"}`.
+
+**RAISES:** invalid kind/scope -> `ValueError`, including under `python -O`.
+
+**POST:** return the original method with `feature_kind == kind` and `feature_scope == scope`.
+Do not execute or wrap the method; preserve signature, instance binding, return values, and exceptions.
+No global registration. Shape/dtype/statistic/dependency contracts remain pending.
+
+The remaining draft below predates the subclassing plan in `V2_migration.md` and awaits revision.
+
+| Ownership | Proposed components |
+| --- | --- |
+| `feature_extractor.py` | Instantiable/configurable `FeatureExtractor`; `ExtractionContext` |
+| `reprs.py` | `FeatureSpec`; `FrameRepresentation`; frame/trajectory contracts |
+| Feature | Callable + specification; no required subclass/decorator hierarchy |
+
+### Selection and context
+
+**PRE:** nonempty `selection: molecule_id -> nonempty list[residue_id]`; positive nonboolean integers; distinct residues/molecule; valid topology membership.
+
+**RAISES:** invalid types -> `TypeError`; unknown/wrong-molecule IDs -> `ValueError`.
+
+**POST/INV:**
+
+- `residue_ids`: immutable `(molecule_id,residue_id)` tuples, flattened mapping/list order.
+- `atom_ids`: sorted complete atom tuples per residue, aligned with `residue_ids`; no discards/partial residues.
+- Pairwise: include cross-molecule pairs; topology IDs != zero-based positions.
+- Selection: resolve once, independently of outputs; new helper/method; parser API unchanged.
+
+| `ExtractionContext` field | Contract |
+| --- | --- |
+| `cpptraj` | Resolved executable |
 | `topology_file`, `trajectory_file` | Source paths |
-| `windows` | Ordered source-frame windows for the current batch; each window is a tuple of original 1-based frame IDs |
-| `residue_ids` | Ordered `(molecule_id, residue_id)` tuples described above |
-| `atom_ids` | Atom-ID tuples aligned with `residue_ids` |
-| `subprocess_env`, `timeout` | Child environment and time limit forwarded to CPPTRAJ helpers |
+| `windows` | Ordered batch tuple of source windows; each window nonempty/distinct original 1-based frame IDs within source range |
+| `residue_ids`, `atom_ids` | Aligned immutable selection |
+| `subprocess_env`, `timeout` | Forwarded child environment/limit |
 
-Each window is nonempty, contains distinct frame IDs, and lies within the source
-trajectory's frame range. A processing batch contains a consecutive slice of the
-complete requested window sequence; no window is silently omitted, duplicated,
-or changed. All features use the same source frames for each output sample.
-Residue/atom identity mappings and source settings stay fixed for an extraction.
-Context collections are copied/frozen on construction; callables do not mutate them.
+**INV:** snapshotted/read-only context; fixed source/identities; consecutive requested-window batch slice; no omission/duplication/relabeling; identical frames across features/sample.
 
-### Window statistics and CPPTRAJ output semantics
+### Window statistics
 
-Every feature-specific implementation returns one result per requested window,
-implementing a declared mathematical statistic. It handles the backend as follows:
+**INV:** one output/window; singleton = original frame; statistic invariant to computational batching.
 
-1. If the selected CPPTRAJ output already provides the required window statistic,
-   use it directly.
-2. If it provides per-frame values, accumulate and reduce those values in Python
-   to obtain the declared statistic.
-3. If neither route can produce the declared statistic, reject that configuration
-   with `ValueError`; do not silently substitute a different quantity.
+| Backend capability | Required action |
+| --- | --- |
+| Matching native window statistic | Use directly; exact window/denominator; no second reduction |
+| Per-frame values | Accumulate/reduce in Python to declared statistic |
+| Neither | `ValueError`; no substitute quantity |
 
-Specifying a [`trajin`](https://amberhub.chpc.utah.edu/trajin/) range selects
-input frames; it does not universally request
-averaging. Semantics belong to the particular action/output. For example, the
-documented [`pairwise`](https://amberhub.chpc.utah.edu/pairwise/) EMAP/VMAP
-matrices contain averages over processed frames, whereas
-[`vector ... center`](https://amberhub.chpc.utah.edu/vector/) supplies a
-trajectory of COM coordinates. Native
-averaging must use exactly the requested window and denominator. Processing
-several windows in one CPPTRAJ run does not automatically yield one summary per
-window. Verify backend behavior against the installed CPPTRAJ with reference tests.
+- CPPTRAJ: [trajin](https://amberhub.chpc.utah.edu/trajin/) selects frames; [pairwise](https://amberhub.chpc.utah.edu/pairwise/) EMAP/VMAP averages processed frames; [vector center](https://amberhub.chpc.utah.edu/vector/) outputs COM trajectories. No universal averaging/per-window summaries; installed-backend reference tests required.
+- Partial means: `mean = sum_b(n_b * mean_b)/sum_b(n_b)` using actual counts; other statistics require valid combination rules.
+- Persist source frames/counts/statistic/weighting/normalization; missing frames -> error, unchanged denominator policy.
+- Aggregation order fixed: generally `mean(distance(COM_r,COM_s)) != distance(mean(COM_r),mean(COM_s))`; mean H-bond count != fraction with any bond.
+- No summary substitution for required per-frame dependencies; local intermediates permitted; cross-feature reuse requires explicit interface.
+- No full-source-frame retention requirement; backend atomic-matrix memory unconstrained.
 
-The base extractor validates and stores window results uniformly; it does not
-guess whether an array has already been reduced, or apply an extra temporal
-reduction to native summaries. Raw intermediate values need exist only while
-processing their window; retaining all original frames in the archive is not
-required. Processing batch size must not change the declared physical statistic.
-
-If a mean is computed from partial batches with counts `n_b` and means `mu_b`,
-combine as `sum(n_b * mu_b) / sum(n_b)`, using actual processed frame counts.
-An unweighted mean of batch means is generally incorrect for unequal counts.
-Other statistics require their own valid combination rules. Record each window's
-source frames, count, feature statistic, and any weighting/normalization policy.
-Missing frames are errors, not a reason to silently change the denominator.
-
-Aggregation order is part of the feature definition. Mean per-frame COM distance
-is not generally the distance between mean COM coordinates. Similarly, mean
-hydrogen-bond count is distinct from the fraction of frames with any bond.
-Dependencies exposing only window summaries cannot replace per-frame information
-needed for a different statistic. An adapter may compute raw intermediates locally;
-cross-feature reuse of those intermediates needs an explicit interface before
-implementation, rather than being inferred from summary arrays.
-
-### Feature definition and registration
-
-`FeatureSpec` is the declaration used to generate validation rules:
+### Features and registration
 
 ```python
-FeatureSpec(
-    shape,       # Per-output-sample tuple: integer dimensions and the symbol "N".
-    dtype,       # Explicit NumPy real numeric/bool dtype; no implicit default.
-    units,       # Nonempty unit string; "1" for dimensionless quantities.
-    statistic,   # Explicit window quantity, including aggregation order.
-    requires=(), # Names of explicitly registered dependencies.
-    validate=None,
-)
-```
-
-`"N"` resolves to the selected residue count. Shape dimensions are nonnegative
-integers or `"N"`; residue features include at least one residue axis. The first
-features use `("N", 3)` for COMs and `("N", "N")` for pairwise distances and
-energy channels. All residue axes refer to the same ordered selection. A feature
-has a fixed resolved shape, dtype, units, and statistic throughout one trajectory.
-Specifications and generated contracts snapshot their declarations and identity
-collections; later mutation of caller-owned input mappings must not change them.
-
-The optional feature-specific validator has this proposed signature:
-
-```python
-validate(values: np.ndarray, dependencies: Mapping[str, np.ndarray]) -> None
-```
-
-It checks one output sample at a time, after generic shape/dtype/finiteness checks.
-`dependencies` contains that window's arrays for exactly the declared dependency
-names. Successful validation returns `None`; a failed condition raises an error.
-Validators must not mutate inputs. This permits physical and cross-feature rules
-without putting feature names or physics into the base extractor.
-
-Proposed extractor registration interface:
-
-```python
+FeatureSpec(shape, dtype, units, statistic, requires=(), validate=None)
 add_feature(self, name: str, extractor: FeatureCallable, specification: FeatureSpec) -> None
 supported_features(self) -> tuple[str, ...]
 ```
 
-- Registry state belongs to each instance. Registration never adds class
-  attributes or changes other instances. `supported_features` reports this
-  instance's registered names in registration order.
-- Names are nonempty, unique strings. The extractor is callable. Specifications
-  must be valid before registration modifies the registry; failed registration
-  leaves it unchanged.
-- Dependencies are distinct existing feature names. Register dependencies first;
-  missing/self dependencies and duplicate feature names raise `ValueError`.
-  Nothing is registered or computed implicitly. Registration order consequently
-  supplies an execution order without a separate dependency scheduler.
-- Registration is fixed during extraction. At least one feature must be
-  registered. All registered features, including dependencies, are output
-  channels in this initial design; there is no separate hidden-feature mechanism.
-- The incomplete V2 class-level `new_feature` stub is superseded by this proposed
-  instance-level interface; V1 public APIs remain unchanged.
+| Field/state | INV |
+| --- | --- |
+| `shape` | Dimensions: nonnegative integers or `"N"`; `N` = selected residue count; >=1 residue axis; COM `("N",3)`; pairwise distance/energy `("N","N")` |
+| `dtype` | Explicit NumPy real numeric/bool dtype; no implicit default |
+| `units` | Nonempty string; dimensionless `"1"` |
+| `statistic` | Explicit quantity/aggregation order |
+| `requires` | Distinct, previously registered names; no missing/self dependency |
+| Declarations/contracts | Snapshot identities/specifications; expectations invariant to caller mutation |
+| Registry | Per instance; unique nonempty string names; callable extractors; valid specifications; registration order = execution/output order |
+| Extraction | Registry fixed; >=1 feature; every registered dependency also stored; no implicit/hidden features |
 
-### Feature callable
+**INV:** resolved shape/dtype/units/statistic constant per feature/trajectory; all residue axes share selection order.
 
-`FeatureCallable` denotes a callable with the following signature:
+**POST:** ordered registered-name tuple; failure leaves registry unchanged; no cross-instance/class mutation.
+
+**RAISES `ValueError`:** duplicate names, missing/self dependencies. Proposed instance `add_feature` supersedes class-level `new_feature` stub.
+
+### Feature callable and validator
 
 ```python
-extract_feature(
-    context: ExtractionContext,
-    dependencies: Mapping[str, np.ndarray],
-) -> np.ndarray
+extract_feature(context: ExtractionContext, dependencies: Mapping[str, np.ndarray]) -> np.ndarray
+validate(values: np.ndarray, dependencies: Mapping[str, np.ndarray]) -> None
 ```
 
-**Preconditions:** The context has valid, independently resolved selection and
-window metadata. `dependencies` contains exactly the registered feature's
-`requires` names. Each dependency has already passed validation for this same
-batch, window order, and residue order, with its declared statistic available to
-the adapter. Dependency arrays are borrowed read-only
-inputs; they must not be mutated or retained for later mutation.
+**Callable PRE:** independent valid context; `set(dependencies)=set(requires)`; dependencies validated for current batch/windows/residue order and their declared statistics; borrowed/read-only, no retained mutation.
 
-**Postconditions:** For `B = len(context.windows)`, return a NumPy array with
-shape `(B, *resolved_sample_shape)`, the exact declared dtype, and finite
-values. Slice `result[k]` is the declared statistic for `context.windows[k]`.
-Every residue axis follows `context.residue_ids`. The callable relinquishes the
-returned data to the extractor and must not subsequently modify it. There is no
-silent dtype conversion, padding, missing-value substitution, or undeclared aggregation.
+**Callable POST:** `B=len(context.windows)`; ndarray `(B,*resolved_shape)`; exact dtype; finite; `result[k]=statistic(window[k])`; axes follow `context.residue_ids`. Ownership -> extractor; no later mutation, implicit conversion/padding/missing values/aggregation.
 
-The extractor checks the generic contract and applies the feature-specific
-validator to every output sample before writing its values. Wrong return types/dtypes
-raise `TypeError`; invalid shapes/non-finite values raise `ValueError`.
-CPPTRAJ, parser, and custom callable/validator failures propagate and abort
-extraction. A callable owns cleanup of temporary resources it creates.
+**Validation:** generic type/shape/dtype/finiteness -> per-sample validator -> write; validator gets exact same-window dependencies; no mutation; success -> `None`.
 
-Backend adapters must validate and map their source frame/entity identifiers.
-If CPPTRAJ reports run-local indices, their relationship to original frame IDs
-must be explicitly established and tested. Assigning expected labels based only
-on row counts is insufficient. Generic contracts cannot prove that numbers
-actually refer to their declared atoms/residues; backend reference tests are
-required for that semantic guarantee.
+**RAISES:** type/dtype -> `TypeError`; shape/nonfinite -> `ValueError`; backend/parser/custom errors propagate/abort. Callable cleans owned temporary resources.
+
+**Backend:** validate/map source frame/entity/run-local IDs; row counts insufficient; semantic identity requires independent reference tests.
 
 ### Frame representation and contract
 
 ```python
 FrameRepresentation(source_frame_ids, residue_ids, features)
-FrameContract(residue_ids, features)  # features: Mapping[str, FeatureSpec]
+FrameContract(residue_ids, features)  # Mapping[str, FeatureSpec]
 FrameContract.validate(self, frame: FrameRepresentation) -> None
 ```
 
-Here a frame representation means one output sample, potentially summarizing a
-window. It contains the original source-frame ID tuple, the ordered residue
-identity tuple, and a mapping from registered names to sample arrays. A singleton
-source tuple identifies an original frame; an aggregate is not labeled as though
-it were one original frame. Units and statistic declarations live in the contract
-rather than being repeated per sample.
-The frame contract is generated from the independently resolved selection and
-registered specifications, never inferred from arrays being checked.
+**INV:** one window/sample; source tuple labels original frames/aggregates; features -> sample arrays; units/statistics in contract; expectations from independent selection/registration, never checked arrays.
 
-**Validation postconditions:** Successful validation establishes that source-frame
-IDs are nonempty, distinct positive integers, residue identities equal the
-expected tuple, feature names match exactly, and every feature satisfies its resolved shape, declared
-dtype, finiteness, and feature-specific validator. A frame contract alone does
-not establish that this sample occupies the correct trajectory position or that
-its source window matches the independently requested window.
+**Validation POST:** source IDs nonempty/distinct/positive integers; residue tuple = expected tuple; feature names = expected set; valid shapes/dtypes/finiteness/feature predicates.
 
-Representations can borrow slices of the current batch for validation and
-writing; they need not copy or accumulate all samples. Their validity is not a
-permanent guarantee if a caller later mutates an array. The extractor does not
-modify a frame between validation and storage.
+**LIMIT:** position/window equality deferred to extractor/trajectory contract; borrowed slices permitted; frozen records do not imply immutable/correct arrays. No mutation between validation/write; post-caller-mutation validity unspecified.
 
-### Trajectory representation and contract
+### Trajectory contract
 
 ```python
 TrajectoryContract(windows, frame_contract)
 TrajectoryContract.validate(self, storage: ArrayStorage, *, batch_size: int = 1) -> None
 ```
 
-The trajectory representation is the named arrays and metadata in `ArrayStorage`;
-no additional class holding every frame in RAM is required. The trajectory
-contract holds the complete requested window sequence and one shared frame
-contract. The window sequence is nonempty, and every window is validated against
-the source frame count before extraction. Window construction, stride, overlap,
-and final partial-window policies must be explicit before implementing selection.
+**Representation:** `ArrayStorage` arrays/metadata; no full-RAM class.
 
-**Trajectory validation establishes:**
+**PRE:** nonempty windows, source-frame bounds validated before extraction; positive integer validation batch size.
 
-- Stored source windows and their counts match the requested sequence exactly,
-  including order; no missing, duplicated, unexpected, or relabeled samples.
-- Stored residue identities match the contract's ordered identity tuple, and
-  feature names, shapes, dtypes, units, statistics, and dependency declarations
-  agree with their expected specifications.
-- Every feature block has shape `(S, *resolved_sample_shape)`, where
-  `S = len(windows)`. There are no shorter/longer channels.
-- Every stored sample passes the shared frame contract. Validation reads values
-  in bounded batches (`batch_size` must be a positive integer), including
-  cross-feature dependency checks; it does not load the full trajectory at once.
+**Validation POST:**
 
-Validation returns `None` on success and raises on a mismatch. Metadata and
-structural mismatches are checked before loading feature values. Physical
-validators are registered application code; archive text is never executed or
-imported to reconstruct them. Exact dataset/metadata keys and schema markers
-must be specified with the archive format before implementing this validator.
+- Stored windows/counts/order = request; no missing/extra/duplicated/relabeled samples.
+- Stored residue identities and feature names/shapes/dtypes/units/statistics/dependencies = contract.
+- Every feature block shape `(S,*resolved_shape)`, `S=len(windows)`; equal channel lengths.
+- Every stored sample satisfies frame/dependency predicates; metadata/structure before values; bounded reads; return `None`; mismatch raises.
+- Validators: application code only; no archive-directed execution/imports.
 
-### Extraction lifecycle and testing boundary
+### Extraction lifecycle
 
-1. Validate registration, source-window selection, and residue membership; build
-   the frame and trajectory contracts from these independent inputs.
-2. Enter `ArrayStorage.compress_and_cleanup` and process requested window batches
-   in order. Execute explicitly registered features in registration order.
-3. Validate every sample against its expected source window and frame contract,
-   then append its feature data to temporary storage. Store actual identity/unit
-   metadata consistently with the contracts.
-4. Validate the completed temporary trajectory against its contract, reading
-   stored values incrementally. This adds a verification read before compression.
-5. Exit normally to compress and publish. A failed extraction or validation
-   raises inside the context, so output is not published and cleanup is attempted.
+1. Validate registration, windows, selection; construct independent contracts.
+2. Enter `ArrayStorage.compress_and_cleanup`; execute window batches/features in order.
+3. Validate sample/window/frame contracts; append values and aligned identity/unit metadata incrementally.
+4. Validate completed stored trajectory in bounded reads, including actual stored values.
+5. Normal context exit -> publish; extraction/validation failure -> raise inside context, skip publication, attempt cleanup.
 
-Batch size controls extraction working data; windows and feature statistics
-control temporal aggregation. No design guarantee is made about an individual
-backend's atomic-matrix memory use. Feature
-results/dependencies for completed batches can be released after writing.
+**Memory:** release completed batches/dependencies; batch size controls working data, windows/statistics aggregation.
 
-Use `icontract` for pre/postconditions and object invariants when implementing
-the stubs. Shared validation predicates should avoid divergent definitions.
-Essential caller-input, external-output, and archive checks must execute under
-`python -O`; decorators alone must not be their only enforcement. Frozen records
-do not make NumPy array contents immutable or prove numerical correctness.
+### Unresolved V2 specifications
 
-Before implementation, write tests for instance isolation, failed-registration
-state, dependency ordering, window/batch alignment, frame/trajectory mismatches, and
-failed validation preventing publication. Use small synthetic features for
-interface tests; use independently computed reference examples for physical
-extractors. Include equivalence tests for native and Python reductions where both
-are supported, unequal partial-batch counts, unsupported statistics, and rejection
-of summary dependencies that cannot supply a requested statistic. Exact built-in
-units/dtypes, energy definitions and diagonal
-conventions, numerical tolerances, and archive field names still require their
-own specifications before those components are implemented. Raw COM distances are
-Euclidean distances between per-frame COMs using the agreed V1 coordinate
-processing procedure; their window statistic must specify aggregation order.
-Electrostatic/vdW channels remain separate and signed.
-The COM backend specification must also address imaging/unwrapping state at batch
-boundaries, so a computational partition does not inadvertently change the
-physical quantities being extracted. Hydrogen-bond definitions remain future work.
+- Window construction, stride, overlap, final partial-window policy.
+- Exact archive dataset/metadata keys and schema markers before trajectory-validator implementation.
+- Built-in units/dtypes, tolerances, physical energy definitions/diagonals, missing-value policy.
+- COM imaging/unwrapping and batch-boundary state; distance = Euclidean per-frame COM distance under agreed V1 coordinate processing, with explicit window aggregation order.
+- Separate signed electrostatic/vdW features. Hydrogen-bond definitions/extraction: future work.
 
-## Verification boundary
+## Verification obligations and limits
 
-`tests/test_public_api.py` checks the fixed signature baseline, required exports,
-package/implementation alias identity, and the distribution-derived package
-version. The behavior tests below remain necessary alongside these interface
-checks.
+| Suite | Contract coverage |
+| --- | --- |
+| `test_public_api.py` | Fixed signatures, exports/alias identity, distribution-derived version |
+| `test_archive_schemas.py` | Reopened writer markers; real local/ZIP reader rejection before data/allocation; closure/unchanged bytes; different/non-release producers; no generic storage markers; optimized constructor checks via storage stub |
+| `test_storage.py` | Write/append values/metadata/empty dimensions; read selection/copy/errors; attribute conversion/persistence; deletion/listing; modes/read-only behavior; failed initialization, validation/conversion/promoted warnings; publication/destination preservation/temporary cleanup/error precedence |
+| `test_rin.py` | Script composition/rendering; mask IDs/order/duplicates/errors; executable priority/dedup/timeout/bypass/exhaustion; subprocess forwarding/termination/errors; finite pairwise output; channels/metadata/frame selection/partial COM means/atom sums/normalization floor |
+| `test_sawnergy_util.py` | Empty/nonempty batching/ranges/wrappers; sequential/thread ordering/completion/arguments/errors/defaults; environment isolation; files/temporary ownership; composition/sharing/failures; clocks/process helpers |
+| Walk/embedding/visual suites | Every node/frame transition; ordered paths/counts/IDs/empty channels/time-aware layout; embedding values/seeds/warm starts; plotting data flow; real empty/populated/cleared edge rendering |
+| Required V2 tests before implementation | Instance isolation; failed-registration state; dependencies; window/batch identity; frame/trajectory mismatches; validation blocks publication; independent physical references; native/Python reduction equivalence; unequal partial counts; unsupported statistics/summary dependencies |
 
-`tests/test_archive_schemas.py` checks the producer and schema markers after
-ZIP reopening for all three writers, including single/both-channel RINs,
-mixed/empty walk channels, time-aware walks, and the embedding pipeline. It also
-checks that generic `ArrayStorage` creation does not add semantic markers.
-Reader tests exercise the real constructors with local and ZIP stores, rejecting
-missing, malformed, wrong-name/case, and unsupported-version markers before any
-dataset access or shared-memory allocation. They verify context exit, unchanged
-archive bytes, and successful loading from different producer versions, including
-non-release strings. Visualizer constructors are not replaced in these tests;
-Matplotlib warm-up is disabled and figures use the test backend.
-An optimized Python subprocess exercises all four constructors against the
-invalid-marker cases and verifies that supported markers reach dataset lookup.
-That subprocess stubs storage to isolate Zarr 3.1.2's documented optimized-mode
-metadata-loading failure; it establishes the reader checks' behavior under
-`python -O`, not a working optimized-mode Zarr archive workflow.
-
-Tests in `tests/test_storage.py` compare actual stored values for stacked writes
-and appends, including zero-length item dimensions. They cover chunk defaults,
-selection values/order/shape/dtype and detached copies, selection errors,
-non-array members, immediate-root listing, successful deletion and metadata
-removal, attribute conversion/replacement/persistence, and read-only mutators.
-Write-validation tests compare in-memory metadata and stored files before/after
-rejected calls, including partial metadata, incompatible members/chunks, batch
-conversion, and warnings promoted to errors. Valid append/input forms and empty
-no-ops are also checked.
-Constructor tests cover read-only local/ZIP access without attribute writes,
-missing stores/groups, all supported opening modes, root-array rejection, and
-closure/error preservation on failed initialization.
-They also cover context-manager cleanup and exception preservation, complete
-archive publication, destination preservation on compression failures, temporary
-output cleanup, and existing destination-path/ZIP-source behavior.
-`tests/test_rin.py` checks immutable script composition/rendering, mask-table
-IDs/order/duplicates and malformed input, executable candidate priority,
-deduplication, timeout fallback, verification bypass, exhaustion, and launch errors.
-It also checks exact script termination, subprocess argument/environment
-forwarding, rejection of non-finite pairwise output, and unchanged exception
-propagation. Synthetic RIN archive tests cover both channels, disabled blocks,
-frame selection, COM means including a short final batch, metadata, sorted
-atom/residue aggregation, and normalization's zero rows/denominator floor.
-`tests/test_sawnergy_util.py` checks empty sequences, arrays, iterators, and
-generators across batch sizes and range modes, plus preservation of nonempty
-batch contents, range endpoints, and output wrappers. It also checks sequential
-and thread-executor ordering/completion, extra arguments, empty input, worker
-defaults, missing executors, and exception propagation; environment isolation and
-conversion; file reading and temporary-file ownership; pipeline identity/order,
-kwargs timing, shallow sharing, `None` results, and failures; and clock/process
-helpers.
-Walk tests check every node's transition vector in every frame, archive block
-names/shapes/dtypes/counts, 1-based starts in repetition order, empty enabled
-channels, disabled channels, and time-aware layout. Embedding tests check ordered
-values, archive metadata, persisted frame seeds, seed forwarding, and warm starts.
-Most plotting fixtures replace GUI setup. A real RIN visualizer test reproduces
-empty-edge autoscaling failure during artist registration, verifies both artists
-remain attached, and renders before/after populating and clearing edge segments.
-CPPTRAJ calls and pipeline shared memory
-are mocked; these checks do not establish native extraction or process-worker
-correctness.
-
-These tests are not complete coverage of the contracts above. Before changing
-reused code, add contract-based tests for its relevant success, boundary, and
-failure cases, including preservation of existing public behavior. Real CPPTRAJ
-extraction checks remain separate from the existing mocked suite; storage
-failure tests do not establish power-loss durability or guaranteed cleanup when
-the filesystem refuses removal.
-
-V2 interface/representation contracts remain design drafts; tests for them are
-required before their implementations, not placeholder tests against absent APIs.
-The local final pass skips the Torch backend tests because the installed Torch
-cannot load `libtorch_cpu.dylib`; passing stub-based archive tests do not validate
-that backend. The optimized-mode Zarr limitation above remains a dependency
-issue outside this prerequisite queue.
+**LIMITS:** coverage incomplete; CPPTRAJ/shared-memory pipelines mocked; most GUI setup replaced; real renderer test retained. No native-extraction/process-worker, biological, power-loss, or guaranteed-cleanup proof. Local Torch validation unavailable with missing `libtorch_cpu.dylib`; stub archives do not validate Torch. Optimized storage-stub tests do not resolve Zarr 3.1.2's real-reopening failure.
