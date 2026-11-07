@@ -534,7 +534,7 @@ def walks_archive_path_full(
     out_path = tmp_path / "synthetic_walks_full.zip"
     try:
         w.sample_walks(
-            walk_length=8,
+            walk_length=2,                     # three residues allow two avoiding steps
             walks_per_node=6,
             saw_frac=0.5,                       # both RW and SAW
             include_attractive=True,

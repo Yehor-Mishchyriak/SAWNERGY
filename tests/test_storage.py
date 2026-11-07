@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import date, datetime
 from pathlib import Path
 import json
 import numpy as np
@@ -365,6 +366,7 @@ def test_write_accepts_stacked_ndarray(tmp_path):
         st.write(X, to_block_named="BLOCK")                   # stacked ndarray ok
         Y = st.read("BLOCK", slice(None))
         assert Y.shape == X.shape and Y.dtype == X.dtype
+        np.testing.assert_array_equal(Y, X)
 
 def test_arrays_per_chunk_defaults_warning(tmp_path):
     p = tmp_path / "arrs2"
@@ -732,3 +734,172 @@ def test_write_and_append_preserve_item_shape_with_positive_chunks(tmp_path, ite
         np.testing.assert_array_equal(stored, np.concatenate([first, second]))
         assert st.root["BLOCK"].chunks == (2,) + tuple(max(1, dim) for dim in item_shape)
         assert tuple(st.root.attrs["array_shape_in_block"]["BLOCK"]) == item_shape
+
+
+@pytest.mark.parametrize("ids", [None, 1, -1, slice(1, 4, 2), slice(2, 2),
+                                    (3, 0, 3), [2, 0], np.array([1, 3]), ()])
+def test_read_selections_preserve_values_dtype_shape_and_detachment(tmp_path, ids):
+    data = np.arange(24, dtype=np.int16).reshape(4, 2, 3)
+    with sawnergy_util.ArrayStorage(tmp_path / "selection", "w") as storage:
+        storage.write(data, "BLOCK", arrays_per_chunk=2)
+        selected = storage.read("BLOCK", ids)
+        index = slice(None) if ids is None else ids
+        if not isinstance(index, (int, slice)):
+            index = np.asarray(index, dtype=np.intp)
+        expected = data[index]
+        assert isinstance(selected, np.ndarray)
+        assert selected.shape == expected.shape and selected.dtype == data.dtype
+        np.testing.assert_array_equal(selected, expected)
+        selected[...] = -1
+        np.testing.assert_array_equal(storage.read("BLOCK"), data)
+
+
+@pytest.mark.parametrize("operation", ["read", "block_iter"])
+def test_read_and_iteration_reject_missing_or_nonarray_members(tmp_path, operation):
+    with sawnergy_util.ArrayStorage(tmp_path / "members", "w") as storage:
+        subgroup = storage.root.create_group("GROUP")
+        subgroup.create_array("NESTED", data=np.arange(3))
+        assert storage.list_blocks() == []
+        for name, error in [("missing", KeyError), ("GROUP", TypeError)]:
+            with pytest.raises(error):
+                result = getattr(storage, operation)(name)
+                if operation == "block_iter":
+                    list(result)
+
+
+@pytest.mark.parametrize("ids", [4, [4]])
+def test_read_propagates_selection_errors(tmp_path, ids):
+    with sawnergy_util.ArrayStorage(tmp_path / "bad_selection", "w") as storage:
+        storage.write(np.arange(4).reshape(2, 2), "BLOCK", arrays_per_chunk=1)
+        with pytest.raises(IndexError):
+            storage.read("BLOCK", ids)
+
+
+def test_delete_block_removes_only_its_data_and_metadata(tmp_path):
+    with sawnergy_util.ArrayStorage(tmp_path / "delete", "w") as storage:
+        for name in ("DELETE", "KEEP"):
+            storage.write(np.arange(4).reshape(2, 2), name, arrays_per_chunk=1)
+        storage.add_attr("description", "retain me")
+        assert storage.delete_block("DELETE") is None
+        assert storage.list_blocks() == ["KEEP"]
+        for key in ("array_shape_in_block", "array_dtype_in_block", "array_chunk_size_in_block"):
+            assert set(storage.get_attr(key)) == {"KEEP"}
+        assert storage.get_attr("description") == "retain me"
+        np.testing.assert_array_equal(storage.read("KEEP"), np.arange(4).reshape(2, 2))
+        before = _storage_state(storage)
+        with pytest.raises(KeyError):
+            storage.delete_block("DELETE")
+        assert _storage_state(storage) == before
+
+
+@pytest.mark.parametrize("value,expected", [
+    (np.int64(7), 7), (np.float32(1.5), 1.5), (np.bool_(True), True),
+    (np.array([[1, 2]]), [[1, 2]]), ((1, 2), [1, 2]), ({3}, [3]),
+    (date(2026, 11, 6), "2026-11-06"),
+    (datetime(2026, 11, 6, 7, 8, 9), "2026-11-06T07:08:09"),
+    (None, None), ({"nested": [1, "two"]}, {"nested": [1, "two"]}),
+])
+def test_attributes_convert_replace_and_persist(tmp_path, value, expected):
+    path = tmp_path / "attributes"
+    with sawnergy_util.ArrayStorage(path, "w") as storage:
+        storage.add_attr("value", "previous")
+        assert storage.add_attr("value", value) is None
+        assert storage.get_attr("value") == expected
+    with sawnergy_util.ArrayStorage(path, "r") as storage:
+        assert storage.get_attr("value") == expected
+        with pytest.raises(KeyError):
+            storage.get_attr("missing")
+
+
+def test_add_attr_does_not_recursively_convert_nested_objects(tmp_path):
+    with sawnergy_util.ArrayStorage(tmp_path / "nested_attributes", "w") as storage:
+        with pytest.raises(TypeError):
+            storage.add_attr("nested", {"array": np.array([1, 2])})
+
+
+def test_readonly_mutators_reject_calls_before_writing(unmarked_store):
+    path, data = unmarked_store
+    with sawnergy_util.ArrayStorage(path, "r") as storage:
+        before = dict(storage.root.attrs)
+        for batch in ([], data):
+            with pytest.raises(RuntimeError):
+                storage.write(batch, "BLOCK")
+        with pytest.raises(RuntimeError):
+            storage.add_attr("description", "changed")
+        with pytest.raises(RuntimeError):
+            storage.delete_block("BLOCK")
+        assert dict(storage.root.attrs) == before
+        np.testing.assert_array_equal(storage.read("BLOCK"), data)
+
+
+@pytest.mark.parametrize("level,error", [(-1, ValueError), (10, ValueError),
+                                        ("bad", ValueError), (None, TypeError)])
+def test_compress_invalid_level_preserves_existing_output(tmp_path, level, error):
+    output = tmp_path / "archive.zip"
+    output.write_bytes(b"existing destination")
+    with sawnergy_util.ArrayStorage(tmp_path / "source", "w") as storage:
+        before = set(tmp_path.iterdir())
+        with pytest.raises(error):
+            storage.compress(output, compression_level=level)
+        assert output.read_bytes() == b"existing destination"
+        assert set(tmp_path.iterdir()) == before
+
+
+def test_compress_preserves_empty_dimensions_and_uppercase_destination(tmp_path):
+    output = tmp_path / "ARCHIVE.ZIP"
+    data = np.zeros((2, 0, 3), dtype=np.float32)
+    with sawnergy_util.ArrayStorage(tmp_path / "source", "w") as storage:
+        storage.write(data, "EMPTY", arrays_per_chunk=2)
+        assert storage.compress(output, compression_level="0") == str(output.resolve())
+    # Compression accepts uppercase suffixes; ArrayStorage opening uses exact '.zip'.
+    with sawnergy_util.ZipStore(output, mode="r") as archive:
+        root = sawnergy_util.zarr.open_group(archive, mode="r")
+        assert root["EMPTY"].shape == data.shape
+        assert root["EMPTY"].chunks == (2, 1, 3)
+        assert root["EMPTY"].dtype == data.dtype
+        np.testing.assert_array_equal(root["EMPTY"][:], data)
+
+
+@pytest.mark.parametrize("mode", ["r+", "a", "w", "w-"])
+def test_init_rejects_writable_zip_modes_before_acquiring_store(tmp_path, monkeypatch, mode):
+    path = tmp_path / "archive.zip"
+    path.write_bytes(b"existing bytes")
+
+    def unexpected_open(*args, **kwargs):
+        pytest.fail("Writable ZIP modes must be rejected before opening the archive")
+
+    monkeypatch.setattr(sawnergy_util, "ZipStore", unexpected_open)
+    with pytest.raises(ValueError, match="read-only"):
+        sawnergy_util.ArrayStorage(path, mode)
+    assert path.read_bytes() == b"existing bytes"
+
+
+def test_init_path_validation_suffix_resolution_and_missing_zip(tmp_path):
+    with pytest.raises(ValueError):
+        sawnergy_util.ArrayStorage(123, "w")
+    path = tmp_path / "source.old"
+    with sawnergy_util.ArrayStorage(str(path), "w") as storage:
+        assert storage.store_path == path.with_suffix(".zarr").resolve()
+    with pytest.raises(FileNotFoundError):
+        sawnergy_util.ArrayStorage(tmp_path / "missing.zip", "r")
+
+
+def test_context_exit_preserves_body_error_when_store_close_fails(tmp_path, monkeypatch, caplog):
+    storage = sawnergy_util.ArrayStorage(tmp_path / "lifetime", "w")
+    error = ValueError("body failed")
+    calls = []
+
+    def fail_close():
+        calls.append(True)
+        raise OSError("close failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(storage.store, "close", fail_close)
+        with pytest.raises(ValueError) as caught:
+            with storage as entered:
+                assert entered is storage
+                raise error
+        assert caught.value is error
+    assert calls == [True]
+    assert "Ignoring error while closing store" in caplog.text
+    storage.close()

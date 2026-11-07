@@ -17,9 +17,32 @@ essential input/archive validation must remain active under `python -O` when
 contracts are implemented. Known defects below are recorded for tests and later
 fixes, not requirements to preserve them.
 
-Schema markers, the policy for unmarked archives, remaining storage patches,
-and completion of the V2 extraction/archive specification remain pending tasks
-in `V2_migration.md`.
+The prerequisite patch queue is complete. Schema markers, the policy for
+unmarked archives, and completion of the V2 extraction/archive specification
+remain pending tasks in `V2_migration.md`.
+
+### Compatibility boundary for prerequisite patches
+
+Public import paths, signatures, parameter names/defaults, return types, archive
+layouts, and successful non-boundary behavior are retained. The following
+failure/boundary corrections are intentional compatibility exceptions:
+
+- `compress_and_cleanup` skips publication after body failure, attempts cleanup
+  on every exit, and preserves the active error if cleanup also fails.
+- `compress` publishes only a fully closed temporary ZIP, preserving an existing
+  destination on failure before replacement.
+- Construction respects opening modes, avoids read-only attribute writes, and
+  propagates opening errors instead of retrying with group creation.
+- `write` rejects incompatible batches and chunk settings before mutation;
+  conversion errors and promoted default-chunk warnings also leave storage intact.
+- `run_cpptraj` recognizes a standalone terminal `quit` and appends a separate
+  command when needed, including scripts without a final newline.
+- `batches_of` yields nothing for every empty input and valid batch size, rather
+  than raising for empty sequences or fabricating empty batches/ranges.
+- `block_iter` rejects zero/negative steps, including on empty/scalar arrays.
+
+The detailed contracts below define the precise limits of these corrections;
+they do not promise general transactional writes or infallible filesystem cleanup.
 
 ## Existing archive contracts and public behavior to preserve
 
@@ -310,8 +333,8 @@ the resulting metadata error; dependency compatibility requires separate work.
 
 | Public operation | Preconditions | Successful postconditions / explicit failures |
 | --- | --- | --- |
-| `write(these_arrays, to_block_named, *, arrays_per_chunk=None)` | Writable store; finite homogeneous items or stacked ndarray `(K, *item_shape)`; stable shape/dtype across appends; positive integer chunk length if supplied | Append `K` items in order, retaining old rows; return `None`. Empty input creates no block. Read mode raises `RuntimeError`; within-batch shape/dtype differences raise `ValueError`; cached shape/dtype/chunk conflicts raise `RuntimeError` |
-| `read(from_block_named, ids=None)` | Existing array; valid axis-0 integer, slice, or 1D integer index collection | Detached NumPy copy with stored dtype. `None` reads all; an integer drops axis 0; slices/collections retain it. Collections use orthogonal indexing after NumPy index coercion. Missing name raises `KeyError`; non-array member raises `TypeError`; selection errors propagate |
+| `write(these_arrays, to_block_named, *, arrays_per_chunk=None)` | Writable store; finite homogeneous batch or stacked ndarray `(K, *item_shape)`; stable shape/dtype across appends; positive integer chunk length if supplied | Append `K` items in order, retaining old rows; return `None`. Empty input creates no block. Read mode raises `RuntimeError`; within-batch shape/dtype differences raise `ValueError`; cached shape/dtype/chunk conflicts raise `RuntimeError` |
+| `read(from_block_named, ids=None)` | Existing array with an axis 0; valid axis-0 integer, slice, or 1D integer index collection | Detached NumPy copy with stored dtype. `None` reads all; an integer drops axis 0; slices/collections retain it. Collections use orthogonal indexing after NumPy index coercion. Missing name raises `KeyError`; non-array member raises `TypeError`; selection errors propagate |
 | `block_iter(from_block_named, *, step=1)` | Existing array; positive integer step | Detached copies of consecutive slices, at most `step` rows each, covering axis 0 in order, with dtype and trailing dimensions preserved. Zero/negative steps raise `ValueError("step must be positive")`, including for empty/scalar arrays. Missing/non-array members raise `KeyError`/`TypeError`; scalar arrays are yielded once |
 | `list_blocks()` | Open store | Sorted names of immediate root arrays; no recursive subgroup listing |
 | `delete_block(named)` | Writable store; existing block | Remove member and entries from all three storage mappings; read mode raises `RuntimeError`, missing name `KeyError` |
@@ -452,7 +475,7 @@ wrapper, and nonempty batching/range conventions are preserved.
 
 | Helper | Preconditions | Postconditions / limits |
 | --- | --- | --- |
-| `read_lines(file_path, skip_header=True)` | Readable UTF-8 file | Lines retaining line endings, optionally removing exactly the first; empty file gives `[]`; file errors propagate |
+| `read_lines(file_path, skip_header=True)` | Readable UTF-8 file | Lines retaining newline characters (standard text-mode universal newline conversion applies), optionally removing exactly the first; empty file gives `[]`; file/decoding errors propagate |
 | `temporary_file(prefix, suffix)` | Valid filename components; writable system temporary directory | `Path` to a new empty file with its handle already closed; caller owns deletion, including on failure |
 | `create_updated_subprocess_env(**var_vals)` | String environment names; values convertible to strings (path-like values must produce strings for the annotated result) | Copy `os.environ`; remove keys with `None`; booleans become `"TRUE"`/`"FALSE"`, path-like values use `os.fspath`, others `str`; parent environment and omitted variables remain unchanged |
 | `compose_steps(*steps)` | Each step is `(callable, kwargs_or_None)`; kwargs convertible by `dict`; compatible result/input types | Unary pipeline in supplied order; no steps returns input object unchanged; shallow-copy kwargs per call; propagate conversion/step errors; input mutation is allowed and a returned `None` becomes the next input |
@@ -763,8 +786,11 @@ physical quantities being extracted. Hydrogen-bond definitions remain future wor
 
 ## Verification boundary
 
-Current tests in `tests/test_storage.py` cover basic stacked writes, chunk
-defaults, within-batch mismatches, read-only deletion, and block listing.
+Tests in `tests/test_storage.py` compare actual stored values for stacked writes
+and appends, including zero-length item dimensions. They cover chunk defaults,
+selection values/order/shape/dtype and detached copies, selection errors,
+non-array members, immediate-root listing, successful deletion and metadata
+removal, attribute conversion/replacement/persistence, and read-only mutators.
 Write-validation tests compare in-memory metadata and stored files before/after
 rejected calls, including partial metadata, incompatible members/chunks, batch
 conversion, and warnings promoted to errors. Valid append/input forms and empty
@@ -775,15 +801,29 @@ closure/error preservation on failed initialization.
 They also cover context-manager cleanup and exception preservation, complete
 archive publication, destination preservation on compression failures, temporary
 output cleanup, and existing destination-path/ZIP-source behavior.
-`tests/test_rin.py` checks synthetic parsing, RIN data flow, candidate
-deduplication, rejection of non-finite pairwise output, exact script termination,
-subprocess argument/environment forwarding, and unchanged exception propagation.
+`tests/test_rin.py` checks immutable script composition/rendering, mask-table
+IDs/order/duplicates and malformed input, executable candidate priority,
+deduplication, timeout fallback, verification bypass, exhaustion, and launch errors.
+It also checks exact script termination, subprocess argument/environment
+forwarding, rejection of non-finite pairwise output, and unchanged exception
+propagation. Synthetic RIN archive tests cover both channels, disabled blocks,
+frame selection, COM means including a short final batch, metadata, sorted
+atom/residue aggregation, and normalization's zero rows/denominator floor.
 `tests/test_sawnergy_util.py` checks empty sequences, arrays, iterators, and
 generators across batch sizes and range modes, plus preservation of nonempty
-batch contents, range endpoints, and output wrappers.
-Walk/embedding tests
-exercise ordered archives, seed forwarding, and warm starts; plotting fixtures
-replace GUI setup. CPPTRAJ calls and pipeline shared memory are mocked.
+batch contents, range endpoints, and output wrappers. It also checks sequential
+and thread-executor ordering/completion, extra arguments, empty input, worker
+defaults, missing executors, and exception propagation; environment isolation and
+conversion; file reading and temporary-file ownership; pipeline identity/order,
+kwargs timing, shallow sharing, `None` results, and failures; and clock/process
+helpers.
+Walk tests check every node's transition vector in every frame, archive block
+names/shapes/dtypes/counts, 1-based starts in repetition order, empty enabled
+channels, disabled channels, and time-aware layout. Embedding tests check ordered
+values, archive metadata, persisted frame seeds, seed forwarding, and warm starts.
+Plotting fixtures replace GUI setup. CPPTRAJ calls and pipeline shared memory
+are mocked; these checks do not establish native extraction or process-worker
+correctness.
 
 These tests are not complete coverage of the contracts above. Before changing
 reused code, add contract-based tests for its relevant success, boundary, and
@@ -791,3 +831,10 @@ failure cases, including preservation of existing public behavior. Real CPPTRAJ
 extraction checks remain separate from the existing mocked suite; storage
 failure tests do not establish power-loss durability or guaranteed cleanup when
 the filesystem refuses removal.
+
+V2 interface/representation contracts remain design drafts; tests for them are
+required before their implementations, not placeholder tests against absent APIs.
+The local final pass skips the Torch backend tests because the installed Torch
+cannot load `libtorch_cpu.dylib`; passing stub-based archive tests do not validate
+that backend. The optimized-mode Zarr limitation above remains a dependency
+issue outside this prerequisite queue.
