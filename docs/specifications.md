@@ -17,9 +17,9 @@ essential input/archive validation must remain active under `python -O` when
 contracts are implemented. Known defects below are recorded for tests and later
 fixes, not requirements to preserve them.
 
-The prerequisite patch queue is complete. Schema markers, the policy for
-unmarked archives, and completion of the V2 extraction/archive specification
-remain pending tasks in `V2_migration.md`.
+The prerequisite patch queue is complete. The policy for unmarked archives,
+reader compatibility validation, and completion of the V2 extraction/archive
+specification remain pending tasks in `V2_migration.md`.
 
 ### Compatibility boundary for prerequisite patches
 
@@ -63,9 +63,9 @@ they do not promise general transactional writes or infallible filesystem cleanu
   `array_dtype_in_block` the NumPy dtype string (`np.dtype(...).str`).
   Chunk shape is `(arrays_per_chunk, *[max(1, d) for d in item_shape])`;
   data dimensions may be zero although chunk dimensions must be positive.
-- Current writers do not add `producer_version`, `schema_name`, or
-  `schema_version`; readers do not validate these markers. This baseline does
-  not decide acceptance/rejection of unmarked or future archives.
+- Writers add the root attributes `producer_version`, `schema_name`, and
+  `schema_version` as specified below. Readers do not yet validate these markers;
+  acceptance/rejection of unmarked or future archives remains unspecified.
 - `ArrayStorage` stays generic: feature meanings, physical validity, identity
   ordering, and schema compatibility belong to producers/consumers.
 
@@ -75,6 +75,35 @@ Preserve the public paths `sawnergy.rin.RINBuilder`, `sawnergy.walks.Walker`,
 retain their current module paths; V2 imports suitable helpers rather than
 duplicating them. This does not extend the extraction milestone to new learning
 components.
+
+### Archive schema markers
+
+**Writer postcondition:** Every archive successfully returned by the following
+writers contains these three JSON-compatible root attributes after compression
+and reopening:
+
+| Writer | `schema_name` (string) | `schema_version` (integer) |
+| --- | --- | --- |
+| `RINBuilder.build_rin` | `"rin"` | `1` |
+| `Walker.sample_walks` | `"rin_walks"` | `1` |
+| `Embedder.embed_all` | `"shallow_residue_embeddings"` | `1` |
+
+`producer_version` is the string `sawnergy.__version__` of the producing package.
+It records which SAWNERGY release wrote the output; downstream writers stamp
+their own output format and producer, rather than inheriting source markers.
+The three schema names identify the corresponding archive contracts below.
+
+Each schema is versioned independently, starting at integer `1`; the version
+identifies the documented format, not the package release or Zarr format version.
+A package-version change alone does not change a schema version. Channel choices,
+window/batch sizes, and walk/embedding options within these contracts do not
+create new schemas or schema versions.
+
+This change adds only these attributes: existing datasets, values, metadata,
+return values, and public signatures are retained. `ArrayStorage` does not
+generate semantic markers automatically. Historical archives are not rewritten;
+the policy for reading unmarked/unsupported versions and its validation are
+separate migration items. No reader compatibility guarantee is introduced here.
 
 ### RIN archives (`RINBuilder.build_rin`)
 
@@ -785,6 +814,11 @@ boundaries, so a computational partition does not inadvertently change the
 physical quantities being extracted. Hydrogen-bond definitions remain future work.
 
 ## Verification boundary
+
+`tests/test_archive_schemas.py` checks the producer and schema markers after
+ZIP reopening for all three writers, including single/both-channel RINs,
+mixed/empty walk channels, time-aware walks, and the embedding pipeline. It also
+checks that generic `ArrayStorage` creation does not add semantic markers.
 
 Tests in `tests/test_storage.py` compare actual stored values for stacked writes
 and appends, including zero-length item dimensions. They cover chunk defaults,

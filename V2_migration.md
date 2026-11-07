@@ -3,11 +3,11 @@
 *V1 work:*
 
 - [x] Add package version to the top-level scope: `__version__ = version("sawnergy")` in `src/sawnergy/__init__.py`.
-- [ ] Document existing archive contracts and public behavior to preserve, plus pre-conditions, post-conditions,
+- [x] Document existing archive contracts and public behavior to preserve, plus pre-conditions, post-conditions,
     and specifications for components reused by v2. Focus on the relevant parts of
     `src/sawnergy/rin/rin_util.py` and `src/sawnergy/sawnergy_util.py`; a full specification of all V1 internals
     is not required.
-- [ ] Add archive attributes: `producer_version` (SAWNERGY version), `schema_name` (RIN, walks on a RIN,
+- [x] Add archive attributes: `producer_version` (SAWNERGY version), `schema_name` (RIN, walks on a RIN,
     or shallow residue embeddings), and `schema_version` (format version, independent of package version).
     Update the writers in `RINBuilder.build_rin`, `Walker.sample_walks`, and `Embedder.embed_all`.
 - [ ] Define the compatibility policy for existing archives without schema attributes.

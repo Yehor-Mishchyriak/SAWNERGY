@@ -12,7 +12,7 @@ import math
 import os
 # local
 from . import rin_util
-from .. import sawnergy_util
+from .. import __version__, sawnergy_util
 
 # *----------------------------------------------------*
 #                        GLOBALS
@@ -965,6 +965,9 @@ class RINBuilder:
             )
 
             # ----------------------------- META-DATA --------------------------------
+            storage.add_attr("producer_version", __version__)
+            storage.add_attr("schema_name", "rin")
+            storage.add_attr("schema_version", 1)
             storage.add_attr("time_created", current_time)
             storage.add_attr("com_name", "COM")
             storage.add_attr("molecule_of_interest", molecule_of_interest)
