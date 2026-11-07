@@ -28,33 +28,54 @@
 
 *V2 work:*
 
-- [ ] Create `src/sawnergy/v2/` directory, therein will be:
+- [x] Create `src/sawnergy/v2/` directory, therein will be:
     - `traj_features/`
         - `feature_extractor.py`
         - `reprs.py`
-    - `embedding/`
-        - `frame_ae.py`
-        - `traj_ae.py`
-- [ ] Include package `__init__.py` files and update `.gitignore` to include the new source and test directories.
-- [ ] Specify extraction and representation contracts in `docs/specifications.md`: feature meanings, units,
-    shapes, atom/residue identities and ordering, frame selection, missing values, and archive metadata/layout.
-- [ ] Add a residue-level `selection` parameter mapping molecule IDs to lists of selected residue IDs,
-    e.g. `selection = {1: [10, 12, 15], 3: [40, 45]}`. Validate that each requested molecule/residue
-    exists and that each residue belongs to its specified molecule; do not silently drop missing selections.
-    Retain only selected residues and their atom memberships, and establish an explicit residue order shared
-    by all feature arrays. Extract individual features for these residues and pairwise features across the
-    complete selection, including pairs from different molecules. Add selection handling through a new
-    parser method or helper while preserving the existing `CpptrajMaskParser` public method and signature.
-- [ ] Reuse suitable helpers from `rin_util.py` and `sawnergy_util.py` through imports. Use `ArrayStorage`
-    for named arrays and metadata; v2 serialization and validation can live in `reprs.py` initially.
-- [ ] Preserve separate physical features and explicit source-frame/window correspondence. The existing RIN
-    pipeline sums electrostatic and van der Waals energies and transforms residue matrices;
-    `build_rin` is not a substitute for extracting separate V2 physical features.
-- [ ] Define one output sample per source-frame window and a declared statistic per feature. Use a native
-    CPPTRAJ summary when it matches that statistic; otherwise reduce per-frame values in Python. Reject
-    unsupported configurations. Keep computational batching separate from window granularity, record source
-    windows/counts/statistics, and specify aggregation order for derived features such as COM distances.
-- [ ] Design tests from the specifications in `tests/v2/`, then implement the components with `icontract`
-    pre-conditions, post-conditions, and invariants. Keep essential input/archive validation always active.
-- [ ] Complete extraction, representation, and archive I/O first (pipeline points 1 and 2); develop
-    `frame_ae.py` and `traj_ae.py` afterward.
+- [x] Include package `__init__.py` files and update `.gitignore` to include the new source and test directories.
+
+### Feature extractor plan
+
+1. **Subclass `FeatureExtractor`.** Mark feature methods with a global `@feature(...)` decorator;
+   it records metadata, without a global feature registry or instance `.add_feature` API.
+2. **Declare each feature's contract.** Include kind (`pairwise` or `global`), scope (`window` or
+   `trajectory`), shape, dtype, units, statistic, and dependencies. All four kind/scope combinations
+   are allowed. Pairwise outputs describe every selected residue pair, including cross-molecule pairs.
+   Global outputs describe the selected system. COMs are not an initial output feature.
+3. **Call `.featurize(...)`.** Supply trajectory, topology, CPPTRAJ executable path, selection mask,
+   frame/window settings, and archive destination. The base class handles validation and archive creation.
+4. **Resolve the mask.** Select complete residues across any number of molecules. Reject empty or
+   partial-residue selections. Use topology residue order for every feature and save the identity mapping.
+   All features compute using only the selected atoms, including global features.
+5. **Run decorated methods in declaration order.** Each receives an explicit `ctx` containing input paths,
+   selection, relevant frames/windows, and declared dependencies. Dependencies must appear earlier.
+   Inherited features run first; decorated overrides retain their position and new features append.
+6. **Validate and store results.** Methods return ndarrays. Window methods process batches; trajectory
+   methods return one result. Validate results against their contracts, write incrementally with
+   `ArrayStorage`, validate the completed archive, then compress and clean up.
+
+Each feature implements its own statistic: use a matching CPPTRAJ summary, otherwise reduce per-frame
+values in Python, otherwise reject the configuration. The base class does not average automatically.
+Batch size is separate from window size. Preserve source-frame/window correspondence and keep physical
+channels separate; V1 `build_rin` combines/transforms interactions and is not a V2 feature extractor.
+
+**Proposed execution:** finish a feature over all selected frames before starting the next. This lets
+trajectory features depend on completed window features. Read dependencies from storage in slices/batches
+so the full trajectory's outputs need not fit in RAM.
+
+**Still to confirm:** archive-backed dependency access; whether trajectory scope means the frames selected
+by range/stride; and how distance-based masks establish fixed residue membership.
+
+### Implementation order
+
+- [ ] Finalize contracts in `docs/specifications.md`, replacing the earlier instance-registration design.
+    Specify feature meanings, units, shapes, identities/order, frame/window selection, missing values,
+    and archive metadata/layout.
+- [ ] Write targeted contract tests in `tests/v2/` before implementation.
+- [ ] Implement the decorator, context, and base `.featurize` with `icontract` conditions/invariants.
+    Keep essential input/archive validation active under `python -O`.
+- [ ] Reuse suitable `rin_util.py` and `sawnergy_util.py` helpers without changing V1 public APIs.
+    Use `reprs.py` only if shared representation/validation code is needed.
+- [ ] Complete incremental archive writing and failure cleanup; run the relevant tests.
+
+Representation learning is outside the current scope.
