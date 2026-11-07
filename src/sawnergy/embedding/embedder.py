@@ -10,6 +10,7 @@ import logging
 
 # local
 from .. import __version__, sawnergy_util
+from .._archive_schema import validate_archive_schema
 
 # *----------------------------------------------------*
 #                        GLOBALS
@@ -43,8 +44,9 @@ class Embedder:
                 32-bit seed is chosen.
 
         Raises:
-            ValueError: If required metadata is missing or any loaded walk array
-                has an unexpected shape.
+            ValueError: If archive schema markers are missing, malformed, or
+                incompatible, required metadata is missing, or any loaded walk
+                array has an unexpected shape.
 
         Notes:
             - Walks in storage are 1-based (residue indexing). Internally, this
@@ -61,6 +63,7 @@ class Embedder:
 
         # Load numpy arrays from read-only storage
         with sawnergy_util.ArrayStorage(self._walks_path, mode="r") as storage:
+            validate_archive_schema(storage.root.attrs, schema_name="rin_walks", schema_version=1)
             attractive_RWs_name   = storage.get_attr("attractive_RWs_name")
             repulsive_RWs_name    = storage.get_attr("repulsive_RWs_name")
             attractive_SAWs_name  = storage.get_attr("attractive_SAWs_name")

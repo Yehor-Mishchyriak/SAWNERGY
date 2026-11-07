@@ -17,9 +17,9 @@ essential input/archive validation must remain active under `python -O` when
 contracts are implemented. Known defects below are recorded for tests and later
 fixes, not requirements to preserve them.
 
-The prerequisite patch queue is complete. The policy for unmarked archives,
-reader compatibility validation, and completion of the V2 extraction/archive
-specification remain pending tasks in `V2_migration.md`.
+The prerequisite patch queue is complete. Archive compatibility policy and reader
+enforcement are implemented and tested. Remaining migration work, including
+completion of the V2 extraction/archive specification, is in `V2_migration.md`.
 
 ### Compatibility boundary for prerequisite patches
 
@@ -64,8 +64,8 @@ they do not promise general transactional writes or infallible filesystem cleanu
   Chunk shape is `(arrays_per_chunk, *[max(1, d) for d in item_shape])`;
   data dimensions may be zero although chunk dimensions must be positive.
 - Writers add the root attributes `producer_version`, `schema_name`, and
-  `schema_version` as specified below. Readers do not yet validate these markers;
-  acceptance/rejection of unmarked or future archives remains unspecified.
+  `schema_version` as specified below. The four readers listed in the compatibility
+  policy validate these markers before accessing dataset metadata or values.
 - `ArrayStorage` stays generic: feature meanings, physical validity, identity
   ordering, and schema compatibility belong to producers/consumers.
 
@@ -102,8 +102,57 @@ create new schemas or schema versions.
 This change adds only these attributes: existing datasets, values, metadata,
 return values, and public signatures are retained. `ArrayStorage` does not
 generate semantic markers automatically. Historical archives are not rewritten;
-the policy for reading unmarked/unsupported versions and its validation are
-separate migration items. No reader compatibility guarantee is introduced here.
+the following compatibility policy governs reader acceptance.
+
+### Archive compatibility policy
+
+**Status:** Enforced by the four readers below, using the shared internal helper
+`sawnergy._archive_schema.validate_archive_schema` on the root attribute mapping.
+The helper returns `None` for compatible markers and raises `ValueError` otherwise.
+
+**Required marker contract:** All three root attributes must be present.
+`schema_name` and `producer_version` must be strings. `schema_version` must be
+an integer, excluding booleans; do not coerce strings or floats to integers.
+Missing markers, including partially marked archives, and incorrect marker
+types are rejected.
+
+**Compatibility rule:** Require the exact schema name and supported integer
+version for the reader's input:
+
+| Reader | Required `schema_name` | Supported `schema_version` |
+| --- | --- | --- |
+| `Walker.__init__` | `"rin"` | `1` |
+| `Embedder.__init__` | `"rin_walks"` | `1` |
+| `sawnergy.visual.Visualizer.__init__` | `"rin"` | `1` |
+| `sawnergy.embedding.Visualizer.__init__` | `"shallow_residue_embeddings"` | `1` |
+
+Names are matched exactly, without case normalization. Reject other schema
+names and unsupported versions, whether older or newer; do not assume backward
+or forward compatibility. `producer_version` is provenance only: its string is
+not parsed or compared with the installed package version. A different producer
+version alone is not grounds for rejection.
+
+**Legacy archives:** Reject unmarked archives with an explanation that required
+schema metadata is missing and legacy compatibility is unsupported. Identify
+missing/malformed markers in diagnostics; schema mismatches report the expected
+and encountered name/version. Do not infer schemas from dataset names, silently
+assign version `1`, or rewrite archives on opening. Supporting legacy archives
+later requires an explicitly specified migration or compatibility path.
+
+**Rejection contract:** Missing/malformed markers and incompatible schema pairs
+raise `ValueError` before dataset-name lookup, dataset reads, or shared-memory
+allocation. Close the acquired archive through its context manager on rejection;
+do not change its arrays or attributes. Valid markers permit the existing reader
+initialization to continue, including normal dataset/metadata errors. Marker
+validation does not parse `producer_version` as a release number.
+
+**Enforcement boundary:** Validate root markers before loading datasets in the
+four readers above. Essential checks must remain active under `python -O`.
+Matching markers establish a claim of format compatibility, not that the actual
+datasets or metadata satisfy the schema; their existing checks still apply.
+Keep `ArrayStorage` generic, with no semantic compatibility enforcement. This is
+an intentional rejection of previously accepted unmarked/incompatible archives;
+public import paths, signatures, and supported archive contents remain unchanged.
 
 ### RIN archives (`RINBuilder.build_rin`)
 
@@ -819,6 +868,17 @@ physical quantities being extracted. Hydrogen-bond definitions remain future wor
 ZIP reopening for all three writers, including single/both-channel RINs,
 mixed/empty walk channels, time-aware walks, and the embedding pipeline. It also
 checks that generic `ArrayStorage` creation does not add semantic markers.
+Reader tests exercise the real constructors with local and ZIP stores, rejecting
+missing, malformed, wrong-name/case, and unsupported-version markers before any
+dataset access or shared-memory allocation. They verify context exit, unchanged
+archive bytes, and successful loading from different producer versions, including
+non-release strings. Visualizer constructors are not replaced in these tests;
+Matplotlib warm-up is disabled and figures use the test backend.
+An optimized Python subprocess exercises all four constructors against the
+invalid-marker cases and verifies that supported markers reach dataset lookup.
+That subprocess stubs storage to isolate Zarr 3.1.2's documented optimized-mode
+metadata-loading failure; it establishes the reader checks' behavior under
+`python -O`, not a working optimized-mode Zarr archive workflow.
 
 Tests in `tests/test_storage.py` compare actual stored values for stacked writes
 and appends, including zero-length item dimensions. They cover chunk defaults,

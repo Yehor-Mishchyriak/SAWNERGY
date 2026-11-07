@@ -10,13 +10,15 @@
 - [x] Add archive attributes: `producer_version` (SAWNERGY version), `schema_name` (RIN, walks on a RIN,
     or shallow residue embeddings), and `schema_version` (format version, independent of package version).
     Update the writers in `RINBuilder.build_rin`, `Walker.sample_walks`, and `Embedder.embed_all`.
-- [ ] Define the compatibility policy for existing archives without schema attributes.
-- [ ] Reject incompatible archives before loading their datasets in `Walker.__init__`, `Embedder.__init__`,
+- [x] Define the compatibility policy for existing archives without schema attributes.
+    See `docs/specifications.md`: require all three typed markers and the reader's exact schema name/version;
+    producer version is provenance only. Reject unmarked, partially marked, malformed, and unsupported archives.
+- [x] Reject incompatible archives before loading their datasets in `Walker.__init__`, `Embedder.__init__`,
     `visual.Visualizer.__init__`, and `embedding.Visualizer.__init__`. These checks must remain active under
     `python -O`. Keep `ArrayStorage` generic; share schema validation through a helper if useful.
 - [ ] Specify and test storage failure behavior before reusing it in v2. In particular,
     `ArrayStorage.compress_and_cleanup` currently attempts to compress an archive even when its body raises.
-- [ ] Add compatibility/regression tests for archive markers, supported and unsupported schemas, and unmarked archives.
+- [x] Add compatibility/regression tests for archive markers, supported and unsupported schemas, and unmarked archives.
 - [ ] Freeze the documented existing API after these changes, preserving public import paths and behavior.
 
 *V2 work:*
