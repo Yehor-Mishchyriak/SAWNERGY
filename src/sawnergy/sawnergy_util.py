@@ -245,7 +245,7 @@ class ArrayStorage:
         return self.root.create_array(
             name=named,
             shape=(0,) + shape,
-            chunks=(int(apc),) + shape,
+            chunks=(int(apc),) + tuple(max(1, dim) for dim in shape),
             dtype=dtype,
         )
 
@@ -369,13 +369,14 @@ class ArrayStorage:
 
         Args:
           from_block_named: Name of the block (array) to iterate over.
-          step: Number of rows per yielded chunk along axis 0.
+          step: Positive number of rows per yielded chunk along axis 0.
 
         Yields:
           NumPy arrays of shape ``(m, *item_shape)`` where ``m <= step`` for the
           last chunk.
 
         Raises:
+          ValueError: If step is zero or negative, including for empty blocks.
           KeyError: If the named block does not exist.
           TypeError: If the named member is not a Zarr array.
         """
@@ -387,6 +388,9 @@ class ArrayStorage:
         if not isinstance(block, zarr.Array):
             _logger.error("block_iter(): member '%s' is not a Zarr array", from_block_named)
             raise TypeError(f"Member '{from_block_named}' is not a Zarr array")
+
+        if step <= 0:
+            raise ValueError("step must be positive")
 
         _logger.info("Iterating block '%s' with step=%d", from_block_named, step)
 
