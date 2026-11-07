@@ -43,13 +43,14 @@ class ArrayStorage:
         Args:
           pth: Base path. If it ends with ``.zip`` a read-only ZipStore is used;
             otherwise a LocalStore at ``<pth>.zarr`` is used.
-          mode: Zarr open mode. For ZipStore this must be ``"r"``.
-            For LocalStore, an existing store is opened with this mode; if
-            missing, a new root group is created.
+          mode: Zarr open mode: ``"r"``, ``"r+"``, ``"a"``, ``"w"``, or ``"w-"``.
+            ZipStore requires ``"r"``. LocalStore respects the requested mode;
+            read-only opens never initialize metadata. Failed initialization
+            attempts to close the store before propagating the original error.
 
         Raises:
-          ValueError: If `pth` type is invalid or ZipStore mode is not ``"r"``.
-          FileNotFoundError: If a ZipStore was requested but the file is missing.
+          ValueError: If `pth` type or mode is invalid, or ZipStore mode is not ``"r"``.
+          FileNotFoundError: If a required existing store is missing.
           TypeError: If the root object is an array instead of a group.
         """
         _logger.info("ArrayStorage init: pth=%s mode=%s", pth, mode)
@@ -57,6 +58,9 @@ class ArrayStorage:
         if not isinstance(pth, (str, Path)):
             _logger.error("Invalid 'pth' type: %s", type(pth))
             raise ValueError(f"Expected 'str' or 'Path' for 'pth'; got: {type(pth)}")
+
+        if mode not in ("r", "r+", "a", "w", "w-"):
+            raise ValueError(f"Invalid mode: {mode!r}; expected 'r', 'r+', 'a', 'w', or 'w-'.")
 
         p = Path(pth)
         self.mode = mode
@@ -77,33 +81,31 @@ class ArrayStorage:
             # local directory store at <pth>.zarr
             self.store_path = p.with_suffix(".zarr").resolve()
             _logger.info("Using LocalStore backend at %s", self.store_path)
-            self.store = LocalStore(self.store_path)
+            if mode in ("r", "r+") and not self.store_path.exists():
+                raise FileNotFoundError(f"No LocalStore at: {self.store_path}")
+            self.store = LocalStore(self.store_path, read_only=(mode == "r"))
 
         # open existing or create new root group
         try:
-            # try to open the store
             _logger.info("Opening store at %s with mode=%s", self.store_path, mode)
-            self.root = zarr.open(self.store, mode=mode)
+            # Creation must explicitly request a group, not an unspecified array.
+            open_root = zarr.open_group if mode in ("w", "w-") else zarr.open
+            self.root = open_root(self.store, mode=mode)
             # the root must be a group. if it's not -- schema error then
             if not isinstance(self.root, zarr.Group):
                 _logger.error("Root is not a group at %s", self.store_path)
                 raise TypeError(f"Root at {self.store_path} must be a group.")
-        except Exception:
-            # if we can't open:
-            # for ZipStore or read-only modes, we must not create, so re-raise
-            if isinstance(self.store, ZipStore) or mode == "r":
-                _logger.exception("Failed to open store in read-only context; re-raising")
-                raise
-            # otherwise, create a new group
-            _logger.info("Creating new root group at %s", self.store_path)
-            self.root = zarr.group(store=self.store, mode="a")
 
-        # metadata attrs (JSON-safe)
-        self._attrs = self.root.attrs
-        self._attrs.setdefault("array_chunk_size_in_block", {})
-        self._attrs.setdefault("array_shape_in_block", {})
-        self._attrs.setdefault("array_dtype_in_block", {})
-        _logger.debug("Metadata attrs initialized: keys=%s", list(self._attrs.keys()))
+            # Initialize metadata only when writes are permitted.
+            self._attrs = self.root.attrs
+            if mode != "r":
+                self._attrs.setdefault("array_chunk_size_in_block", {})
+                self._attrs.setdefault("array_shape_in_block", {})
+                self._attrs.setdefault("array_dtype_in_block", {})
+            _logger.debug("Metadata attrs available: keys=%s", list(self._attrs.keys()))
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
         """Close the underlying store if it supports closing."""

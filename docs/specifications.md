@@ -3,9 +3,11 @@
 ## Scope and status
 
 This document specifies the existing archive formats and reusable public behavior
-needed for V2 feature extraction. It is based on `src/sawnergy/rin/rin_util.py`,
-`src/sawnergy/sawnergy_util.py`, and the current V1 archive writers/readers. It
-does not specify every V1 internal or define the new V2 feature format.
+needed for V2 feature extraction. The V1 baseline is based on
+`src/sawnergy/rin/rin_util.py`, `src/sawnergy/sawnergy_util.py`, and the current
+V1 archive writers/readers. The V2 design below specifies proposed interfaces
+and structural contracts; it is not an implemented API or a complete new archive
+format. It does not specify every V1 internal.
 
 **Preconditions** are caller obligations, not claims that every obligation is
 currently checked. **Postconditions** apply after successful return.
@@ -15,8 +17,9 @@ essential input/archive validation must remain active under `python -O` when
 contracts are implemented. Known defects below are recorded for tests and later
 fixes, not requirements to preserve them.
 
-Schema markers, the policy for unmarked archives, storage failure guarantees,
-and new V2 extraction contracts remain pending tasks in `V2_migration.md`.
+Schema markers, the policy for unmarked archives, remaining storage patches,
+and completion of the V2 extraction/archive specification remain pending tasks
+in `V2_migration.md`.
 
 ## Existing archive contracts and public behavior to preserve
 
@@ -251,10 +254,24 @@ does not describe its implementation.
 
 ### `ArrayStorage(pth, mode)` and lifetime
 
-**Preconditions:** String or `Path` and a supported Zarr mode. Exact lowercase
+**Preconditions:** String or `Path` and one of `r`, `r+`, `a`, `w`, or `w-`.
+Unsupported modes raise `ValueError` before acquiring a store. Exact lowercase
 suffix `.zip` selects an existing ZIP and requires `mode="r"`. Otherwise the
-suffix is replaced with `.zarr`; stored paths are resolved. Use `r` for reads
-and `w` for a new V2 working store; other writable modes are delegated to Zarr.
+suffix is replaced with `.zarr`; stored paths are resolved.
+
+| Local-store mode | Opening behavior |
+| --- | --- |
+| `r` | Open an existing group read-only; do not create directories, initialize attributes, or otherwise write metadata |
+| `r+` | Open an existing group for updates; do not create a missing store/group |
+| `a` | Open an existing group or create a missing group |
+| `w` | Create a group, replacing existing contents |
+| `w-` | Create a group; fail if the store already contains data |
+
+Writable opens initialize missing storage metadata mappings without replacing
+existing mappings or unrelated attributes. Read-only opens accept groups missing
+these mappings and leave their attributes untouched; missing attributes still
+raise `KeyError` through `get_attr`. `ArrayStorage` does not add semantic schema
+validation or decide archive compatibility here.
 
 **Postconditions/invariants:** Expose `root`, `store`, `store_path`, and `mode`;
 root is a group. Blocks created through `write` retain fixed item shape, dtype,
@@ -263,13 +280,23 @@ mutation bypasses helper invariants. Storage does not enforce finite numbers,
 physical units, identity maps, or agreement of semantic metadata with arrays.
 
 **Checks/limits:** Invalid path types/non-read ZIP modes raise `ValueError`;
-missing ZIP files raise `FileNotFoundError`. Opening/root errors propagate for
-ZIP/read-only stores. In other modes, any opening/root error triggers a fallback
-group creation/open with `mode="a"`, so the original error may not escape.
-Construction calls `setdefault` for storage mappings even in read mode;
-arbitrary external archives missing them are not guaranteed to open read-only.
+missing ZIP files and missing local stores in `r`/`r+` raise `FileNotFoundError`.
+A root array encountered in `r`, `r+`, or `a` raises `TypeError`; it is not
+converted to a group. Opening errors and metadata-initialization errors propagate
+without retrying in another mode. If initialization fails after acquiring a
+store, attempt `close()` before propagating the original exception, including
+interruption. Closing is best-effort: ordinary closing errors are logged and do
+not replace the initialization error. Zarr opening modes are not transactional;
+for example, `w` may already have cleared old data before a subsequent failure.
 `close()` suppresses store-closing errors. Context exit closes the store without
 suppressing the body exception. No operation-after-close guarantee is specified.
+
+**Local dependency limitation:** With Zarr 3.1.2, reopening a valid Zarr v3 group
+under `python -O` fails inside Zarr: `GroupMetadata.from_dict` removes `node_type`
+inside an `assert`, whose side effect is skipped under optimization. SAWNERGY's
+explicit constructor checks remain active, but this dependency prevents complete
+optimized-mode archive workflows in that environment. Do not bypass or suppress
+the resulting metadata error; dependency compatibility requires separate work.
 
 ### Blocks and attributes
 
@@ -402,10 +429,311 @@ but kwargs only at invocation. Copies are shallow: nested mutable values remain
 shared. Legacy memory-based file/directory chunking, private V1 matrix/walk
 internals, and neural backend implementations are outside this reuse scope.
 
+## V2 feature interfaces and representation contracts (design draft)
+
+This section precedes implementation and tests. Signatures and names below are
+proposed V2 interfaces, not changes to existing V1 public APIs. The agreed design
+uses batch feature callables, incremental archive writing, and explicit feature
+dependency registration. Output samples correspond to explicit source-frame
+windows (tiles); a single-frame sample is a window containing one frame.
+Computational batching is separate from the declared window statistic.
+
+Keep `FeatureExtractor` and its execution context in `feature_extractor.py`;
+keep feature specifications, frame representations, and frame/trajectory
+validation in `reprs.py`. No base-class hierarchy or feature subclasses are
+required: a feature is a callable plus its specification.
+
+### Shared extraction context and selection
+
+`selection` maps CPPTRAJ molecule IDs to lists of selected topology residue IDs,
+for example `{1: [10, 12, 15], 3: [40, 45]}`. Proposed input rules:
+
+- Selection is nonempty; each molecule has a nonempty list of distinct residues.
+  IDs are positive integers, excluding booleans. Unknown IDs or residues assigned
+  to the wrong molecule raise `ValueError`; invalid input types raise `TypeError`.
+- Preserve mapping iteration order, then each residue list's order. Flatten to
+  an immutable tuple of `(molecule_id, residue_id)` pairs. For the example, array
+  positions correspond to `((1, 10), (1, 12), (1, 15), (3, 40), (3, 45))`.
+- Resolve all atoms of each selected residue from the topology. Keep one sorted
+  tuple of atom IDs per residue in that same residue order. Validate membership;
+  do not silently discard unavailable residues or select only some of their atoms.
+- Include cross-molecule residue pairs in pairwise feature arrays. Preserve the
+  original topology IDs separately from zero-based NumPy array positions.
+
+The extractor establishes this mapping once, independently of feature outputs,
+and uses it to construct its contracts. Keep the existing
+`CpptrajMaskParser.hierarchize_molecular_composition` signature and behavior;
+selection handling belongs in a new helper or method.
+
+`ExtractionContext` is a small immutable record supplied to feature callables:
+
+| Field | Meaning |
+| --- | --- |
+| `cpptraj` | Resolved executable path |
+| `topology_file`, `trajectory_file` | Source paths |
+| `windows` | Ordered source-frame windows for the current batch; each window is a tuple of original 1-based frame IDs |
+| `residue_ids` | Ordered `(molecule_id, residue_id)` tuples described above |
+| `atom_ids` | Atom-ID tuples aligned with `residue_ids` |
+| `subprocess_env`, `timeout` | Child environment and time limit forwarded to CPPTRAJ helpers |
+
+Each window is nonempty, contains distinct frame IDs, and lies within the source
+trajectory's frame range. A processing batch contains a consecutive slice of the
+complete requested window sequence; no window is silently omitted, duplicated,
+or changed. All features use the same source frames for each output sample.
+Residue/atom identity mappings and source settings stay fixed for an extraction.
+Context collections are copied/frozen on construction; callables do not mutate them.
+
+### Window statistics and CPPTRAJ output semantics
+
+Every feature-specific implementation returns one result per requested window,
+implementing a declared mathematical statistic. It handles the backend as follows:
+
+1. If the selected CPPTRAJ output already provides the required window statistic,
+   use it directly.
+2. If it provides per-frame values, accumulate and reduce those values in Python
+   to obtain the declared statistic.
+3. If neither route can produce the declared statistic, reject that configuration
+   with `ValueError`; do not silently substitute a different quantity.
+
+Specifying a [`trajin`](https://amberhub.chpc.utah.edu/trajin/) range selects
+input frames; it does not universally request
+averaging. Semantics belong to the particular action/output. For example, the
+documented [`pairwise`](https://amberhub.chpc.utah.edu/pairwise/) EMAP/VMAP
+matrices contain averages over processed frames, whereas
+[`vector ... center`](https://amberhub.chpc.utah.edu/vector/) supplies a
+trajectory of COM coordinates. Native
+averaging must use exactly the requested window and denominator. Processing
+several windows in one CPPTRAJ run does not automatically yield one summary per
+window. Verify backend behavior against the installed CPPTRAJ with reference tests.
+
+The base extractor validates and stores window results uniformly; it does not
+guess whether an array has already been reduced, or apply an extra temporal
+reduction to native summaries. Raw intermediate values need exist only while
+processing their window; retaining all original frames in the archive is not
+required. Processing batch size must not change the declared physical statistic.
+
+If a mean is computed from partial batches with counts `n_b` and means `mu_b`,
+combine as `sum(n_b * mu_b) / sum(n_b)`, using actual processed frame counts.
+An unweighted mean of batch means is generally incorrect for unequal counts.
+Other statistics require their own valid combination rules. Record each window's
+source frames, count, feature statistic, and any weighting/normalization policy.
+Missing frames are errors, not a reason to silently change the denominator.
+
+Aggregation order is part of the feature definition. Mean per-frame COM distance
+is not generally the distance between mean COM coordinates. Similarly, mean
+hydrogen-bond count is distinct from the fraction of frames with any bond.
+Dependencies exposing only window summaries cannot replace per-frame information
+needed for a different statistic. An adapter may compute raw intermediates locally;
+cross-feature reuse of those intermediates needs an explicit interface before
+implementation, rather than being inferred from summary arrays.
+
+### Feature definition and registration
+
+`FeatureSpec` is the declaration used to generate validation rules:
+
+```python
+FeatureSpec(
+    shape,       # Per-output-sample tuple: integer dimensions and the symbol "N".
+    dtype,       # Explicit NumPy real numeric/bool dtype; no implicit default.
+    units,       # Nonempty unit string; "1" for dimensionless quantities.
+    statistic,   # Explicit window quantity, including aggregation order.
+    requires=(), # Names of explicitly registered dependencies.
+    validate=None,
+)
+```
+
+`"N"` resolves to the selected residue count. Shape dimensions are nonnegative
+integers or `"N"`; residue features include at least one residue axis. The first
+features use `("N", 3)` for COMs and `("N", "N")` for pairwise distances and
+energy channels. All residue axes refer to the same ordered selection. A feature
+has a fixed resolved shape, dtype, units, and statistic throughout one trajectory.
+Specifications and generated contracts snapshot their declarations and identity
+collections; later mutation of caller-owned input mappings must not change them.
+
+The optional feature-specific validator has this proposed signature:
+
+```python
+validate(values: np.ndarray, dependencies: Mapping[str, np.ndarray]) -> None
+```
+
+It checks one output sample at a time, after generic shape/dtype/finiteness checks.
+`dependencies` contains that window's arrays for exactly the declared dependency
+names. Successful validation returns `None`; a failed condition raises an error.
+Validators must not mutate inputs. This permits physical and cross-feature rules
+without putting feature names or physics into the base extractor.
+
+Proposed extractor registration interface:
+
+```python
+add_feature(self, name: str, extractor: FeatureCallable, specification: FeatureSpec) -> None
+supported_features(self) -> tuple[str, ...]
+```
+
+- Registry state belongs to each instance. Registration never adds class
+  attributes or changes other instances. `supported_features` reports this
+  instance's registered names in registration order.
+- Names are nonempty, unique strings. The extractor is callable. Specifications
+  must be valid before registration modifies the registry; failed registration
+  leaves it unchanged.
+- Dependencies are distinct existing feature names. Register dependencies first;
+  missing/self dependencies and duplicate feature names raise `ValueError`.
+  Nothing is registered or computed implicitly. Registration order consequently
+  supplies an execution order without a separate dependency scheduler.
+- Registration is fixed during extraction. At least one feature must be
+  registered. All registered features, including dependencies, are output
+  channels in this initial design; there is no separate hidden-feature mechanism.
+- The incomplete V2 class-level `new_feature` stub is superseded by this proposed
+  instance-level interface; V1 public APIs remain unchanged.
+
+### Feature callable
+
+`FeatureCallable` denotes a callable with the following signature:
+
+```python
+extract_feature(
+    context: ExtractionContext,
+    dependencies: Mapping[str, np.ndarray],
+) -> np.ndarray
+```
+
+**Preconditions:** The context has valid, independently resolved selection and
+window metadata. `dependencies` contains exactly the registered feature's
+`requires` names. Each dependency has already passed validation for this same
+batch, window order, and residue order, with its declared statistic available to
+the adapter. Dependency arrays are borrowed read-only
+inputs; they must not be mutated or retained for later mutation.
+
+**Postconditions:** For `B = len(context.windows)`, return a NumPy array with
+shape `(B, *resolved_sample_shape)`, the exact declared dtype, and finite
+values. Slice `result[k]` is the declared statistic for `context.windows[k]`.
+Every residue axis follows `context.residue_ids`. The callable relinquishes the
+returned data to the extractor and must not subsequently modify it. There is no
+silent dtype conversion, padding, missing-value substitution, or undeclared aggregation.
+
+The extractor checks the generic contract and applies the feature-specific
+validator to every output sample before writing its values. Wrong return types/dtypes
+raise `TypeError`; invalid shapes/non-finite values raise `ValueError`.
+CPPTRAJ, parser, and custom callable/validator failures propagate and abort
+extraction. A callable owns cleanup of temporary resources it creates.
+
+Backend adapters must validate and map their source frame/entity identifiers.
+If CPPTRAJ reports run-local indices, their relationship to original frame IDs
+must be explicitly established and tested. Assigning expected labels based only
+on row counts is insufficient. Generic contracts cannot prove that numbers
+actually refer to their declared atoms/residues; backend reference tests are
+required for that semantic guarantee.
+
+### Frame representation and contract
+
+```python
+FrameRepresentation(source_frame_ids, residue_ids, features)
+FrameContract(residue_ids, features)  # features: Mapping[str, FeatureSpec]
+FrameContract.validate(self, frame: FrameRepresentation) -> None
+```
+
+Here a frame representation means one output sample, potentially summarizing a
+window. It contains the original source-frame ID tuple, the ordered residue
+identity tuple, and a mapping from registered names to sample arrays. A singleton
+source tuple identifies an original frame; an aggregate is not labeled as though
+it were one original frame. Units and statistic declarations live in the contract
+rather than being repeated per sample.
+The frame contract is generated from the independently resolved selection and
+registered specifications, never inferred from arrays being checked.
+
+**Validation postconditions:** Successful validation establishes that source-frame
+IDs are nonempty, distinct positive integers, residue identities equal the
+expected tuple, feature names match exactly, and every feature satisfies its resolved shape, declared
+dtype, finiteness, and feature-specific validator. A frame contract alone does
+not establish that this sample occupies the correct trajectory position or that
+its source window matches the independently requested window.
+
+Representations can borrow slices of the current batch for validation and
+writing; they need not copy or accumulate all samples. Their validity is not a
+permanent guarantee if a caller later mutates an array. The extractor does not
+modify a frame between validation and storage.
+
+### Trajectory representation and contract
+
+```python
+TrajectoryContract(windows, frame_contract)
+TrajectoryContract.validate(self, storage: ArrayStorage, *, batch_size: int = 1) -> None
+```
+
+The trajectory representation is the named arrays and metadata in `ArrayStorage`;
+no additional class holding every frame in RAM is required. The trajectory
+contract holds the complete requested window sequence and one shared frame
+contract. The window sequence is nonempty, and every window is validated against
+the source frame count before extraction. Window construction, stride, overlap,
+and final partial-window policies must be explicit before implementing selection.
+
+**Trajectory validation establishes:**
+
+- Stored source windows and their counts match the requested sequence exactly,
+  including order; no missing, duplicated, unexpected, or relabeled samples.
+- Stored residue identities match the contract's ordered identity tuple, and
+  feature names, shapes, dtypes, units, statistics, and dependency declarations
+  agree with their expected specifications.
+- Every feature block has shape `(S, *resolved_sample_shape)`, where
+  `S = len(windows)`. There are no shorter/longer channels.
+- Every stored sample passes the shared frame contract. Validation reads values
+  in bounded batches (`batch_size` must be a positive integer), including
+  cross-feature dependency checks; it does not load the full trajectory at once.
+
+Validation returns `None` on success and raises on a mismatch. Metadata and
+structural mismatches are checked before loading feature values. Physical
+validators are registered application code; archive text is never executed or
+imported to reconstruct them. Exact dataset/metadata keys and schema markers
+must be specified with the archive format before implementing this validator.
+
+### Extraction lifecycle and testing boundary
+
+1. Validate registration, source-window selection, and residue membership; build
+   the frame and trajectory contracts from these independent inputs.
+2. Enter `ArrayStorage.compress_and_cleanup` and process requested window batches
+   in order. Execute explicitly registered features in registration order.
+3. Validate every sample against its expected source window and frame contract,
+   then append its feature data to temporary storage. Store actual identity/unit
+   metadata consistently with the contracts.
+4. Validate the completed temporary trajectory against its contract, reading
+   stored values incrementally. This adds a verification read before compression.
+5. Exit normally to compress and publish. A failed extraction or validation
+   raises inside the context, so output is not published and cleanup is attempted.
+
+Batch size controls extraction working data; windows and feature statistics
+control temporal aggregation. No design guarantee is made about an individual
+backend's atomic-matrix memory use. Feature
+results/dependencies for completed batches can be released after writing.
+
+Use `icontract` for pre/postconditions and object invariants when implementing
+the stubs. Shared validation predicates should avoid divergent definitions.
+Essential caller-input, external-output, and archive checks must execute under
+`python -O`; decorators alone must not be their only enforcement. Frozen records
+do not make NumPy array contents immutable or prove numerical correctness.
+
+Before implementation, write tests for instance isolation, failed-registration
+state, dependency ordering, window/batch alignment, frame/trajectory mismatches, and
+failed validation preventing publication. Use small synthetic features for
+interface tests; use independently computed reference examples for physical
+extractors. Include equivalence tests for native and Python reductions where both
+are supported, unequal partial-batch counts, unsupported statistics, and rejection
+of summary dependencies that cannot supply a requested statistic. Exact built-in
+units/dtypes, energy definitions and diagonal
+conventions, numerical tolerances, and archive field names still require their
+own specifications before those components are implemented. Raw COM distances are
+Euclidean distances between per-frame COMs using the agreed V1 coordinate
+processing procedure; their window statistic must specify aggregation order.
+Electrostatic/vdW channels remain separate and signed.
+The COM backend specification must also address imaging/unwrapping state at batch
+boundaries, so a computational partition does not inadvertently change the
+physical quantities being extracted. Hydrogen-bond definitions remain future work.
+
 ## Verification boundary
 
 Current tests in `tests/test_storage.py` cover basic stacked writes, chunk
 defaults, within-batch mismatches, read-only deletion, and block listing.
+Constructor tests cover read-only local/ZIP access without attribute writes,
+missing stores/groups, all supported opening modes, root-array rejection, and
+closure/error preservation on failed initialization.
 They also cover context-manager cleanup and exception preservation, complete
 archive publication, destination preservation on compression failures, temporary
 output cleanup, and existing destination-path/ZIP-source behavior.

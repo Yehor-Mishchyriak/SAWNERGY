@@ -31,11 +31,22 @@
 - [ ] Include package `__init__.py` files and update `.gitignore` to include the new source and test directories.
 - [ ] Specify extraction and representation contracts in `docs/specifications.md`: feature meanings, units,
     shapes, atom/residue identities and ordering, frame selection, missing values, and archive metadata/layout.
+- [ ] Add a residue-level `selection` parameter mapping molecule IDs to lists of selected residue IDs,
+    e.g. `selection = {1: [10, 12, 15], 3: [40, 45]}`. Validate that each requested molecule/residue
+    exists and that each residue belongs to its specified molecule; do not silently drop missing selections.
+    Retain only selected residues and their atom memberships, and establish an explicit residue order shared
+    by all feature arrays. Extract individual features for these residues and pairwise features across the
+    complete selection, including pairs from different molecules. Add selection handling through a new
+    parser method or helper while preserving the existing `CpptrajMaskParser` public method and signature.
 - [ ] Reuse suitable helpers from `rin_util.py` and `sawnergy_util.py` through imports. Use `ArrayStorage`
     for named arrays and metadata; v2 serialization and validation can live in `reprs.py` initially.
-- [ ] Preserve separate physical features and explicit frame correspondence. The existing RIN pipeline sums
-    electrostatic and van der Waals energies, transforms residue matrices, and averages over frame batches;
-    `build_rin` is not a substitute for raw, per-frame v2 extraction.
+- [ ] Preserve separate physical features and explicit source-frame/window correspondence. The existing RIN
+    pipeline sums electrostatic and van der Waals energies and transforms residue matrices;
+    `build_rin` is not a substitute for extracting separate V2 physical features.
+- [ ] Define one output sample per source-frame window and a declared statistic per feature. Use a native
+    CPPTRAJ summary when it matches that statistic; otherwise reduce per-frame values in Python. Reject
+    unsupported configurations. Keep computational batching separate from window granularity, record source
+    windows/counts/statistics, and specify aggregation order for derived features such as COM distances.
 - [ ] Design tests from the specifications in `tests/v2/`, then implement the components with `icontract`
     pre-conditions, post-conditions, and invariants. Keep essential input/archive validation always active.
 - [ ] Complete extraction, representation, and archive I/O first (pipeline points 1 and 2); develop

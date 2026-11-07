@@ -4,6 +4,234 @@ import numpy as np
 import pytest
 from sawnergy import sawnergy_util
 
+
+@pytest.fixture(params=["local", "zip"])
+def unmarked_store(tmp_path, request):
+    data = np.arange(6, dtype=np.float32).reshape(3, 2)
+    path = tmp_path / ("unmarked.zip" if request.param == "zip" else "unmarked.zarr")
+    store = (sawnergy_util.ZipStore(path, mode="w") if request.param == "zip"
+             else sawnergy_util.LocalStore(path))
+    with store:
+        root = sawnergy_util.zarr.group(store=store)
+        root.attrs["description"] = "external group"
+        root.create_array("BLOCK", data=data)
+    return path, data
+
+
+def test_init_readonly_does_not_write_metadata(unmarked_store, monkeypatch):
+    path, data = unmarked_store
+    before = ({path: path.read_bytes()} if path.is_file() else
+              {p: p.read_bytes() for p in path.rglob("*") if p.is_file()})
+
+    def unexpected_write(*args, **kwargs):
+        pytest.fail("Read-only construction must not attempt attribute writes")
+
+    monkeypatch.setattr(sawnergy_util.zarr.core.attributes.Attributes, "__setitem__", unexpected_write)
+    with sawnergy_util.ArrayStorage(path, "r") as storage:
+        assert storage.store.read_only
+        assert storage.root.store.read_only
+        assert dict(storage.root.attrs) == {"description": "external group"}
+        np.testing.assert_array_equal(storage.read("BLOCK"), data)
+        for key in ("array_chunk_size_in_block", "array_shape_in_block", "array_dtype_in_block"):
+            with pytest.raises(KeyError):
+                storage.get_attr(key)
+
+    after = ({path: path.read_bytes()} if path.is_file() else
+             {p: p.read_bytes() for p in path.rglob("*") if p.is_file()})
+    assert after == before
+
+
+@pytest.mark.parametrize("mode", ["r", "r+"])
+def test_init_missing_read_store_is_not_created(tmp_path, mode):
+    path = tmp_path / "missing" / "archive.zarr"
+    with pytest.raises(FileNotFoundError):
+        sawnergy_util.ArrayStorage(path, mode)
+    assert not path.parent.exists()
+
+
+@pytest.mark.parametrize("mode", ["r", "r+"])
+def test_init_missing_group_is_not_created(tmp_path, mode):
+    path = tmp_path / "empty.zarr"
+    path.mkdir()
+    with pytest.raises(FileNotFoundError):
+        sawnergy_util.ArrayStorage(path, mode)
+    assert list(path.iterdir()) == []
+
+
+@pytest.mark.parametrize("mode", ["a", "w", "w-"])
+def test_init_creation_modes(tmp_path, mode):
+    path = tmp_path / "created.zarr"
+    with sawnergy_util.ArrayStorage(path, mode) as storage:
+        assert storage.store_path == path
+        assert isinstance(storage.root, sawnergy_util.zarr.Group)
+        for key in ("array_chunk_size_in_block", "array_shape_in_block", "array_dtype_in_block"):
+            assert storage.get_attr(key) == {}
+
+
+@pytest.mark.parametrize("mode", ["a", "r+", "w", "w-"])
+def test_init_existing_store_respects_mode(tmp_path, mode):
+    path = tmp_path / "existing.zarr"
+    data = np.array([[1, 2]], dtype=np.int16)
+    with sawnergy_util.ArrayStorage(path, "w") as storage:
+        storage.write(data, "BLOCK", arrays_per_chunk=1)
+        storage.add_attr("description", "preserve")
+    before = {p: p.read_bytes() for p in path.rglob("*") if p.is_file()}
+
+    if mode == "w-":
+        with pytest.raises(FileExistsError):
+            sawnergy_util.ArrayStorage(path, mode)
+        assert {p: p.read_bytes() for p in path.rglob("*") if p.is_file()} == before
+    else:
+        with sawnergy_util.ArrayStorage(path, mode) as storage:
+            if mode == "w":
+                assert storage.list_blocks() == []
+                with pytest.raises(KeyError):
+                    storage.get_attr("description")
+            else:
+                np.testing.assert_array_equal(storage.read("BLOCK"), data)
+                assert storage.get_attr("description") == "preserve"
+                assert storage.get_attr("array_chunk_size_in_block") == {"BLOCK": 1}
+                storage.write(data, "BLOCK")
+                np.testing.assert_array_equal(storage.read("BLOCK"), np.concatenate([data, data]))
+
+
+@pytest.mark.parametrize("mode", ["a", "r+"])
+def test_init_writable_initializes_missing_metadata(tmp_path, mode):
+    path = tmp_path / "external.zarr"
+    with sawnergy_util.LocalStore(path) as store:
+        root = sawnergy_util.zarr.group(store=store)
+        root.attrs["description"] = "preserve"
+        root.attrs["array_chunk_size_in_block"] = {"BLOCK": 4}
+    with sawnergy_util.ArrayStorage(path, mode) as storage:
+        assert storage.get_attr("description") == "preserve"
+        assert storage.get_attr("array_chunk_size_in_block") == {"BLOCK": 4}
+        assert storage.get_attr("array_shape_in_block") == {}
+        assert storage.get_attr("array_dtype_in_block") == {}
+
+
+@pytest.mark.parametrize("mode", ["invalid", "", None])
+def test_init_invalid_mode_does_not_create_store(tmp_path, mode):
+    path = tmp_path / "invalid.zarr"
+    with pytest.raises(ValueError):
+        sawnergy_util.ArrayStorage(path, mode)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("mode", ["r", "r+", "a"])
+def test_init_rejects_array_root_without_mutation(tmp_path, monkeypatch, mode):
+    path = tmp_path / "array.zarr"
+    with sawnergy_util.LocalStore(path) as store:
+        sawnergy_util.zarr.create_array(store=store, data=np.arange(3))
+    before = {p: p.read_bytes() for p in path.rglob("*") if p.is_file()}
+    closed = []
+    close = sawnergy_util.LocalStore.close
+
+    def record_close(self):
+        closed.append(self.root)
+        close(self)
+
+    monkeypatch.setattr(sawnergy_util.LocalStore, "close", record_close)
+    with pytest.raises(TypeError, match="must be a group"):
+        sawnergy_util.ArrayStorage(path, mode)
+    assert path in closed
+    assert {p: p.read_bytes() for p in path.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("stage,error_type", [("open", OSError), ("open", KeyboardInterrupt),
+                                             ("attributes", OSError)])
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_init_failure_closes_store_and_preserves_error(unmarked_store, monkeypatch, stage, error_type, close_fails):
+    path, _ = unmarked_store
+    error = error_type("initialization failed")
+    backend = sawnergy_util.ZipStore if path.suffix == ".zip" else sawnergy_util.LocalStore
+    mode = "r" if path.suffix == ".zip" else "a"
+    closed = []
+    close = backend.close
+
+    def record_close(self):
+        is_target = getattr(self, "path", getattr(self, "root", None)) == path
+        if is_target:
+            closed.append(self)
+        close(self)
+        if close_fails and is_target:
+            raise OSError("closing failed")
+
+    def unexpected_fallback(*args, **kwargs):
+        pytest.fail("Initialization must not retry group creation")
+
+    if stage == "open":
+        open_store = sawnergy_util.zarr.open
+
+        def fail_open(*args, **kwargs):
+            open_store(*args, **kwargs)
+            raise error
+
+        monkeypatch.setattr(sawnergy_util.zarr, "open", fail_open)
+    else:
+        def fail_attributes(self):
+            raise error
+
+        monkeypatch.setattr(sawnergy_util.zarr.Group, "attrs", property(fail_attributes))
+
+    monkeypatch.setattr(backend, "close", record_close)
+    monkeypatch.setattr(sawnergy_util.zarr, "group", unexpected_fallback)
+    with pytest.raises(error_type) as caught:
+        sawnergy_util.ArrayStorage(path, mode)
+    assert caught.value is error
+    assert closed
+
+
+def test_init_metadata_write_failure_closes_store(tmp_path, monkeypatch):
+    path = tmp_path / "metadata.zarr"
+    error = OSError("metadata write failed")
+    closed = []
+    close = sawnergy_util.LocalStore.close
+    attributes = sawnergy_util.zarr.core.attributes.Attributes
+    assign = attributes.__setitem__
+
+    def fail_metadata(self, key, value):
+        if key == "array_shape_in_block":
+            raise error
+        assign(self, key, value)
+
+    def record_close(self):
+        if self.root == path:
+            closed.append(self)
+        close(self)
+
+    monkeypatch.setattr(attributes, "__setitem__", fail_metadata)
+    monkeypatch.setattr(sawnergy_util.LocalStore, "close", record_close)
+    with pytest.raises(OSError) as caught:
+        sawnergy_util.ArrayStorage(path, "a")
+    assert caught.value is error
+    assert closed
+
+
+@pytest.mark.parametrize("mode", ["w", "w-"])
+def test_init_creation_failure_closes_store(tmp_path, monkeypatch, mode):
+    path = tmp_path / "creation.zarr"
+    error = OSError("group creation failed")
+    closed = []
+    open_group = sawnergy_util.zarr.open_group
+    close = sawnergy_util.LocalStore.close
+
+    def fail_creation(*args, **kwargs):
+        open_group(*args, **kwargs)
+        raise error
+
+    def record_close(self):
+        if self.root == path:
+            closed.append(self)
+        close(self)
+
+    monkeypatch.setattr(sawnergy_util.zarr, "open_group", fail_creation)
+    monkeypatch.setattr(sawnergy_util.LocalStore, "close", record_close)
+    with pytest.raises(OSError) as caught:
+        sawnergy_util.ArrayStorage(path, mode)
+    assert caught.value is error
+    assert closed
+
+
 def test_write_accepts_stacked_ndarray(tmp_path):
     p = tmp_path / "arrs"
     with sawnergy_util.ArrayStorage(p, mode="w") as st:
