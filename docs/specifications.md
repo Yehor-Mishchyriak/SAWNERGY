@@ -304,7 +304,7 @@ the resulting metadata error; dependency compatibility requires separate work.
 | --- | --- | --- |
 | `write(these_arrays, to_block_named, *, arrays_per_chunk=None)` | Writable store; finite homogeneous items or stacked ndarray `(K, *item_shape)`; stable shape/dtype across appends; positive integer chunk length if supplied | Append `K` items in order, retaining old rows; return `None`. Empty input creates no block. Read mode raises `RuntimeError`; within-batch shape/dtype differences raise `ValueError`; cached shape/dtype/chunk conflicts raise `RuntimeError` |
 | `read(from_block_named, ids=None)` | Existing array; valid axis-0 integer, slice, or 1D integer index collection | Detached NumPy copy with stored dtype. `None` reads all; an integer drops axis 0; slices/collections retain it. Collections use orthogonal indexing after NumPy index coercion. Missing name raises `KeyError`; non-array member raises `TypeError`; selection errors propagate |
-| `block_iter(from_block_named, *, step=1)` | Existing array; positive integer step | Detached copies of consecutive slices, at most `step` rows each, covering axis 0 in order. Missing/non-array members raise `KeyError`/`TypeError`. Positive step is not explicitly validated; an externally created scalar array is yielded once |
+| `block_iter(from_block_named, *, step=1)` | Existing array; positive integer step | Detached copies of consecutive slices, at most `step` rows each, covering axis 0 in order, with dtype and trailing dimensions preserved. Zero/negative steps raise `ValueError("step must be positive")`, including for empty/scalar arrays. Missing/non-array members raise `KeyError`/`TypeError`; scalar arrays are yielded once |
 | `list_blocks()` | Open store | Sorted names of immediate root arrays; no recursive subgroup listing |
 | `delete_block(named)` | Writable store; existing block | Remove member and entries from all three storage mappings; read mode raises `RuntimeError`, missing name `KeyError` |
 | `add_attr(key, val)` | Writable store; string key; JSON-compatible value after conversions below | Set/replace root attribute; read mode raises `RuntimeError`; unsupported values may raise serialization errors |
@@ -321,6 +321,12 @@ later omission reuses the stored value. Empty writes in read mode still raise.
 `write` creates the block/metadata before validating remaining items, so failed
 validation may leave an empty block. Resize precedes assignment: writes are
 **not transactional**, and failed writes need not restore their prior state.
+
+`block_iter` validates when iteration begins, as with other generator errors.
+For positive steps, empty arrays yield no chunks; scalar arrays yield one scalar
+NumPy array. Modifying a yielded chunk does not modify storage. Writes and appends
+preserve zero-length item dimensions in array shapes and metadata while keeping
+chunk dimensions positive, as described in the common archive layout above.
 
 ### `compress(into=None, *, compression_level)`
 
