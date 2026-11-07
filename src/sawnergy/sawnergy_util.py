@@ -1044,12 +1044,13 @@ def batches_of(iterable: Iterable,
 
     When `ranges=True`, yields 0-based index ranges based on consumption
     order: `(start, end_exclusive)` (or `(start, end_inclusive)` if
-    `inclusive_end=True`) without materializing the data.
+    `inclusive_end=True`). Generic iterables are consumed into lists even
+    in range mode. Empty inputs yield nothing in either mode.
 
     Args:
       iterable: Any iterable to batch (sequence or generator).
-      batch_size: Number of items per batch. If <= 0, the entire iterable is
-        yielded as a single batch. Defaults to -1.
+      batch_size: Number of items per batch. If <= 0, the entire nonempty
+        iterable is yielded as a single batch. Defaults to -1.
       out_as: Constructor to wrap each yielded batch (e.g., `list`, `tuple`)
         or to wrap the index pair when `ranges=True`. Defaults to `list`.
       ranges: If True, yield index ranges instead of data batches. Defaults to False.
@@ -1067,7 +1068,7 @@ def batches_of(iterable: Iterable,
       [[1, 2], [3, 4], [5]]
 
       >>> list(batches_of(range(10), batch_size=4, ranges=True))
-      [(0, 4), (4, 8), (8, 10)]
+      [[0, 4], [4, 8], [8, 10]]
 
       >>> gen = (i*i for i in range(7))
       >>> list(batches_of(gen, batch_size=3, out_as=tuple))
@@ -1083,6 +1084,8 @@ def batches_of(iterable: Iterable,
         is_sliceable = False
 
     if is_sliceable:
+        if n == 0:
+            return
         if batch_size <= 0:
             batch_size = n
         for start in range(0, n, batch_size):
@@ -1099,6 +1102,8 @@ def batches_of(iterable: Iterable,
     if batch_size <= 0:
         # consume everything into a single batch
         chunk = list(it)
+        if not chunk:
+            return
         if ranges:
             end_excl = len(chunk)
             yield out_as((0, end_excl - 1)) if inclusive_end else out_as((0, end_excl))

@@ -427,23 +427,26 @@ it does not itself establish that application code has a main-entry guard.
 ### `batches_of(iterable, batch_size=-1, *, out_as=list, ranges=False, inclusive_end=False)`
 
 **Preconditions:** Finite iterable, integer batch size, and constructor `out_as`
-accepting a batch or index pair. For an empty sliceable input use a positive
-size: the default/nonpositive branch otherwise attempts a zero range step and
-raises `ValueError`.
+accepting a batch or index pair.
 
 **Postconditions:** Positive size yields consecutive nonempty batches of at most
 that size, preserving each item once and in order. Nonpositive size yields one
 batch for nonempty input. Range mode returns **0-based consumption positions**,
 not input values: `(start, stop_exclusive)` or `(start, end_inclusive)`, wrapped
 with `out_as`. Thus `batches_of([10, 20, 30], 2, ranges=True)` yields `[0, 2]`,
-`[2, 3]` because the default wrapper is `list` (the docstring shows tuples).
+`[2, 3]` because the default wrapper is `list`.
 `inclusive_end` does not affect data batches.
 
-Empty input with positive size yields nothing. An empty generic iterator with
-nonpositive size yields one empty batch, or `[0, 0]` / `[0, -1]` for exclusive /
-inclusive ranges. Sliceable inputs are sliced; generic inputs are consumed into
-lists, including in range mode. Nonpositive sizes provide no bounded-memory
-guarantee. These index ranges are not CPPTRAJ's 1-based inclusive frame ranges.
+**Empty-input postcondition:** Empty sequences, NumPy arrays, iterators, and
+generators yield nothing for every valid batch size, including the default,
+zero, and negative sizes. This applies to data batches and exclusive/inclusive
+ranges. There is no empty batch, fabricated range, zero-step error, or call to
+`out_as` for empty input.
+
+Sliceable inputs are sliced; generic inputs are consumed into lists, including
+in range mode. Nonpositive sizes provide no bounded-memory guarantee. These index
+ranges are not CPPTRAJ's 1-based inclusive frame ranges. The signature, default
+wrapper, and nonempty batching/range conventions are preserved.
 
 ### Small file/environment/pipeline helpers
 
@@ -775,6 +778,9 @@ output cleanup, and existing destination-path/ZIP-source behavior.
 `tests/test_rin.py` checks synthetic parsing, RIN data flow, candidate
 deduplication, rejection of non-finite pairwise output, exact script termination,
 subprocess argument/environment forwarding, and unchanged exception propagation.
+`tests/test_sawnergy_util.py` checks empty sequences, arrays, iterators, and
+generators across batch sizes and range modes, plus preservation of nonempty
+batch contents, range endpoints, and output wrappers.
 Walk/embedding tests
 exercise ordered archives, seed forwarding, and warm starts; plotting fixtures
 replace GUI setup. CPPTRAJ calls and pipeline shared memory are mocked.
