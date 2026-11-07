@@ -108,3 +108,76 @@ def test_pairwise_nonfinite_values_raise_clear_error(monkeypatch):
         builder._calc_avg_atomic_interactions_in_frames(
             (10, 10), "top.prmtop", "traj.nc", molecule_id=1
         )
+
+
+@pytest.mark.parametrize("script,expected", [
+    (None, None),
+    ("", "quit\n"),
+    ("   ", "   \nquit\n"),
+    ("run", "run\nquit\n"),
+    ("run\n", "run\nquit\n"),
+    ("run\r\n", "run\r\nquit\n"),
+    ("run\n\n", "run\n\nquit\n"),
+    ("writedata results.quit", "writedata results.quit\nquit\n"),
+    ("printdata quit", "printdata quit\nquit\n"),
+    ("help quit", "help quit\nquit\n"),
+    ("run\n# quit", "run\n# quit\nquit\n"),
+    ("run\n# quit\n", "run\n# quit\nquit\n"),
+    ("quit", "quit"),
+    ("run\nquit\n", "run\nquit\n"),
+    ("run\n  QuIt  \n\n", "run\n  QuIt  \n\n"),
+    ("run\r\nquit\r\n", "run\r\nquit\r\n"),
+    ("run\nquit # finished", "run\nquit # finished"),
+    ("run\nquit\n# trailing comment\n", "run\nquit\n# trailing comment\n"),
+    ("run\nquit # finished\n\n# another comment\n",
+     "run\nquit # finished\n\n# another comment\n"),
+])
+def test_run_cpptraj_script_termination_and_forwarding(monkeypatch, script, expected):
+    executable = "/path with spaces/cpptraj"
+    argv = ["-p", "topology with spaces.prmtop"]
+    env = {"OMP_NUM_THREADS": "1"}
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, stdout="original\nstdout\n", stderr="warning")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    output = rin_util.run_cpptraj(executable, script=script, argv=argv, timeout=5, env=env)
+
+    assert output == "original\nstdout\n"
+    assert calls == [([executable] + argv, dict(input=expected, text=True,
+                                              capture_output=True, check=True,
+                                              timeout=5, env=env))]
+    assert argv == ["-p", "topology with spaces.prmtop"]
+    assert env == {"OMP_NUM_THREADS": "1"}
+
+
+def test_run_cpptraj_default_arguments(monkeypatch):
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert rin_util.run_cpptraj("cpptraj") == ""
+    assert calls == [(["cpptraj"], dict(input=None, text=True, capture_output=True,
+                                       check=True, timeout=None, env=None))]
+
+
+@pytest.mark.parametrize("error", [
+    subprocess.CalledProcessError(2, ["cpptraj"], output="partial", stderr="failed"),
+    subprocess.TimeoutExpired(["cpptraj"], 5, output="partial", stderr="waiting"),
+    OSError("launch failed"),
+    KeyboardInterrupt("interrupted"),
+])
+def test_run_cpptraj_preserves_subprocess_errors(monkeypatch, error):
+    def fail_run(args, **kwargs):
+        assert kwargs["input"] == "run\nquit\n"
+        raise error
+
+    monkeypatch.setattr(subprocess, "run", fail_run)
+    with pytest.raises(type(error)) as caught:
+        rin_util.run_cpptraj("cpptraj", script="run", timeout=5)
+    assert caught.value is error

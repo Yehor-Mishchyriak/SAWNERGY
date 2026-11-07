@@ -211,22 +211,30 @@ feature support or numerical-output compatibility.
 
 **Preconditions:** Runnable executable; argument strings in `argv` if supplied;
 text `script` if supplied; `timeout=None` or a positive subprocess time limit.
-A script must end in a newline unless it already terminates in `quit`.
+Script text contains complete CPPTRAJ commands on separate lines; a final
+newline is optional.
 `env=None` inherits the environment; a supplied dictionary is a complete child
 environment with string keys/values. Use `create_updated_subprocess_env` for
 inherited overrides. Script and argv may both be supplied.
 
 **Postconditions:** Run `[cpptraj] + (argv or [])` without a shell, capture
 stdout/stderr as text, and return stdout unchanged on exit code zero. Send the
-script on stdin; append `"quit\n"` directly unless
-`script.rstrip().lower().endswith("quit")`. With `script=None`, stdin input is
-`None`. The caller's list/string is not mutated.
+script on stdin. For termination detection, strip `#` comments from each line,
+ignore blank/comment-only lines, and compare the last remaining line with the
+standalone command `quit`, ignoring surrounding whitespace and case. If it is
+already terminated, forward the original script unchanged, including comments
+and whitespace. Otherwise append `quit\n` on its own line, inserting a separating
+newline when the nonempty script does not end in `\n`. An empty script becomes
+`"quit\n"`; with `script=None`, stdin input remains `None`. A filename, dataset
+name, command argument, or comment ending in `quit` is not a terminator. The
+caller's argument list, environment, and script are not mutated.
 
 **Failures/limits:** Nonzero exit raises `subprocess.CalledProcessError` with
 captured output; timeout and launch errors propagate. Successful exit does not
-validate datasets or physical values. The suffix check is not a command parser;
-no separating newline is inserted before appended `quit`. Tests should check
-the exact subprocess stdin, argument list, environment, and failure propagation.
+validate datasets or physical values. Termination detection is a line-based
+check, not a general parser for multiline/continued commands or quoted script
+blocks. Callers remain responsible for valid CPPTRAJ syntax. Tests check exact
+stdin, argument/environment forwarding, and preservation of subprocess failures.
 
 ### `CpptrajMaskParser.hierarchize_molecular_composition(mol_compositions_file)`
 
@@ -765,7 +773,9 @@ They also cover context-manager cleanup and exception preservation, complete
 archive publication, destination preservation on compression failures, temporary
 output cleanup, and existing destination-path/ZIP-source behavior.
 `tests/test_rin.py` checks synthetic parsing, RIN data flow, candidate
-deduplication, and rejection of non-finite pairwise output. Walk/embedding tests
+deduplication, rejection of non-finite pairwise output, exact script termination,
+subprocess argument/environment forwarding, and unchanged exception propagation.
+Walk/embedding tests
 exercise ordered archives, seed forwarding, and warm starts; plotting fixtures
 replace GUI setup. CPPTRAJ calls and pipeline shared memory are mocked.
 
