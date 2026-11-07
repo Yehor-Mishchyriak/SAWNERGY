@@ -318,9 +318,26 @@ mappings with inconsistent metadata.
 
 First-write omission of `arrays_per_chunk` defaults to 10 with `RuntimeWarning`;
 later omission reuses the stored value. Empty writes in read mode still raise.
-`write` creates the block/metadata before validating remaining items, so failed
-validation may leave an empty block. Resize precedes assignment: writes are
-**not transactional**, and failed writes need not restore their prior state.
+For nonempty writes, validate every item's shape/dtype and materialize the batch
+before creating a block or changing metadata. The materialized shape must be
+`(len(these_arrays), *item_shape)`; a custom conversion cannot silently add/drop
+items or change their shape. Resolve cached shape/dtype/chunk
+settings without mutation, and check an existing member's array type, axis-0
+presence, item shape, dtype, and axis-0 chunk length before filling missing
+metadata. Cached conflicts retain `RuntimeError`; incompatible existing member
+type/shape/dtype raises `TypeError`, and an incompatible existing chunk length
+raises `RuntimeError`. Resolved chunk lengths must be positive.
+
+**Failure postcondition:** Rejected shape, dtype, or chunk arguments, batch
+conversion errors, and warnings promoted to errors leave array contents, shapes,
+members, and metadata unchanged. In particular, validation cannot leave a new
+empty block or partially filled metadata mappings. Empty input remains a no-op
+without chunk validation or block creation.
+
+After validation succeeds, create any new block and record its metadata, then
+resize and assign data. These storage mutations are **not transactional**: an
+I/O/codec failure during creation, metadata persistence, resize, or assignment
+may leave partial state. This patch does not add rollback for such failures.
 
 `block_iter` validates when iteration begins, as with other generator errors.
 For positive steps, empty arrays yield no chunks; scalar arrays yield one scalar
@@ -737,6 +754,10 @@ physical quantities being extracted. Hydrogen-bond definitions remain future wor
 
 Current tests in `tests/test_storage.py` cover basic stacked writes, chunk
 defaults, within-batch mismatches, read-only deletion, and block listing.
+Write-validation tests compare in-memory metadata and stored files before/after
+rejected calls, including partial metadata, incompatible members/chunks, batch
+conversion, and warnings promoted to errors. Valid append/input forms and empty
+no-ops are also checked.
 Constructor tests cover read-only local/ZIP access without attribute writes,
 missing stores/groups, all supported opening modes, root-array rejection, and
 closure/error preservation on failed initialization.

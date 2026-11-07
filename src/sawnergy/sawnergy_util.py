@@ -134,12 +134,11 @@ class ArrayStorage:
     # --------- PRIVATE ----------
         
     def _array_chunk_size_in_block(self, named: str, *, given: int | None) -> int:
-        """Resolve per-block chunk length along axis 0; set default if unset."""
+        """Resolve per-block chunk length along axis 0 without changing metadata."""
         apc = self._attrs["array_chunk_size_in_block"]
         cached = apc.get(named)
         if cached is None:
             if given is None:
-                apc[named] = 10
                 _logger.warning(
                     "array_chunk_size_in_block not provided for '%s'; defaulting to 10", named
                 )
@@ -149,14 +148,12 @@ class ArrayStorage:
                     RuntimeWarning,
                     stacklevel=2,
                 )
+                return 10
             else:
                 if given <= 0:
                     _logger.error("Non-positive arrays_per_chunk for block '%s': %s", named, given)
                     raise ValueError("'array_chunk_size_in_block' must be positive")
-                apc[named] = int(given)
-            self._attrs["array_chunk_size_in_block"] = apc
-            _logger.debug("Set arrays_per_chunk for '%s' to %s", named, apc[named])
-            return apc[named]
+                return int(given)
 
         if given is None:
             return int(cached)
@@ -174,13 +171,10 @@ class ArrayStorage:
         return int(cached)
 
     def _array_shape_in_block(self, named: str, *, given: tuple[int, ...]) -> tuple[int, ...]:
-        """Resolve per-item shape for a block; enforce consistency if already set."""
+        """Resolve per-item shape without changing metadata; enforce consistency."""
         shp = self._attrs["array_shape_in_block"]
         cached = shp.get(named)
         if cached is None:
-            shp[named] = list(map(int, given))
-            self._attrs["array_shape_in_block"] = shp
-            _logger.debug("Set shape for '%s' to %s", named, shp[named])
             return tuple(given)
 
         cached_t = tuple(int(x) for x in cached)
@@ -196,14 +190,11 @@ class ArrayStorage:
         return cached_t
 
     def _array_dtype_in_block(self, named: str, *, given: np.dtype) -> np.dtype:
-        """Resolve dtype for a block; store/recover via dtype.str."""
+        """Resolve dtype without changing metadata; recover via dtype.str."""
         dty = self._attrs["array_dtype_in_block"]
         given = np.dtype(given)
         cached = dty.get(named)
         if cached is None:
-            dty[named] = given.str
-            self._attrs["array_dtype_in_block"] = dty
-            _logger.debug("Set dtype for '%s' to %s", named, dty[named])
             return given
 
         cached_dt = np.dtype(cached)
@@ -229,29 +220,42 @@ class ArrayStorage:
         shape = self._array_shape_in_block(named, given=shape)
         dtype = self._array_dtype_in_block(named, given=dtype)
         apc   = self._array_chunk_size_in_block(named, given=arrays_per_chunk)
+        if apc <= 0:
+            raise ValueError("'array_chunk_size_in_block' must be positive")
 
-        # if it already exists, validate and return it
+        # Validate the existing member before filling any missing metadata.
         if named in self.root:
             block = self.root[named]
             if not isinstance(block, zarr.Array):
                 raise TypeError(f"Member '{named}' is not a Zarr array")
-            if block.shape[1:] != shape:
+            if block.ndim == 0 or block.shape[1:] != shape:
                 raise TypeError(f"Incompatible existing shape {block.shape} vs (0,{shape})")
             if np.dtype(block.dtype) != np.dtype(dtype):
                 raise TypeError(f"Incompatible dtype {block.dtype} vs {dtype}")
-            return block
+            if block.chunks[0] != apc:
+                raise RuntimeError(f"Incompatible axis-0 chunk length {block.chunks[0]} vs {apc}")
+        else:
+            # Empty array axes are valid, but chunk dimensions must stay positive.
+            chunks = (int(apc),) + tuple(max(1, dim) for dim in shape)
+            _logger.debug("Creating array '%s' with shape=(0,%s), chunks=(%s,%s), dtype=%s",
+                        named, shape, apc, chunks[1:], dtype)
+            block = self.root.create_array(
+                name=named,
+                shape=(0,) + shape,
+                chunks=chunks,
+                dtype=dtype,
+            )
 
-        # otherwise, create the appendable array (length 0 along axis 0)
-        # Empty array axes are valid, but chunk dimensions must stay positive.
-        chunks = (int(apc),) + tuple(max(1, dim) for dim in shape)
-        _logger.debug("Creating array '%s' with shape=(0,%s), chunks=(%s,%s), dtype=%s",
-                    named, shape, apc, chunks[1:], dtype)
-        return self.root.create_array(
-            name=named,
-            shape=(0,) + shape,
-            chunks=chunks,
-            dtype=dtype,
-        )
+        for key, value in (
+            ("array_shape_in_block", list(shape)),
+            ("array_dtype_in_block", dtype.str),
+            ("array_chunk_size_in_block", apc),
+        ):
+            metadata = dict(self._attrs[key])
+            if metadata.get(named) is None:
+                metadata[named] = value
+                self._attrs[key] = metadata
+        return block
 
     # --------- PUBLIC ----------
 
@@ -271,6 +275,9 @@ class ArrayStorage:
         Appends a batch of arrays (all the same shape and dtype) to the Zarr array
         named `to_block_named`. The array grows along axis 0; chunk length is
         resolved per-block and stored in group attrs.
+        Validate and materialize the full batch and check block compatibility
+        before creating arrays or changing metadata. Storage I/O failures after
+        validation are not rolled back.
 
         Args:
         these_arrays: A sequence of NumPy arrays **or** a stacked ndarray with
@@ -299,11 +306,7 @@ class ArrayStorage:
         arr0 = np.asarray(these_arrays[0])
         _logger.info("Appending %d arrays to block '%s' (item_shape=%s, dtype=%s)",
                     len(these_arrays), to_block_named, arr0.shape, arr0.dtype)
-        block = self._setdefault(
-            to_block_named, tuple(arr0.shape), arr0.dtype, arrays_per_chunk
-        )
-
-        # quick validation
+        # Validate the full batch before creating a block or updating metadata.
         for i, a in enumerate(these_arrays[1:], start=1):
             a = np.asarray(a)
             if a.shape != arr0.shape:
@@ -313,7 +316,13 @@ class ArrayStorage:
                 _logger.error("Dtype mismatch at index %d: %s != %s", i, a.dtype, arr0.dtype)
                 raise ValueError(f"these_arrays[{i}] dtype {a.dtype} != {arr0.dtype}")
 
-        data = np.asarray(these_arrays, dtype=block.dtype)
+        data = np.asarray(these_arrays, dtype=arr0.dtype)
+        expected_shape = (len(these_arrays),) + arr0.shape
+        if data.shape != expected_shape:
+            raise ValueError(f"Converted batch shape {data.shape} != {expected_shape}")
+        block = self._setdefault(
+            to_block_named, tuple(arr0.shape), arr0.dtype, arrays_per_chunk
+        )
         k = data.shape[0]
         start = block.shape[0]
         block.resize((start + k,) + arr0.shape)

@@ -1,8 +1,134 @@
 from __future__ import annotations
 from pathlib import Path
+import json
 import numpy as np
 import pytest
 from sawnergy import sawnergy_util
+
+
+def _storage_state(storage):
+    return (
+        json.dumps(dict(storage.root.attrs), sort_keys=True),
+        {p.relative_to(storage.store_path): p.read_bytes() if p.is_file() else None
+         for p in storage.store_path.rglob("*")},
+    )
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("mismatch", ["shape", "dtype"])
+def test_write_rejected_batch_leaves_storage_unchanged(tmp_path, existing, mismatch):
+    good = np.ones((2, 2), dtype=np.float32)
+    bad = (np.ones((3, 2), dtype=np.float32) if mismatch == "shape"
+           else np.ones((2, 2), dtype=np.float64))
+    with sawnergy_util.ArrayStorage(tmp_path / "rejected_batch", "w") as storage:
+        if existing:
+            storage.write([good], "BLOCK", arrays_per_chunk=2)
+        before = _storage_state(storage)
+        with pytest.raises(ValueError):
+            storage.write([good, bad], "BLOCK", arrays_per_chunk=2)
+        assert _storage_state(storage) == before
+
+
+@pytest.mark.parametrize("chunk,error", [(0, ValueError), (-1, ValueError),
+                                       (0.5, ValueError), (float("nan"), ValueError),
+                                       ("bad", TypeError)])
+def test_write_invalid_chunk_leaves_storage_unchanged(tmp_path, chunk, error):
+    with sawnergy_util.ArrayStorage(tmp_path / "invalid_chunk", "w") as storage:
+        before = _storage_state(storage)
+        with pytest.raises(error):
+            storage.write(np.ones((1, 2, 2), dtype=np.float32), "BLOCK", arrays_per_chunk=chunk)
+        assert _storage_state(storage) == before
+
+
+@pytest.mark.parametrize("conflict", ["shape", "dtype", "chunk"])
+def test_write_cached_conflict_does_not_fill_other_metadata(tmp_path, conflict):
+    with sawnergy_util.ArrayStorage(tmp_path / "cached_conflict", "w") as storage:
+        storage.write(np.ones((1, 2, 2), dtype=np.float32), "BLOCK", arrays_per_chunk=2)
+        storage.add_attr("array_shape_in_block", {"BLOCK": [3, 2]} if conflict == "shape" else {})
+        storage.add_attr("array_dtype_in_block", {"BLOCK": np.dtype("float64").str} if conflict == "dtype" else {})
+        before = _storage_state(storage)
+        with pytest.raises(RuntimeError):
+            storage.write(np.ones((1, 2, 2), dtype=np.float32), "BLOCK",
+                          arrays_per_chunk=3 if conflict == "chunk" else 2)
+        assert _storage_state(storage) == before
+
+
+@pytest.mark.parametrize("conflict,error", [("shape", TypeError), ("dtype", TypeError),
+                                          ("subgroup", TypeError), ("scalar", TypeError),
+                                          ("chunk", RuntimeError)])
+def test_write_existing_member_conflict_leaves_storage_unchanged(tmp_path, conflict, error):
+    with sawnergy_util.ArrayStorage(tmp_path / "member_conflict", "w") as storage:
+        data = np.ones((1, 2, 2), dtype=np.float32)
+        if conflict == "subgroup":
+            storage.root.create_group("BLOCK")
+        elif conflict == "scalar":
+            storage.root.create_array("BLOCK", data=np.array(1, dtype=np.float32))
+            data = np.array([2], dtype=np.float32)
+        else:
+            existing = (np.ones((1, 3, 2), dtype=np.float32) if conflict == "shape"
+                        else data.astype(np.float64) if conflict == "dtype" else data)
+            storage.root.create_array("BLOCK", data=existing,
+                                      chunks=(4 if conflict == "chunk" else 2,) + existing.shape[1:])
+        before = _storage_state(storage)
+        with pytest.raises(error):
+            storage.write(data, "BLOCK", arrays_per_chunk=2)
+        assert _storage_state(storage) == before
+
+
+def test_write_batch_conversion_failure_leaves_storage_unchanged(tmp_path):
+    class UnconvertibleBatch(list):
+        def __array__(self, dtype=None, copy=None):
+            raise ValueError("batch conversion failed")
+
+    with sawnergy_util.ArrayStorage(tmp_path / "conversion", "w") as storage:
+        before = _storage_state(storage)
+        data = UnconvertibleBatch([np.ones((2, 2), dtype=np.float32)])
+        with pytest.raises(ValueError, match="batch conversion failed"):
+            storage.write(data, "BLOCK", arrays_per_chunk=2)
+        assert _storage_state(storage) == before
+
+
+@pytest.mark.parametrize("converted_shape", [(), (2, 2, 2)])
+def test_write_inconsistent_batch_conversion_leaves_storage_unchanged(tmp_path, converted_shape):
+    class InconsistentBatch(list):
+        def __array__(self, dtype=None, copy=None):
+            return np.ones(converted_shape, dtype=dtype)
+
+    with sawnergy_util.ArrayStorage(tmp_path / "converted_shape", "w") as storage:
+        before = _storage_state(storage)
+        data = InconsistentBatch([np.ones((2, 2), dtype=np.float32)])
+        with pytest.raises(ValueError):
+            storage.write(data, "BLOCK", arrays_per_chunk=2)
+        assert _storage_state(storage) == before
+
+
+@pytest.mark.filterwarnings("error::RuntimeWarning")
+def test_write_warning_error_leaves_storage_unchanged(tmp_path):
+    with sawnergy_util.ArrayStorage(tmp_path / "warning", "w") as storage:
+        before = _storage_state(storage)
+        with pytest.raises(RuntimeWarning):
+            storage.write(np.ones((1, 2, 2), dtype=np.float32), "BLOCK")
+        assert _storage_state(storage) == before
+
+
+@pytest.mark.parametrize("container", [list, tuple, np.asarray, iter])
+def test_write_valid_append_preserves_values_and_metadata(tmp_path, container):
+    first = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
+    second = np.full((1, 2, 2), 10, dtype=np.float32)
+    with sawnergy_util.ArrayStorage(tmp_path / "valid_append", "w") as storage:
+        storage.write(container(first), "BLOCK", arrays_per_chunk=2)
+        before = json.dumps(dict(storage.root.attrs), sort_keys=True)
+        storage.write(container(second), "BLOCK")
+        np.testing.assert_array_equal(storage.read("BLOCK"), np.concatenate([first, second]))
+        assert json.dumps(dict(storage.root.attrs), sort_keys=True) == before
+
+
+@pytest.mark.parametrize("container", [list, tuple, np.asarray, iter])
+def test_write_empty_batch_remains_noop(tmp_path, container):
+    with sawnergy_util.ArrayStorage(tmp_path / "empty_batch", "w") as storage:
+        before = _storage_state(storage)
+        storage.write(container([]), "BLOCK", arrays_per_chunk=0)
+        assert _storage_state(storage) == before
 
 
 @pytest.fixture(params=["local", "zip"])
