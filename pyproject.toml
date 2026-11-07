@@ -15,6 +15,7 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 dependencies = [
+  "icontract>=2.7",
   "numpy>=2.0",
   "zarr>=3.0",
   "threadpoolctl>=3.0",
