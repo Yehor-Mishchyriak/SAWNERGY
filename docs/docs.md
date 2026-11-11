@@ -4,12 +4,18 @@ A Python 3.11+ toolkit that converts molecular dynamics (MD) trajectories into r
 
 [![PyPI](https://img.shields.io/pypi/v/sawnergy)](https://pypi.org/project/sawnergy/) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Yehor-Mishchyriak/SAWNERGY/blob/main/LICENSE) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![GitHub](https://img.shields.io/badge/GitHub-Repo-black?logo=github)](https://github.com/Yehor-Mishchyriak/SAWNERGY) [![Thesis DOI](https://img.shields.io/badge/Thesis_DOI-10.14418%2Ffbzn3s9i-blue)](https://doi.org/10.14418/fbzn3s9i)
 
+<h2>Contents</h2>
+
+[TOC]
+
 ---
 
 ## Requirements
 - Python >= 3.11.
 - [`cpptraj`](https://ambermd.org/AmberTools.php) (AmberTools) discoverable on `PATH` **or** via `CPPTRAJ`, `AMBERHOME/bin`, or `CONDA_PREFIX/bin`. `RINBuilder` refuses to run without it.
 - Default dependencies are installed via `pip install sawnergy`; PureML (`ym-pure-ml`) is bundled. PyTorch is optional but required for the `model_base="torch"` embedding backend (GPU if available).
+
+---
 
 ## Installation
 ```bash
@@ -25,6 +31,8 @@ pip install sawnergy
 ![Residue interaction network](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/rin.png)
 
 ![Learned residue embedding](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/embedding.png)
+
+---
 
 ## More visual examples
 
@@ -120,6 +128,8 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 - Row-wise L1 normalization converts the energy map into a transition probability matrix. The walker then behaves like a residue-to-residue diffusion process biased by interaction strength, which is a reasonable proxy for signal or force propagation paths through the protein.
 - Random walks explore common routes; self-avoiding walks emphasize diverse, non-redundant paths. Time-aware walks allow transitions between frames when transition matrices remain similar, capturing slowly evolving conformations.
 - Skip-gram embeddings treat walk paths like sentences: residues that frequently co-occur along walks share similar vectors. This encodes community structure (e.g., domains, loops around a binding pocket) and how it shifts over time.
+
+---
 
 ## Quick-start MD example
 
