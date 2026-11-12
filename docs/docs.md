@@ -135,7 +135,7 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 
 ## Quick-start MD example
 
-A minimal dataset is included in `example_MD_for_quick_start/` on GitHub to let you run the full SAWNERGY pipeline immediately:
+A minimal dataset is available for download in `example_MD_for_quick_start/` on GitHub to let you run the full SAWNERGY pipeline immediately. [Download the example data](https://github.com/Yehor-Mishchyriak/SAWNERGY/tree/main/example_MD_for_quick_start)
 
 - `p53_DBD.prmtop` (topology), `p53_DBD.pdb` (reference), `p53_DBD.nc` (trajectory)
 - 1 µs production trajectory of the p53 DNA-binding domain, 1000 snapshots saved every 1 ns
@@ -146,7 +146,7 @@ See `example_MD_for_quick_start/brief_description.md`.
 
 ### Five-minute “first run” for newcomers
 1. Install: `pip install sawnergy` (and `pip install torch` if you want GPU training). Confirm `cpptraj -h` works in your shell or set `CPPTRAJ=/path/to/cpptraj`.
-2. Download the p53 quick-start folder and `cd` into the repo root.
+2. Download the three p53 example files into a folder named `example_MD_for_quick_start` beside your script or notebook. Start Python from the folder containing that data folder.
 3. Run the quick-start script above with `topology_file="example_MD_for_quick_start/p53_DBD.prmtop"` and `trajectory_file="example_MD_for_quick_start/p53_DBD.nc"`.
 4. Inspect the outputs: `RIN_demo.zip`, `WALKS_demo.zip`, and `EMBEDDINGS_demo.zip` (all are Zarr-in-zip archives). Try `sawnergy.visual.Visualizer("RIN_demo.zip").build_frame(1, show=True)` to see the network.
 5. Swap in your own trajectory/topology once you’ve seen the expected behavior.
@@ -165,16 +165,16 @@ Run the Python blocks in order. They can also become successive notebook cells.
 
 ### Prepare the files and Python session
 
-Use a source checkout containing V2. From the repository root, install it into the Python environment
-used by your script or notebook.
+Install or upgrade to SAWNERGY 2.0 or later in the Python environment used by your script or notebook.
 
 ```bash
-python -m pip install -e .
+python -m pip install --upgrade "sawnergy>=2.0"
 ```
 
 Install AmberTools separately and make `cpptraj` available as described in Requirements.
-Start your Python session from the repository root. All examples use the bundled files in
-`example_MD_for_quick_start/`.
+Download `p53_DBD.prmtop`, `p53_DBD.nc`, and `p53_DBD.pdb` into a folder named
+`example_MD_for_quick_start` beside your script or notebook. Start Python from the folder containing
+that data folder, or set `example` below to its full path. [Download the example data](https://github.com/Yehor-Mishchyriak/SAWNERGY/tree/main/example_MD_for_quick_start)
 
 ```python
 from io import StringIO
@@ -724,7 +724,7 @@ consume their corresponding archive types.
 
 | Problem | What to check |
 | --- | --- |
-| V2 imports fail | Install the checkout containing V2 into the Python environment used by your script or notebook. |
+| V2 imports fail | Upgrade to SAWNERGY 2.0 or later with `python -m pip install --upgrade "sawnergy>=2.0"` in the Python environment used by your script or notebook. |
 | An input file cannot be found | Check the working directory and the printed source paths in the setup block. |
 | CPPTRAJ cannot be found or executed | Check `cpptraj_path`, or set `CPPTRAJ` to its executable path before calling `locate_cpptraj()`. |
 | A molecule/residue pair is rejected | Use topology-global residue IDs and check which molecule owns each residue. |

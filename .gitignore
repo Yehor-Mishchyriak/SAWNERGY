@@ -50,6 +50,9 @@
 !example_analysis/*.png
 !example_analysis/*.md
 # ----------------------------
+!examples/
+!examples/*.ipynb
+# ----------------------------
 !JOSS/
 !JOSS/*.md
 !JOSS/*.bib
