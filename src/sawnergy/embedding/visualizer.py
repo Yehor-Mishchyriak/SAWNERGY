@@ -12,6 +12,7 @@ import logging
 # local
 from ..visual import visualizer_util
 from .. import sawnergy_util
+from .._archive_schema import validate_archive_schema
 
 # *----------------------------------------------------*
 #                        GLOBALS
@@ -84,6 +85,7 @@ class Visualizer:
         show: bool = False,
         normalize_rows: bool = False,
     ) -> None:
+        """Load embeddings, raising ValueError for invalid archive schema markers."""
         # Backend & pyplot
         visualizer_util.ensure_backend(show)
         import matplotlib.pyplot as plt
@@ -98,6 +100,7 @@ class Visualizer:
         # Load embeddings archive
         EMB_path = Path(EMB_path)
         with sawnergy_util.ArrayStorage(EMB_path, mode="r") as storage:
+            validate_archive_schema(storage.root.attrs, schema_name="shallow_residue_embeddings", schema_version=1)
             name = storage.get_attr("frame_embeddings_name")
             E = storage.read(name, slice(None))
         if E.ndim != 3:

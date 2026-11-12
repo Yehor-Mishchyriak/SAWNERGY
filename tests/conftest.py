@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable, Dict, Iterable, List
@@ -13,6 +15,29 @@ from sawnergy.walks import walker, walker_util
 from sawnergy.embedding import embedder as embedder_module
 from sawnergy.visual import visualizer as visualizer_module
 from sawnergy import sawnergy_util
+
+
+def pytest_collection_modifyitems(config, items):
+    selection = os.environ.get("SAWNERGY_TEST_GROUPS")
+    if not selection:
+        return
+    groups = set(json.loads(selection))
+    if "all" in groups:
+        return
+    from CICD.select_tests import group_for_test
+
+    selected, deselected = [], []
+    for item in items:
+        group = group_for_test(
+            item.path.relative_to(config.rootpath).as_posix(),
+            getattr(getattr(item, "callspec", None), "params", {}),
+            name=getattr(item, "originalname", item.name),
+            torch=item.get_closest_marker("torch") is not None,
+            pureml=item.get_closest_marker("pureml") is not None,
+        )
+        (selected if group in groups or group == "always" else deselected).append(item)
+    items[:] = selected
+    config.hook.pytest_deselected(items=deselected)
 
 
 # ---------------------------------------------------------------------------

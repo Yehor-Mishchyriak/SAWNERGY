@@ -27,6 +27,9 @@
 !tests/
 !tests/*.py
 # ----------------------------
+!tests/v2/
+!tests/v2/*.py
+# ----------------------------
 !CICD/
 !CICD/*.py
 !CICD/*.sh
@@ -73,6 +76,3 @@
 !docs/*.md
 !requirements.txt
 !pyproject.toml
-# ----------- TMP ------------
-!V2_migration.md
-# ----------------------------

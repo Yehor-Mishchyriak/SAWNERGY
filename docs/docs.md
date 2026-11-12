@@ -1,9 +1,12 @@
-# SAWNERGY Documentation
-
-![LOGO](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/SAWNERGY_Logo_cropped.png)
+<img src="https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/SAWNERGY_Logo_cropped.png" alt="SAWNERGY logo" width="400">
 
 A Python 3.11+ toolkit that converts molecular dynamics (MD) trajectories into residue interaction networks (RINs), samples random and self-avoiding walks (RW/SAW), trains skip-gram embeddings (PureML or PyTorch backends), and visualizes both networks and embeddings. All artifacts are Zarr v3 archives stored as compressed `.zip` files with rich metadata so every stage can be reproduced.
-[![PyPI](https://img.shields.io/pypi/v/sawnergy)](https://pypi.org/project/sawnergy/) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Yehor-Mishchyriak/SAWNERGY/blob/main/LICENSE) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![GitHub](https://img.shields.io/badge/GitHub-Repo-black?logo=github)](https://github.com/Yehor-Mishchyriak/SAWNERGY) [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.18277559-blue)](https://doi.org/10.5281/zenodo.18512893)
+
+[![PyPI](https://img.shields.io/pypi/v/sawnergy)](https://pypi.org/project/sawnergy/) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Yehor-Mishchyriak/SAWNERGY/blob/main/LICENSE) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![GitHub](https://img.shields.io/badge/GitHub-Repo-black?logo=github)](https://github.com/Yehor-Mishchyriak/SAWNERGY) [![Thesis DOI](https://img.shields.io/badge/Thesis_DOI-10.14418%2Ffbzn3s9i-blue)](https://doi.org/10.14418/fbzn3s9i)
+
+<h2>Contents</h2>
+
+[TOC]
 
 ---
 
@@ -11,6 +14,8 @@ A Python 3.11+ toolkit that converts molecular dynamics (MD) trajectories into r
 - Python >= 3.11.
 - [`cpptraj`](https://ambermd.org/AmberTools.php) (AmberTools) discoverable on `PATH` **or** via `CPPTRAJ`, `AMBERHOME/bin`, or `CONDA_PREFIX/bin`. `RINBuilder` refuses to run without it.
 - Default dependencies are installed via `pip install sawnergy`; PureML (`ym-pure-ml`) is bundled. PyTorch is optional but required for the `model_base="torch"` embedding backend (GPU if available).
+
+---
 
 ## Installation
 ```bash
@@ -21,11 +26,15 @@ pip install sawnergy
 
 ---
 
-## Small visual example (constructed fully from trajectory and topology files)
-![RIN](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/rin.png)
-![Embedding](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/embedding.png)
+## Visual example from trajectory and topology files
 
-## More visual examples:
+![Residue interaction network](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/rin.png)
+
+![Learned residue embedding](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/embedding.png)
+
+---
+
+## More visual examples
 
 ### Animated Temporal Residue Interaction Network of Full Length p53 Protein
 ![RIN_animation](https://raw.githubusercontent.com/Yehor-Mishchyriak/SAWNERGY/main/assets/RIN_animation_compressed.gif)
@@ -120,6 +129,8 @@ node indexing, and RNG seeds stay consistent across the toolchain.
 - Random walks explore common routes; self-avoiding walks emphasize diverse, non-redundant paths. Time-aware walks allow transitions between frames when transition matrices remain similar, capturing slowly evolving conformations.
 - Skip-gram embeddings treat walk paths like sentences: residues that frequently co-occur along walks share similar vectors. This encodes community structure (e.g., domains, loops around a binding pocket) and how it shifts over time.
 
+---
+
 ## Quick-start MD example
 
 A minimal dataset is included in `example_MD_for_quick_start/` on GitHub to let you run the full SAWNERGY pipeline immediately:
@@ -132,11 +143,11 @@ A minimal dataset is included in `example_MD_for_quick_start/` on GitHub to let 
 See `example_MD_for_quick_start/brief_description.md`.
 
 ### Five-minute “first run” for newcomers
-1) Install: `pip install sawnergy` (and `pip install torch` if you want GPU training). Confirm `cpptraj -h` works in your shell or set `CPPTRAJ=/path/to/cpptraj`.
-2) Download the p53 quick-start folder and `cd` into the repo root.
-3) Run the quick-start script above with `topology_file="example_MD_for_quick_start/p53_DBD.prmtop"` and `trajectory_file="example_MD_for_quick_start/p53_DBD.nc"`.
-4) Inspect the outputs: `RIN_demo.zip`, `WALKS_demo.zip`, and `EMBEDDINGS_demo.zip` (all are Zarr-in-zip archives). Try `sawnergy.visual.Visualizer("RIN_demo.zip").build_frame(1, show=True)` to see the network.
-5) Swap in your own trajectory/topology once you’ve seen the expected behavior.
+1. Install: `pip install sawnergy` (and `pip install torch` if you want GPU training). Confirm `cpptraj -h` works in your shell or set `CPPTRAJ=/path/to/cpptraj`.
+2. Download the p53 quick-start folder and `cd` into the repo root.
+3. Run the quick-start script above with `topology_file="example_MD_for_quick_start/p53_DBD.prmtop"` and `trajectory_file="example_MD_for_quick_start/p53_DBD.nc"`.
+4. Inspect the outputs: `RIN_demo.zip`, `WALKS_demo.zip`, and `EMBEDDINGS_demo.zip` (all are Zarr-in-zip archives). Try `sawnergy.visual.Visualizer("RIN_demo.zip").build_frame(1, show=True)` to see the network.
+5. Swap in your own trajectory/topology once you’ve seen the expected behavior.
 
 ---
 
@@ -144,11 +155,15 @@ See `example_MD_for_quick_start/brief_description.md`.
 
 All archives are Zarr v3 groups and can be opened directly with `sawnergy.sawnergy_util.ArrayStorage` (read via `mode="r"`; write/append via `mode="a"`/`"w"`). When compressed as `.zip`, they are **read-only**; create/append uses the `.zarr` directory form or a temporary store prior to compression.
 
+<div class="table-scroll" role="region" aria-label="SAWNERGY archive layouts" tabindex="0" markdown="block">
+
 | Archive | Core datasets (name → shape, dtype) | Key root attrs |
 | --- | --- | --- |
 | **RIN** | `ATTRACTIVE_transitions` `(T, N, N)` float32 (opt) • `REPULSIVE_transitions` `(T, N, N)` float32 (opt) • `ATTRACTIVE_energies` `(T, N, N)` float32 (opt; pre-normalized) • `REPULSIVE_energies` `(T, N, N)` float32 (opt) • `COM` `(T, N, 3)` float32 | `com_name="COM"` • `molecule_of_interest` • `frame_range` (tuple or None) • `frame_batch_size` • `prune_low_energies_frac` • `attractive_transitions_name` / `repulsive_transitions_name` (may be `None`) • `attractive_energies_name` / `repulsive_energies_name` (may be `None`) • `time_created` |
 | **Walks** | `ATTRACTIVE_RWs` `(T, N·num_RWs, L+1)` uint16 (opt) • `REPULSIVE_RWs` `(T, N·num_RWs, L+1)` uint16 (opt) • `ATTRACTIVE_SAWs` `(T, N·num_SAWs, L+1)` uint16 (opt) • `REPULSIVE_SAWs` `(T, N·num_SAWs, L+1)` uint16 (opt) | `seed` • `num_workers` • `in_parallel` • `batch_size_nodes` • `num_RWs` • `num_SAWs` • `node_count` • `time_stamp_count` • `walk_length` • `walks_per_node` • dataset name attrs for each channel (may be `None`) • `walks_layout="time_leading_3d"` • `time_created` |
 | **Embeddings** | `FRAME_EMBEDDINGS` `(T, N, D)` float32 | `frame_embeddings_name` • `time_stamp_count` • `node_count` • `embedding_dim` • `model_base` • `embedding_kind` (`"in"|"out"|"avg"`) • `objective` (`"sg"` or `"sgns"`) • `negative_sampling` • `num_epochs` • `batch_size` • `window_size` • `alpha` • `num_negative_samples` • `lr_step_per_batch` • `shuffle_data` • `device_hint` • `model_kwargs_repr` • `RIN_type` (`"attr"|"repuls"`) • `using` (`"RW"|"SAW"|"merged"`) • `source_WALKS_path` • walk metadata passthrough • `master_seed` • `per_frame_seeds` • `arrays_per_chunk` • `compression_level` • `created_at` |
+
+</div>
 
 `T` equals the number of frame **batches** produced by `RINBuilder` (i.e., `frame_range` swept in `frame_batch_size` steps). Walk node ids are **1-based** in storage; embedding training converts them to 0-based internally.
 
@@ -206,6 +221,7 @@ All archives are Zarr v3 groups and can be opened directly with `sawnergy.sawner
   - Why embeddings: residues that share walk context get nearby vectors, revealing communities or binding-site neighborhoods. Comparing embeddings across frames highlights how those communities reorganize over time (possible allosteric shifts).
 
 Backends:
+
 - `model_base="pureml"` (default): uses `SGNS_PureML` or `SG_PureML` (no biases). Device hint is ignored (PureML is CPU-only).
 - `model_base="torch"`: uses `SGNS_Torch` or `SG_Torch` (no biases). Defaults to CUDA if available unless `device` overrides it.
 

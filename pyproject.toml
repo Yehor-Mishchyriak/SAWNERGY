@@ -15,6 +15,7 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 dependencies = [
+  "icontract>=2.7",
   "numpy>=2.0",
   "zarr>=3.0",
   "threadpoolctl>=3.0",
@@ -44,3 +45,9 @@ zip-safe = false
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["sawnergy*"]
+
+[tool.pytest.ini_options]
+markers = [
+  "torch: tests exercising the real optional PyTorch backend",
+  "pureml: tests exercising the real PureML backend",
+]

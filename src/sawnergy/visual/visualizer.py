@@ -12,6 +12,7 @@ import logging
 # local
 from . import visualizer_util
 from .. import sawnergy_util
+from .._archive_schema import validate_archive_schema
 
 # *----------------------------------------------------*
 #                        GLOBALS
@@ -96,6 +97,9 @@ class Visualizer:
             Any missing channel remains disabled (None) but visualization still works
             just without edges of a specific missing type.
 
+        Raises:
+            ValueError: If archive schema markers are missing, malformed, or incompatible.
+
         Side Effects:
             - Selects a Matplotlib backend before importing pyplot; may fall back
                 to 'Agg' in headless environments when `show=True`.
@@ -118,6 +122,7 @@ class Visualizer:
     
         # ---------- LOAD THE DATA ---------- #
         with sawnergy_util.ArrayStorage(RIN_path, mode="r") as storage:
+            validate_archive_schema(storage.root.attrs, schema_name="rin", schema_version=1)
             com_name = storage.get_attr("com_name")
             attr_energies_name = storage.get_attr("attractive_energies_name")
             repuls_energies_name = storage.get_attr("repulsive_energies_name")
@@ -149,7 +154,9 @@ class Visualizer:
         self._scatter: PathCollection  = self._ax.scatter([], [], [], s=node_size, depthshade=depthshade, edgecolors="none")
         self._attr: Line3DCollection   = Line3DCollection(np.empty((0,2,3)), linewidths=edge_width, antialiased=antialiased)
         self._repuls: Line3DCollection = Line3DCollection(np.empty((0,2,3)), linewidths=edge_width, antialiased=antialiased)
-        self._ax.add_collection3d(self._attr); self._ax.add_collection3d(self._repuls) # set pointers to the attractive and repulsive collections
+        # Collections are already 3D; do not autoscale their initially empty data.
+        self._ax.add_collection(self._attr, autolim=False)
+        self._ax.add_collection(self._repuls, autolim=False)
         _logger.debug("Artists created | scatter(empty), attr_lines(empty), repuls_lines(empty).")
 
         # ---------- HELPER FIELDS --------- #

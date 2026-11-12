@@ -11,6 +11,7 @@ import os
 # local
 from . import walker_util
 from .. import __version__, sawnergy_util
+from .._archive_schema import validate_archive_schema
 
 # *----------------------------------------------------*
 #                        GLOBALS
@@ -55,7 +56,8 @@ class Walker:
                 a random 32-bit seed is chosen.
 
         Raises:
-            ValueError: If no matrices are found or arrays are not rank-3.
+            ValueError: If archive schema markers are missing, malformed, or
+                incompatible, no matrices are found, or arrays are not rank-3.
             RuntimeError: If attractive/repulsive shapes differ or matrices
                 are not square along the last two axes.
         """
@@ -63,6 +65,7 @@ class Walker:
 
         # Load numpy arrays from read-only storage
         with sawnergy_util.ArrayStorage(RIN_path, mode="r") as storage:
+            validate_archive_schema(storage.root.attrs, schema_name="rin", schema_version=1)
             attr_name = storage.get_attr("attractive_transitions_name")
             repuls_name = storage.get_attr("repulsive_transitions_name")
             attr_matrices  : np.ndarray | None = (
