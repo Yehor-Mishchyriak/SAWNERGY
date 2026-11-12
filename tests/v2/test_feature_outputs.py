@@ -13,7 +13,7 @@ from sawnergy.v2.traj_features.feature_extractor import ExtractionContext, Featu
 @pytest.fixture
 def ctx(tmp_path):
     return ExtractionContext(cpptraj=tmp_path / "cpptraj", topology_file=tmp_path / "topology",
-                             trajectory_file=tmp_path / "trajectory", selection_mask=":1,3",
+                             trajectory_file=tmp_path / "trajectory",
                              residue_ids=((1, 1), (2, 3)), atom_ids=((1, 2), (5,)),
                              frame_ids=(1, 3, 5), windows=((1, 3), (5,)))
 
@@ -157,7 +157,7 @@ class Extractor(FeatureExtractor):
     def distances(self, ctx):
         return np.ones((1, 1, 1))
 ctx = ExtractionContext(cpptraj='cpptraj', topology_file='topology', trajectory_file='trajectory',
-                        selection_mask=':1', residue_ids=((1, 1),), atom_ids=((1,),),
+                        residue_ids=((1, 1),), atom_ids=((1,),),
                         frame_ids=(1,), windows=((1,),))
 extractor = Extractor()
 extractor._validate_output(extractor.distances, extractor.distances(ctx), ctx)

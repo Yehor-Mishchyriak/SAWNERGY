@@ -14,7 +14,7 @@ from sawnergy.v2.traj_features.feature_extractor import DependencyReader, Extrac
 @pytest.fixture
 def context_inputs(tmp_path):
     return dict(cpptraj=tmp_path / "cpptraj", topology_file=tmp_path / "topology.prmtop",
-                trajectory_file=tmp_path / "trajectory.nc", selection_mask=" :1,3 ",
+                trajectory_file=tmp_path / "trajectory.nc",
                 residue_ids=[(1, 1), (2, 3)], atom_ids=[[1, 2], [5]],
                 frame_ids=[2, 4, 6], windows=[[2, 4], [6]])
 
@@ -32,7 +32,7 @@ def test_context_snapshots_inputs_and_freezes_fields(context_inputs):
     assert isinstance(ctx.cpptraj, Path) and ctx.cpptraj.is_absolute()
     assert ctx.topology_file == context_inputs["topology_file"].resolve()
     assert ctx.trajectory_file == context_inputs["trajectory_file"].resolve()
-    assert ctx.selection_mask == " :1,3 "
+    assert ctx.selection_mask == ":1,3"
     assert ctx.residue_ids == ((1, 1), (2, 3))
     assert ctx.atom_ids == ((1, 2), (5,))
     assert ctx.frame_ids == (2, 4, 6)
@@ -51,13 +51,19 @@ def test_context_allows_explicit_frames_without_windows(context_inputs):
     assert ctx.windows == ()
 
 
+def test_context_selection_mask_is_derived_from_fixed_residue_ids(context_inputs):
+    ctx = ExtractionContext(**context_inputs)
+    assert ctx.selection_mask == ":1,3"
+    with pytest.raises(TypeError):
+        ExtractionContext(**context_inputs, selection_mask=":1<:5.0")
+
+
 def test_context_allows_overlapping_windows(context_inputs):
     context_inputs["windows"] = [[2, 4], [4, 6]]
     assert ExtractionContext(**context_inputs).windows == ((2, 4), (4, 6))
 
 
 @pytest.mark.parametrize("field,value", [
-    ("selection_mask", " "), ("selection_mask", None),
     ("residue_ids", []), ("residue_ids", [(1,)]), ("residue_ids", [(True, 1)]),
     ("residue_ids", [(0, 1)]), ("residue_ids", [(1, True)]),
     ("residue_ids", [(1, 3), (2, 1)]), ("residue_ids", [(1, 1), (2, 1)]),
@@ -143,7 +149,7 @@ def test_context_validation_remains_active_under_optimization():
     source = """
 from sawnergy.v2.traj_features.feature_extractor import ExtractionContext
 inputs = dict(cpptraj='cpptraj', topology_file='topology', trajectory_file='trajectory',
-              selection_mask=':1', residue_ids=((1, 1),), atom_ids=((1,),),
+              residue_ids=((1, 1),), atom_ids=((1,),),
               frame_ids=(1,), windows=((1,),))
 ctx = ExtractionContext(**inputs)
 for field, value in (('frame_ids', (True,)), ('atom_ids', ((),)),

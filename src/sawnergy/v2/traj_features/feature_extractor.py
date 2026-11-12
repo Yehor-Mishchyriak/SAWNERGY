@@ -1,22 +1,29 @@
 """Feature metadata, execution inputs, and ordered discovery for trajectory extractors."""
 
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from inspect import isfunction
+import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import MappingProxyType, MethodType
 
 import icontract
 import numpy as np
 
 from sawnergy.sawnergy_util import ArrayStorage
+from sawnergy import sawnergy_util
+from sawnergy.rin import rin_util
+
+
+def _positive_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def _ordered_ids(values: tuple[int, ...]) -> bool:
     """Check nonempty, positive, strictly increasing integer IDs, excluding bools."""
     return (bool(values)
-            and all(isinstance(value, int) and not isinstance(value, bool) and value > 0
-                    for value in values)
+            and all(_positive_int(value) for value in values)
             and all(left < right for left, right in zip(values, values[1:])))
 
 
@@ -132,7 +139,7 @@ class ExtractionContext:
     Optional ``windows`` group those frames and may overlap. Structural
     violations raise ValueError, including under ``python -O``.
 
-    The caller validates source files, resolves the mask to complete residues,
+    The caller validates source files and selects complete residues by molecule/residue ID,
     and supplies completed dependencies matching the feature's ``requires``.
     Context construction normalizes and checks the supplied structure.
     """
@@ -140,7 +147,6 @@ class ExtractionContext:
     cpptraj: Path | str
     topology_file: Path | str
     trajectory_file: Path | str
-    selection_mask: str
     residue_ids: tuple[tuple[int, int], ...]
     atom_ids: tuple[tuple[int, ...], ...]
     frame_ids: tuple[int, ...]
@@ -157,11 +163,8 @@ class ExtractionContext:
         object.__setattr__(self, "windows", tuple(tuple(window) for window in self.windows))
         object.__setattr__(self, "dependencies", MappingProxyType(dict(self.dependencies)))
 
-        if not isinstance(self.selection_mask, str) or not self.selection_mask.strip():
-            raise ValueError("selection_mask must be a nonblank CPPTRAJ mask string.")
         if not self.residue_ids or any(
-            len(pair) != 2 or any(not isinstance(value, int) or isinstance(value, bool) or value <= 0
-                                  for value in pair) for pair in self.residue_ids
+            len(pair) != 2 or any(not _positive_int(value) for value in pair) for pair in self.residue_ids
         ):
             raise ValueError("residue_ids must contain positive integer (molecule_id, residue_id) pairs.")
         if not _ordered_ids(tuple(pair[1] for pair in self.residue_ids)):
@@ -181,6 +184,11 @@ class ExtractionContext:
                for name, reader in self.dependencies.items()):
             raise ValueError("dependencies must map nonempty feature names to DependencyReader objects.")
 
+    @property
+    def selection_mask(self) -> str:
+        """CPPTRAJ mask for the fixed, topology-global residue IDs in this context."""
+        return ":" + ",".join(str(residue) for _, residue in self.residue_ids)
+
 
 class FeatureExtractor:
     """Base class providing discovery of subclass-defined feature methods.
@@ -189,6 +197,90 @@ class FeatureExtractor:
     The private ``_feature_methods()`` helper returns those methods bound to
     the current instance, ready to be called with ``ctx``.
     """
+
+    @icontract.require(
+        lambda frame_stride, window_size: all(_positive_int(value) for value in (frame_stride, window_size)),
+        error=lambda: ValueError("frame_stride and window_size must be positive integers."), enabled=True)
+    @icontract.require(
+        lambda frame_range: frame_range is None or (
+            isinstance(frame_range, tuple) and len(frame_range) == 2
+            and all(_positive_int(value) for value in frame_range) and frame_range[0] <= frame_range[1]),
+        error=lambda: ValueError("frame_range must be an ordered, positive (first, last) tuple."), enabled=True)
+    def _prepare_inputs(self, topology_file: Path | str, trajectory_file: Path | str,
+                        cpptraj_path: Path | str, selection: Mapping[int, Sequence[int]], *,
+                        frame_range: tuple[int, int] | None = None, frame_stride: int = 1,
+                        window_size: int = 1) -> ExtractionContext:
+        """Validate sources and prepare fixed identities, selected frames, and windows.
+
+        ``selection`` maps molecule IDs to explicit topology-global residue IDs.
+        Every pair must exist. Complete atom memberships are read from CPPTRAJ
+        and ordered by topology residue ID. The context derives its numeric mask.
+
+        Frame bounds are 1-based and inclusive. Windows partition selected frames,
+        retaining the final short window. Trajectory features use the full context.
+        """
+        if not isinstance(selection, Mapping):
+            raise TypeError("selection must map molecule IDs to residue IDs.")
+        if not selection:
+            raise ValueError("selection must be nonempty.")
+        requested = {}
+        for molecule, residues in selection.items():
+            ids = tuple(residues)
+            if (not _positive_int(molecule) or not ids or not all(_positive_int(value) for value in ids)
+                    or len(set(ids)) != len(ids)):
+                raise ValueError("selection requires positive molecule IDs and distinct positive residue IDs.")
+            requested[molecule] = ids
+
+        topology_file, trajectory_file, cpptraj = (
+            Path(path).resolve() for path in (topology_file, trajectory_file, cpptraj_path))
+        for path in (topology_file, trajectory_file, cpptraj):
+            if not path.is_file():
+                raise FileNotFoundError(f"Input must be an existing file: {path}")
+        if not os.access(cpptraj, os.X_OK):
+            raise PermissionError(f"CPPTRAJ is not executable: {cpptraj}")
+        verified = Path(rin_util.locate_cpptraj(explicit=cpptraj, verify=True)).resolve()
+        if verified != cpptraj:
+            raise rin_util.CpptrajNotFound([cpptraj])
+
+        with TemporaryDirectory(prefix="sawnergy_input_") as directory:
+            # CPPTRAJ can split filenames containing spaces even when quoted.
+            topology = Path(directory) / f"topology{topology_file.suffix}"
+            trajectory = Path(directory) / f"trajectory{trajectory_file.suffix}"
+            topology.symlink_to(topology_file)
+            trajectory.symlink_to(trajectory_file)
+            raw = rin_util.run_cpptraj(str(cpptraj), argv=["-p", str(topology), "-y", str(trajectory), "-tl"])
+            try:
+                total_frames = int(raw.strip().removeprefix("Frames: "))
+            except ValueError as error:
+                raise RuntimeError("CPPTRAJ returned an invalid trajectory frame count.") from error
+            first, last = frame_range if frame_range is not None else (1, total_frames)
+            if total_frames <= 0 or last > total_frames:
+                raise ValueError(f"frame_range must lie within [1, {total_frames}].")
+            frames = tuple(range(first, last + 1, frame_stride))
+            windows = tuple(sawnergy_util.batches_of(frames, window_size, out_as=tuple))
+
+            table = Path(directory) / "atoms.dat"
+            script = rin_util.CpptrajScript((
+                f'trajin "{trajectory}" {first} {first}', f'mask :* out "{table}"')).render()
+            rin_util.run_cpptraj(str(cpptraj), argv=["-p", str(topology)], script=script)
+            composition = rin_util.CpptrajMaskParser.hierarchize_molecular_composition(str(table))
+        residue_ids = tuple(sorted(((molecule, residue) for molecule, ids in requested.items()
+                                    for residue in ids), key=lambda pair: pair[1]))
+        atom_ids = []
+        for molecule, residue in residue_ids:
+            if residue not in composition.get(molecule, {}):
+                raise ValueError(f"Unknown molecule/residue pair ({molecule}, {residue}).")
+            atom_ids.append(tuple(sorted(composition[molecule][residue])))
+        return ExtractionContext(cpptraj=cpptraj, topology_file=topology_file, trajectory_file=trajectory_file,
+                                 residue_ids=residue_ids, atom_ids=tuple(atom_ids), frame_ids=frames, windows=windows)
+
+    @icontract.require(lambda batch_size: _positive_int(batch_size), error=ValueError, enabled=True)
+    @icontract.require(lambda ctx: bool(ctx.windows), error=ValueError, enabled=True)
+    def _window_batches(self, ctx: ExtractionContext, *, batch_size: int = 1) -> Iterator[ExtractionContext]:
+        """Yield contexts for consecutive window batches with the same fixed selection."""
+        for windows in sawnergy_util.batches_of(ctx.windows, batch_size, out_as=tuple):
+            frames = tuple(sorted({frame for window in windows for frame in window}))
+            yield replace(ctx, frame_ids=frames, windows=windows)
 
     @icontract.ensure(lambda self, result: all(method.__self__ is self for method in result.values()),
                       enabled=True)

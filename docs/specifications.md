@@ -63,6 +63,7 @@
 | `rin` | `RINBuilder.build_rin` | `Walker.__init__`, `sawnergy.visual.Visualizer.__init__` |
 | `rin_walks` | `Walker.sample_walks` | `Embedder.__init__` |
 | `shallow_residue_embeddings` | `Embedder.embed_all` | `sawnergy.embedding.Visualizer.__init__` |
+| `traj_features` | V2 `.featurize()` — planned | V2 archive validation — planned |
 
 **Acceptance:** all markers present ∧ specified types ∧ nonboolean version ∧ expected `(schema_name,schema_version)`.
 
@@ -348,7 +349,7 @@ unavailable names, including under `python -O`. An override can remove or replac
 | Field | Contract |
 | --- | --- |
 | `cpptraj`, `topology_file`, `trajectory_file` | `str`/`Path` inputs snapshotted as resolved `Path` objects |
-| `selection_mask` | Nonblank CPPTRAJ mask string, preserved verbatim |
+| `selection_mask` | Read-only property derived from `residue_ids` as `:id1,id2,...`; topology-global residue IDs |
 | `residue_ids` | Nonempty topology-ordered `(molecule_id, residue_id)` pairs; positive nonboolean integers; strictly increasing topology residue IDs |
 | `atom_ids` | One nonempty, strictly increasing tuple of positive nonboolean atom IDs per residue; disjoint across residues |
 | `frame_ids` | Nonempty, strictly increasing tuple of positive nonboolean 1-based source-frame IDs for this call |
@@ -360,10 +361,10 @@ and read-only. Field reassignment raises `FrozenInstanceError`; dependency-map m
 Structural value violations raise `ValueError`; non-iterable sequences and invalid path types raise
 `TypeError`. Checks remain active under `python -O`.
 
-**CALLER PRE:** source paths identify validated inputs; the mask has been resolved to the supplied complete
-residues/atoms. Dependencies are completed, validated outputs for exactly the current feature's `requires`.
-These semantic checks and resource ownership will be enforced by `.featurize()`; context construction
-validates structure and snapshots inputs without launching CPPTRAJ or opening source files.
+**CALLER PRE:** source paths identify validated inputs; residue/atom membership matches the topology.
+Dependencies are completed, validated outputs for exactly the current feature's `requires`.
+Context construction validates structure and snapshots inputs. Input preparation validates sources and
+topology membership. `.featurize()` will enforce dependency semantics and resource ownership.
 
 ### Feature outputs
 
@@ -373,14 +374,15 @@ validates structure and snapshots inputs without launching CPPTRAJ or opening so
 Feature methods accept `(self, ctx)` and return an ndarray. Dependencies are accessed through `ctx`.
 Validation is explicit. The planned `.featurize()` calls this check before writing each output.
 
-| Kind | Scope | Required output shape |
-| --- | --- | --- |
-| Pairwise | Window | `(B, N, N)` |
-| Global | Window | `(B, *shape)` |
-| Pairwise | Trajectory | `(N, N)` |
-| Global | Trajectory | `shape` |
+| Kind | Scope | Callable output shape | Archive block shape |
+| --- | --- | --- | --- |
+| Pairwise | Window | `(B, N, N)` | `(W, N, N)` |
+| Global | Window | `(B, *shape)` | `(W, *shape)` |
+| Pairwise | Trajectory | `(N, N)` | `(1, N, N)` |
+| Global | Trajectory | `shape` | `(1, *shape)` |
 
-`B = len(ctx.windows) > 0` for window features. Trajectory features produce one result per call.
+`B = len(ctx.windows) > 0` for window calls; `W` is the complete trajectory's window count.
+Trajectory features produce one result per call. Archive serialization is specified below.
 
 **POST:** ndarray with exact declared dtype/shape; unmasked; every value finite; values unchanged;
 return `None`. Scalars use zero-dimensional ndarrays. Explicit zero-sized global dimensions are allowed.
@@ -394,12 +396,45 @@ Reference tests must detect permutations. A bare ndarray carries no identity lab
 checks axis sizes and cannot determine whether values were permuted. Symmetry/diagonals and physical
 units/statistics require feature-specific specifications and independent numerical tests.
 
-### Selection and execution — planned
+### Input preparation
 
-- `.featurize(...)` accepts trajectory, topology, CPPTRAJ executable, mask, frame/window settings,
+`FeatureExtractor._prepare_inputs(topology_file, trajectory_file, cpptraj_path, selection, *,
+frame_range=None, frame_stride=1, window_size=1) -> ExtractionContext`
+
+- `selection` is a nonempty mapping `{molecule_id: residue_ids}`. Each value is a nonempty sequence
+  of distinct positive nonboolean integer IDs. Residue IDs are CPPTRAJ topology-global IDs.
+  Requested ordering is arbitrary; output follows topology residue order.
+- Every requested molecule/residue pair must exist. Include each selected residue's complete atom set.
+  Build the internal numeric residue mask from those validated identities.
+- Source paths must be files; the explicit CPPTRAJ executable must be executable and verified through
+  `locate_cpptraj`. Validate the topology/trajectory with native frame counting and a one-frame atom table.
+  Reuse `run_cpptraj`, `CpptrajScript`, and `CpptrajMaskParser`.
+- `frame_range` is a 1-based inclusive `(first, last)` tuple within the trajectory, defaulting to all frames.
+  `frame_stride` and `window_size` are positive nonboolean integers. Selected frames are
+  `range(first, last + 1, frame_stride)`. Trajectory features use all selected frames.
+- Windows partition selected frames consecutively, with `window_size` frames per window. Keep the final
+  short window and its actual frame IDs/count. Membership is independent of trajectory coordinates.
+- The returned context contains all selected frames/windows and an empty dependency mapping.
+  CPPTRAJ reads temporary safe-named links to support source filenames containing spaces.
+  Links and atom-table files are cleaned up on success/failure; context paths retain the original sources.
+
+`FeatureExtractor._window_batches(ctx, *, batch_size=1) -> Iterator[ExtractionContext]`
+
+- Positive nonboolean `batch_size` counts windows. Require nonempty context windows.
+- Yield consecutive window batches; each context contains their sorted source-frame union and the same
+  sources, fixed residue/atom selection, and dependency readers. Batch size preserves windows and values.
+
+**RAISES:** invalid selection container -> `TypeError`; empty selection, invalid/duplicate IDs, unknown or
+wrong-molecule residues, invalid frame/window/batch parameters or out-of-bounds range -> `ValueError`;
+missing/non-file source -> `FileNotFoundError`; non-executable CPPTRAJ -> `PermissionError`;
+failed executable verification -> `CpptrajNotFound`; malformed frame-count output -> `RuntimeError`.
+CPPTRAJ/parser errors propagate. Validation remains active under `python -O`.
+
+### Execution — planned
+
+- `.featurize(...)` accepts trajectory, topology, CPPTRAJ executable, fixed selection, frame/window settings,
   and destination. Require at least one discovered feature.
-- Resolve the mask to complete residues/atoms in topology order; reject empty/partial/unknown selections.
-  Every feature computes from the selected atoms. Parser public APIs remain preserved.
+- Every feature computes from the selected atoms. Parser public APIs remain preserved.
 - Validate source-frame bounds and requested windows independently of returned arrays. Source/identity
   order is fixed across features; batch boundaries preserve requested windows and sample correspondence.
 - Proposed feature-major execution completes each feature before the next. Window methods process
@@ -423,20 +458,73 @@ units/statistics require feature-specific specifications and independent numeric
 - Initial physical methods cover COM distances and separate signed electrostatic/vdW interactions.
   COMs are internal intermediates; hydrogen bonds are future work.
 
-### Archive validation and publication — planned
+### V2 archive format — version 1
 
-- Specify schema markers, dataset names, stored sample axes, and metadata before implementation.
-- Request/feature declarations independently determine expected identities, feature names, shapes,
-  dtypes, units, statistics, dependencies, source frames, windows, counts, and sample order.
-- Validate metadata/structure, then reread every stored value in bounded batches. Reject missing,
-  extra, duplicated, relabeled, or malformed outputs. Validators are application code.
-- Use `ArrayStorage.compress_and_cleanup`; publish only after completed archive validation.
-  Extraction/validation failure propagates inside the context and triggers existing cleanup behavior.
-- Keep completed outputs archive-backed and release working batches; backend working memory is
-  determined by the concrete feature implementation.
+**STATUS:** format specified; writer/reader implementation planned.
 
-**Unresolved:** trajectory scope vs selected frames; window stride/overlap/partial-window policy;
-distance-mask reference/membership; exact archive layout/schema; concrete physical units/dtypes/tolerances,
+**INV:** common flat `ArrayStorage` layout. Published ZIPs contain immediate root arrays and JSON root
+attributes. `N` residues, `A` selected atoms, `F` selected frames, `W` windows, and `K` features are positive.
+
+| Required root attribute | Contract |
+| --- | --- |
+| `producer_version` | String `sawnergy.__version__`; provenance |
+| `schema_name`, `schema_version` | `"traj_features"`, nonboolean integer `1`; common strict compatibility policy |
+| `topology_file`, `trajectory_file`, `cpptraj` | Resolved original path strings used as provenance |
+| `frame_range` | Original request as `null` or `[first, last]`, positive nonboolean integers, `first <= last` |
+| `frame_stride`, `window_size` | Positive nonboolean integers; selected-frame stride and frames per window |
+| `features` | Ordered nonempty JSON list of feature declarations below |
+| `array_chunk_size_in_block`, `array_shape_in_block`, `array_dtype_in_block` | Existing `ArrayStorage` metadata maps covering exactly the stored arrays |
+
+Additional attributes/manifest fields are permitted as inert JSON metadata.
+
+| Required dataset | Shape | Values |
+| --- | --- | --- |
+| `residue_ids` | `(N, 2)` | Positive `(molecule_id, topology_residue_id)` pairs; strictly increasing residue IDs |
+| `atom_ids` | `(A,)` | Positive topology atom IDs, concatenated in residue-row order; globally distinct |
+| `atom_offsets` | `(N + 1,)` | Strictly increasing, first `0`, last `A`; residue `i` owns `atom_ids[offsets[i]:offsets[i+1]]`, strictly increasing within each residue |
+| `frame_ids` | `(F,)` | Actual selected 1-based source-frame IDs, strictly increasing with difference `frame_stride` |
+| `window_offsets` | `(W + 1,)` | Strictly increasing, first `0`, last `F`; window `w` uses `frame_ids[offsets[w]:offsets[w+1]]` |
+| `feature_0` ... `feature_{K-1}` | Scope-dependent shapes above | Finite real numeric/bool values in manifest/residue/window order |
+
+All five identity/offset datasets use logical dtype `int64`. Offsets index zero-based array positions.
+Window lengths equal `window_size`, except the final length in `[1, window_size]`.
+`W = ceil(F / window_size)`; window `w` corresponds to feature row `w` for every window-scope feature.
+Trajectory features use all `frame_ids` and occupy row `0`. Stored trajectory scalars have shape `(1,)`.
+
+Each `features[i]` object has these required fields.
+
+| Field | Contract |
+| --- | --- |
+| `name`, `block` | Exact discovered method attribute name, unique/nonempty; `block == "feature_" + str(i)` |
+| `kind`, `scope` | Declared `pairwise`/`global` and `window`/`trajectory` |
+| `shape` | Pairwise `["N", "N"]`; global declared integer dimensions, scalar `[]` |
+| `dtype` | Canonical numeric/bool type name `np.dtype(declared_dtype).name`, e.g. `"float32"` |
+| `units`, `statistic` | Exact declared nonblank strings |
+| `requires` | Exact declared dependency-name list; distinct names identifying earlier manifest entries |
+
+Validate callable dtype exactly, then serialize its native-endian equivalent with lossless byte-order
+normalization. Archived dtype comparisons use canonical numeric type names, including storage metadata
+maps. Zarr encodes byte order. Preserve numeric type and values during serialization.
+Shape/dtype/units/statistic remain fixed per feature. Explicit zero-sized global dimensions retain their
+declared shapes and normal positive sample counts. Declarations are inert JSON. Validation uses application
+code. A dependency reader returns stored sample rows; `read(0)` removes the sample axis.
+
+**VALIDATION/PUBLICATION — planned:**
+
+- Validate schema markers before dataset lookup, then root fields/manifest and exact required dataset set.
+  Validate storage metadata against actual item shapes, logical dtypes, and chunk lengths.
+- Validate identity/offset values, counts, complete window coverage, feature shapes/dtypes, and every stored
+  value in bounded reads. For nonnull `frame_range`, `frame_ids == range(first, last+1, frame_stride)`.
+  For `null`, frames start at `1`; final source coverage is checked against the prepared input context.
+- Before publication, compare identities, frames, windows, declarations, and order with the independently
+  prepared request. Feature implementations/reference tests establish physical meanings and axis alignment.
+- Malformed structure/metadata/identities or missing/extra datasets -> `ValueError`; unsupported/mismatched
+  dtype -> `TypeError`; nonfinite values -> `ValueError`. Checks survive `python -O`.
+- Use `ArrayStorage.compress_and_cleanup`; completed validation precedes publication. Extraction/validation
+  failures propagate inside the context. Keep outputs archive-backed and release working batches.
+  Compression retains its documented full-array memory limit until streaming copy is implemented.
+
+**Unresolved:** concrete physical units/dtypes/tolerances,
 energy definitions/diagonals, COM imaging/unwrapping and batch-boundary state; subprocess environment/timeout.
 
 ## Verification obligations and limits
@@ -449,7 +537,11 @@ energy definitions/diagonals, COM imaging/unwrapping and batch-boundary state; s
 | `test_rin.py` | Script composition/rendering; mask IDs/order/duplicates/errors; executable priority/dedup/timeout/bypass/exhaustion; subprocess forwarding/termination/errors; finite pairwise output; channels/metadata/frame selection/partial COM means/atom sums/normalization floor |
 | `test_sawnergy_util.py` | Empty/nonempty batching/ranges/wrappers; sequential/thread ordering/completion/arguments/errors/defaults; environment isolation; files/temporary ownership; composition/sharing/failures; clocks/process helpers |
 | Walk/embedding/visual suites | Every node/frame transition; ordered paths/counts/IDs/empty channels/time-aware layout; embedding values/seeds/warm starts; plotting data flow; real empty/populated/cleared edge rendering |
-| `tests/v2/` | Decorator declarations/identity; discovery/order/overrides/dependencies; frozen context/IDs/snapshots; local/ZIP dependency reads; scope-dependent output shapes/dtypes/finiteness/masks; optimized validation |
+| `tests/v2/` | Decorator declarations/identity; discovery/order/overrides/dependencies; frozen context/IDs/snapshots; fixed selection/source/frame/window/batch preparation; native input preparation with spaced filenames; local/ZIP dependency reads; output shapes/dtypes/finiteness/masks; optimized validation |
 | Remaining V2 tests | Backend identity/order alignment; window/batch correspondence; validation blocks publication; independent physical references; native/Python reduction equivalence; unequal partial counts; unsupported statistics/summary dependencies; full archive validation |
 
-**LIMITS:** coverage incomplete; CPPTRAJ/shared-memory pipelines mocked; most GUI setup replaced; real renderer test retained. No native-extraction/process-worker, biological, power-loss, or guaranteed-cleanup proof. Local Torch validation unavailable with missing `libtorch_cpu.dylib`; stub archives do not validate Torch. Optimized storage-stub tests do not resolve Zarr 3.1.2's real-reopening failure.
+**LIMITS:** coverage incomplete; physical CPPTRAJ/shared-memory pipelines mocked; native input preparation
+and real renderer tests retained. Native input tests require `CPPTRAJ` or an executable on PATH.
+Physical extraction/process-worker, biological, power-loss, and guaranteed-cleanup validation remain pending.
+Local Torch validation unavailable with missing `libtorch_cpu.dylib`; stub archives do not validate Torch.
+Optimized storage-stub tests do not resolve Zarr 3.1.2's real-reopening failure.

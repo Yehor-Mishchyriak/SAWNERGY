@@ -45,16 +45,21 @@ the smallest clear change. Reuse existing helpers and keep essential validation 
    Validate ndarray outputs, scope-dependent shapes, exact dtype, and finite/unmasked values.
    Feature implementations must align backend residue IDs with `ctx.residue_ids`, verified by tests.
    Replace the older specification sections with the current subclass-based contracts.
-2. [ ] **Input preparation.** Validate trajectory/topology/CPPTRAJ, resolve masks to complete residues and
-   atoms in topology order, and construct frames/windows/batches. Settle distance-mask membership,
-   trajectory scope, and partial-window handling. All computation uses the selected atoms.
-3. [ ] **V2 archive format.** Specify schema markers, feature blocks, residue/atom identities,
+2. [x] **Input preparation.** Accept `selection={molecule_id: [residue_ids...]}` and validate every pair.
+   Derive the CPPTRAJ mask from complete residues/atoms in topology order. Validate sources and CPPTRAJ.
+   Use a 1-based inclusive frame range and stride. Trajectory scope uses all selected frames.
+   Build nonoverlapping windows of selected frames, keep the final short window, and batch by window count.
+   All feature computation uses this fixed selection.
+3. [x] **V2 archive format.** Specify schema markers, feature blocks, residue/atom identities,
    frame/window metadata, and feature declarations.
-4. [ ] **`.featurize()`.** Accept sources, CPPTRAJ path, mask, frame/window settings, and destination.
+   See `docs/specifications.md` for `traj_features` schema version 1, flat ID/offset datasets,
+   numbered feature blocks, an ordered feature manifest, and a sample axis for every feature block.
+4. [ ] **`.featurize()`.** Accept sources, CPPTRAJ path, fixed selection, frame/window settings, and destination.
    Prepare contexts, run features in declaration order, expose completed dependencies, validate/write
    incrementally, validate the finished archive, then compress and clean up through `ArrayStorage`.
    Proposed execution completes each feature before starting the next, supporting trajectory features
    that consume window outputs through archive readers.
+   Address the existing full-array compression copy to preserve bounded-memory publication.
 5. [ ] **Concrete feature methods.** Implement distances, separate signed electrostatic interactions,
    and vdW interactions after specifying their physical definitions, units, and reduction rules.
    COMs may be internal intermediates. Hydrogen bonds remain future work.
