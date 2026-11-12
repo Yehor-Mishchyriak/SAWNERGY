@@ -1,8 +1,9 @@
-"""Feature metadata, execution inputs, and ordered discovery for trajectory extractors."""
+"""Subclass-defined trajectory features, execution contexts, and archive publication."""
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from inspect import isfunction
+import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,11 +13,13 @@ import icontract
 import numpy as np
 
 from sawnergy.sawnergy_util import ArrayStorage
-from sawnergy import sawnergy_util
+from sawnergy import __version__, sawnergy_util
+from sawnergy._archive_schema import validate_archive_schema
 from sawnergy.rin import rin_util
 
 
 def _positive_int(value) -> bool:
+    """Check for a positive Python integer, excluding bools."""
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
@@ -56,9 +59,13 @@ def feature(*, kind: str, scope: str, shape: tuple[int | str, ...], dtype: np.dt
 
     ``shape`` describes one sample. Pairwise features declare ``("N", "N")``,
     with N selected residues. Global features declare fixed nonnegative integer
-    dimensions, including scalar ``()``. Window outputs prepend a batch axis.
+    dimensions, including scalar ``()``. Window outputs prepend an axis of
+    ``len(ctx.windows)`` samples; trajectory outputs have the declared sample shape.
     ``dtype`` is an explicit real numeric/bool dtype. ``units`` and ``statistic``
     are nonblank descriptions, with ``"1"`` for dimensionless quantities.
+    Methods return finite, unmasked ndarrays of the exact declared dtype.
+    Both pairwise axes follow ``ctx.residue_ids``. The method implements its
+    physical definition, coordinate processing, and declared reduction.
 
     ``requires`` is a tuple of distinct nonempty feature names, defaulting to
     an empty tuple. Each dependency must precede this feature in the final
@@ -89,6 +96,7 @@ def feature(*, kind: str, scope: str, shape: tuple[int | str, ...], dtype: np.dt
         raise TypeError("dtype must be a real numeric or boolean NumPy dtype.")
 
     def decorate(method):
+        """Attach the validated declarations and return the original method."""
         method.feature_kind = kind
         method.feature_scope = scope
         method.feature_shape = shape
@@ -108,23 +116,49 @@ class DependencyReader:
     ``ArrayStorage.read``. ``block_iter(step=...)`` streams row batches.
     Both return independent ndarray copies. Access requires the owner to keep
     the borrowed store open for the duration of the feature call.
+    Optional ``rows=(start, stop)`` exposes a valid half-open block interval,
+    with read indices relative to that interval. The caller supplies its bounds.
     """
 
     @icontract.require(lambda storage: isinstance(storage, ArrayStorage), error=TypeError, enabled=True)
     @icontract.require(
         lambda block_name: isinstance(block_name, str) and bool(block_name),
         error=lambda: ValueError("block_name must be a nonempty string."), enabled=True)
-    def __init__(self, storage: ArrayStorage, block_name: str):
+    @icontract.require(
+        lambda rows: rows is None or (isinstance(rows, tuple) and len(rows) == 2
+            and all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in rows)
+            and rows[0] <= rows[1]), error=lambda: ValueError("rows must be a nonnegative (start, stop) interval."),
+        enabled=True)
+    def __init__(self, storage: ArrayStorage, block_name: str, *, rows: tuple[int, int] | None = None):
+        """Borrow a block, optionally restricting reads to caller-supplied row bounds."""
         self._storage = storage
         self._block_name = block_name
+        self._rows = rows
 
     def read(self, ids: int | slice | tuple[int, ...] | None = None) -> np.ndarray:
-        """Read selected rows as a copy, propagating storage errors."""
+        """Read copied rows relative to this view; None selects all, an int drops the row axis."""
+        if self._rows is not None:
+            indices = range(*self._rows)
+            if ids is None:
+                ids = slice(*self._rows)
+            elif isinstance(ids, int):
+                ids = indices[ids]
+            elif isinstance(ids, slice):
+                ids = tuple(indices[ids])
+            else:
+                ids = tuple(indices[index] for index in ids)
         return self._storage.read(self._block_name, ids)
 
     def block_iter(self, *, step: int = 1) -> Iterator[np.ndarray]:
         """Yield copied batches of at most ``step`` rows through ArrayStorage."""
-        return self._storage.block_iter(self._block_name, step=step)
+        if self._rows is None:
+            yield from self._storage.block_iter(self._block_name, step=step)
+        else:
+            if not _positive_int(step):
+                raise ValueError("step must be a positive integer.")
+            start, stop = self._rows
+            for offset in range(start, stop, step):
+                yield self._storage.read(self._block_name, slice(offset, min(offset + step, stop)))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -134,6 +168,10 @@ class ExtractionContext:
     Paths become resolved Path objects. Residue pairs, atom memberships,
     source frames, and windows become nested tuples. Dependencies become a
     copied read-only mapping of declared feature names to block readers.
+
+    ``residue_ids`` holds 1-based ``(molecule_id, topology_global_residue_id)``
+    pairs in residue order. ``atom_ids[i]`` holds the ordered, 1-based
+    topology-global atom IDs belonging to ``residue_ids[i]``.
 
     ``frame_ids`` contains the explicit 1-based source frames for this call.
     Optional ``windows`` group those frames and may overlap. Structural
@@ -155,6 +193,7 @@ class ExtractionContext:
 
     @icontract.ensure(lambda self: isinstance(self.dependencies, MappingProxyType), enabled=True)
     def __post_init__(self):
+        """Freeze normalized input containers and validate identity/frame structure."""
         for name in ("cpptraj", "topology_file", "trajectory_file"):
             object.__setattr__(self, name, Path(getattr(self, name)).resolve())
         object.__setattr__(self, "residue_ids", tuple(tuple(pair) for pair in self.residue_ids))
@@ -191,12 +230,159 @@ class ExtractionContext:
 
 
 class FeatureExtractor:
-    """Base class providing discovery of subclass-defined feature methods.
+    """Extract subclass-defined features into a validated trajectory archive.
 
     Subclasses mark methods accepting ``(self, ctx)`` with ``@feature(...)``.
-    The private ``_feature_methods()`` helper returns those methods bound to
-    the current instance, ready to be called with ``ctx``.
+    ``featurize()`` prepares inputs, executes those methods in discovery order,
+    and publishes their outputs. Feature methods own CPPTRAJ calls and reductions
+    and restrict all computation to the context's selected atoms and frames.
     """
+
+    @icontract.require(lambda batch_size: _positive_int(batch_size), error=ValueError, enabled=True)
+    @icontract.require(
+        lambda compression_level: isinstance(compression_level, int) and not isinstance(compression_level, bool)
+        and 0 <= compression_level <= 9,
+        error=lambda: ValueError("compression_level must be an integer from 0 through 9."), enabled=True)
+    def featurize(self, topology_file: Path | str, trajectory_file: Path | str, cpptraj_path: Path | str,
+                  selection: Mapping[int, Sequence[int]], output_path: Path | str, *,
+                  frame_range: tuple[int, int] | None = None, frame_stride: int = 1, window_size: int = 1,
+                  batch_size: int = 1, compression_level: int = 3) -> str:
+        """Extract declared features into a validated trajectory-feature ZIP archive.
+
+        Sources must be existing files and ``cpptraj_path`` a verified executable.
+        ``selection={molecule_id: [residue_ids...]}`` selects complete residues
+        using 1-based, topology-global residue IDs, ordered by topology internally.
+        ``frame_range`` is a 1-based inclusive pair or None for the whole file;
+        ``frame_stride`` selects every nth frame within that range.
+
+        Complete each feature before the next. Window dependencies expose the
+        matching batch to window consumers and the full block to trajectory
+        consumers. Trajectory dependencies expose one stored sample.
+
+        ``window_size`` counts selected frames in consecutive, nonoverlapping
+        windows, retaining the final short window. ``batch_size`` counts windows
+        per method call. ``frame_stride``, ``window_size``, and ``batch_size``
+        must be positive integers.
+        Trajectory methods receive all selected frames. ``output_path`` names a
+        ZIP file and ``compression_level`` is an integer from 0 through 9.
+
+        Validate each output before writing and the finished store before
+        publication. Failures propagate through ArrayStorage's cleanup context.
+        Pre-publication failures preserve any existing destination; cleanup errors
+        after publication may propagate with the new archive already in place.
+        Return the resolved destination path after successful publication.
+        """
+        output = Path(output_path).resolve()
+        if output.suffix.lower() != ".zip":
+            raise ValueError("output_path must name a .zip file.")
+        if output.is_dir():
+            raise IsADirectoryError(output)
+        methods = self._feature_methods()
+        if not methods:
+            raise ValueError("At least one feature is required.")
+        ctx = self._prepare_inputs(topology_file, trajectory_file, cpptraj_path, selection,
+                                   frame_range=frame_range, frame_stride=frame_stride, window_size=window_size)
+        attrs, identities = self._archive_layout(ctx, methods, frame_range, frame_stride, window_size)
+        declarations = {entry["name"]: entry for entry in attrs["features"]}
+        with ArrayStorage.compress_and_cleanup(output, compression_level) as storage:
+            for key, value in json.loads(json.dumps(attrs)).items():
+                storage.add_attr(key, value)
+            for key, values in identities.items():
+                storage.write(values, key, arrays_per_chunk=4096)
+            for name, method in methods.items():
+                declaration = declarations[name]
+                windowed = declaration["scope"] == "window"
+                contexts = self._window_batches(ctx, batch_size=batch_size) if windowed else (ctx,)
+                offset = 0
+                for current in contexts:
+                    dependencies = {}
+                    for required in declaration["requires"]:
+                        dependency = declarations[required]
+                        rows = ((offset, offset + len(current.windows))
+                                if windowed and dependency["scope"] == "window" else None)
+                        dependencies[required] = DependencyReader(storage, dependency["block"], rows=rows)
+                    current = replace(current, dependencies=dependencies)
+                    values = method(current)
+                    self._validate_output(method, values, current)
+                    values = values.astype(declaration["dtype"], copy=False)
+                    storage.write(values if windowed else values[None], declaration["block"],
+                                  arrays_per_chunk=batch_size if windowed else 1)
+                    offset += len(current.windows)
+                    del values
+            self._validate_archive(storage, attrs, identities, batch_size=batch_size)
+        return str(output)
+
+    def _archive_layout(self, ctx, methods, frame_range, frame_stride, window_size):
+        """Build independent expected declarations and identity arrays from prepared inputs."""
+        features = [dict(name=name, block=f"feature_{index}", kind=method.feature_kind,
+                         scope=method.feature_scope, shape=list(method.feature_shape),
+                         dtype=method.feature_dtype.name, units=method.feature_units,
+                         statistic=method.feature_statistic, requires=list(method.feature_requires))
+                    for index, (name, method) in enumerate(methods.items())]
+        attrs = dict(producer_version=__version__, schema_name="traj_features", schema_version=1,
+                     topology_file=str(ctx.topology_file), trajectory_file=str(ctx.trajectory_file),
+                     cpptraj=str(ctx.cpptraj), frame_range=list(frame_range) if frame_range is not None else None,
+                     frame_stride=frame_stride, window_size=window_size, features=features)
+        identities = dict(residue_ids=np.asarray(ctx.residue_ids, dtype="int64"),
+                          atom_ids=np.asarray([atom for ids in ctx.atom_ids for atom in ids], dtype="int64"),
+                          atom_offsets=np.cumsum([0] + [len(ids) for ids in ctx.atom_ids], dtype="int64"),
+                          frame_ids=np.asarray(ctx.frame_ids, dtype="int64"),
+                          window_offsets=np.cumsum([0] + [len(window) for window in ctx.windows], dtype="int64"))
+        return attrs, identities
+
+    def _validate_archive(self, storage, attrs, identities, *, batch_size):
+        """Reread stored metadata and values against the independently prepared contract."""
+        validate_archive_schema(storage.root.attrs, schema_name="traj_features", schema_version=1)
+        try:
+            actual = {key: storage.get_attr(key) for key in attrs}
+            if not isinstance(actual["features"], list) or len(actual["features"]) != len(attrs["features"]):
+                raise ValueError("Invalid feature manifest.")
+            for entry, expected in zip(actual["features"], attrs["features"]):
+                if not isinstance(entry, dict):
+                    raise ValueError("Invalid feature declaration.")
+                if entry["dtype"] != expected["dtype"]:
+                    raise TypeError("Feature dtype declaration differs from the extraction contract.")
+            actual["features"] = [{key: entry[key] for key in expected}
+                                  for entry, expected in zip(actual["features"], attrs["features"])]
+            if json.dumps(actual, sort_keys=True) != json.dumps(attrs, sort_keys=True):
+                raise ValueError("Archive metadata differs from the extraction contract.")
+            maps = {key: storage.get_attr(key) for key in (
+                "array_chunk_size_in_block", "array_shape_in_block", "array_dtype_in_block")}
+        except KeyError as error:
+            raise ValueError(f"Missing archive metadata: {error}") from error
+
+        shapes = {key: values.shape for key, values in identities.items()}
+        dtypes = {key: "int64" for key in identities}
+        for entry in attrs["features"]:
+            shape = ((len(identities["residue_ids"]),) * 2 if entry["kind"] == "pairwise" else tuple(entry["shape"]))
+            rows = len(identities["window_offsets"]) - 1 if entry["scope"] == "window" else 1
+            shapes[entry["block"]] = (rows, *shape)
+            dtypes[entry["block"]] = entry["dtype"]
+        if set(storage.root.keys()) != set(shapes) or set(storage.list_blocks()) != set(shapes):
+            raise ValueError("Archive datasets differ from the extraction contract.")
+        if any(not isinstance(mapping, dict) or set(mapping) != set(shapes) for mapping in maps.values()):
+            raise ValueError("Invalid storage metadata maps.")
+        for key, shape in shapes.items():
+            block = storage.root[key]
+            if block.shape != shape:
+                raise ValueError(f"Invalid stored shape for {key!r}.")
+            cached_dtype = maps["array_dtype_in_block"][key]
+            if (block.dtype.name != dtypes[key] or not isinstance(cached_dtype, str)
+                    or np.dtype(cached_dtype).name != dtypes[key]):
+                raise TypeError(f"Invalid stored dtype for {key!r}.")
+            if json.dumps(maps["array_shape_in_block"][key]) != json.dumps(list(shape[1:])):
+                raise ValueError(f"Invalid stored item shape for {key!r}.")
+            chunk = maps["array_chunk_size_in_block"][key]
+            if type(chunk) is not int or chunk != block.chunks[0]:
+                raise ValueError(f"Invalid stored chunk length for {key!r}.")
+            offset = 0
+            for values in storage.block_iter(key, step=4096 if key in identities else batch_size):
+                if key in identities:
+                    if not np.array_equal(values, identities[key][offset:offset + len(values)]):
+                        raise ValueError(f"Stored identities differ for {key!r}.")
+                elif not np.isfinite(values).all():
+                    raise ValueError(f"Nonfinite stored feature values in {key!r}.")
+                offset += len(values)
 
     @icontract.require(
         lambda frame_stride, window_size: all(_positive_int(value) for value in (frame_stride, window_size)),
@@ -333,7 +519,7 @@ class FeatureExtractor:
 
         Window features require one result per context window. Pairwise axes
         follow ``ctx.residue_ids`` by the feature implementation's contract.
-        Backend identity alignment is checked by concrete features and tests.
+        Identity alignment is the feature author's responsibility.
         """
         name = method.__name__
         if not isinstance(values, np.ndarray) or np.ma.isMaskedArray(values):

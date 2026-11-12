@@ -145,6 +145,34 @@ def test_dependency_reader_rejects_invalid_storage():
         DependencyReader(object(), "energy")
 
 
+def test_dependency_reader_limits_relative_reads_to_matching_rows(tmp_path):
+    values = np.arange(7, dtype="float64")
+    with ArrayStorage(tmp_path / "features", "w") as storage:
+        storage.write(values, "energy", arrays_per_chunk=2)
+        reader = DependencyReader(storage, "energy", rows=(2, 5))
+        np.testing.assert_array_equal(reader.read(), values[2:5])
+        assert reader.read(0) == values[2]
+        assert reader.read(-1) == values[4]
+        np.testing.assert_array_equal(reader.read(slice(None, None, -1)), values[2:5][::-1])
+        np.testing.assert_array_equal(reader.read((2, 0)), values[[4, 2]])
+        batches = list(reader.block_iter(step=2))
+        assert [len(batch) for batch in batches] == [2, 1]
+        np.testing.assert_array_equal(np.concatenate(batches), values[2:5])
+        with pytest.raises(IndexError):
+            reader.read(3)
+        with pytest.raises(IndexError):
+            reader.read(-4)
+        with pytest.raises(ValueError):
+            list(reader.block_iter(step=0))
+
+
+@pytest.mark.parametrize("rows", [(-1, 2), (2, 1), (True, 2), (0,), [0, 2]])
+def test_dependency_reader_rejects_invalid_row_spans(tmp_path, rows):
+    with ArrayStorage(tmp_path / "features", "w") as storage:
+        with pytest.raises(ValueError):
+            DependencyReader(storage, "energy", rows=rows)
+
+
 def test_context_validation_remains_active_under_optimization():
     source = """
 from sawnergy.v2.traj_features.feature_extractor import ExtractionContext

@@ -32,7 +32,7 @@ Working stores are Zarr directories; published archives are compressed ZIP files
 | `src/sawnergy/logging_util.py` | Configures console and rotating-file logging. |
 | `src/sawnergy/v2/traj_features/` | V2 feature-extraction scaffolding. `feature_extractor.py` is intended to coordinate configurable residue features; `reprs.py` is intended to define representations and validation. These interfaces are still being specified. |
 | `tests/` | Regression and numerical tests. `conftest.py` provides synthetic pipeline data and substitutes for external tools, shared memory, training, and plotting where appropriate. |
-| [docs/specifications.md](docs/specifications.md) | Existing contracts and the proposed V2 extraction design. See also [V2_migration.md](V2_migration.md) for the migration plan. |
+| [docs/specifications.md](docs/specifications.md) | Existing contracts and the V2 extraction specifications. |
 
 The V2 design uses explicit residue selections and source-frame windows. Each
 feature declares its output shape, dtype, units, dependencies, and window

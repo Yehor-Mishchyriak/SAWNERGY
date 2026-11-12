@@ -10,13 +10,12 @@
 | RAISES | Required failure behavior |
 | LIMIT | Excluded guarantee or dependency limitation |
 | V1 | Implemented: archive formats, reusable utilities, prerequisite fixes, schema validation, API freeze |
-| V2 | Implemented foundations below; input preparation, extraction, archive format, and physical features planned |
+| V2 | Current release implements the customizable extraction framework and archive format; predefined features deferred to next release |
 
 - Scope: V1 archives/reusable utilities; V2 extraction/publication.
 - Exclusions: exhaustive V1 internals, legacy chunking/neural implementations, V2 learning.
 - Enforcement: essential input/output/archive checks survive `python -O`.
 - V2: `icontract` + shared predicates; tests before code; essential checks independent of decorator enablement.
-- Remaining work: [V2_migration.md](../V2_migration.md).
 
 ## Frozen V1 public API
 
@@ -63,7 +62,7 @@
 | `rin` | `RINBuilder.build_rin` | `Walker.__init__`, `sawnergy.visual.Visualizer.__init__` |
 | `rin_walks` | `Walker.sample_walks` | `Embedder.__init__` |
 | `shallow_residue_embeddings` | `Embedder.embed_all` | `sawnergy.embedding.Visualizer.__init__` |
-| `traj_features` | V2 `.featurize()` — planned | V2 archive validation — planned |
+| `traj_features` | `FeatureExtractor.featurize` | V2 final-store validation |
 
 **Acceptance:** all markers present ∧ specified types ∧ nonboolean version ∧ expected `(schema_name,schema_version)`.
 
@@ -338,7 +337,7 @@ unavailable names, including under `python -O`. An override can remove or replac
 
 ### Extraction context and dependency readers
 
-`DependencyReader(storage: ArrayStorage, block_name: str)` borrows an open store and binds one block.
+`DependencyReader(storage: ArrayStorage, block_name: str, *, rows=None)` borrows an open store and binds one block.
 
 - Public reads delegate to `storage.read(block_name, ids)` through `read(ids=None)` and to
   `storage.block_iter(block_name, step=step)` through `block_iter(*, step=1)`.
@@ -346,6 +345,9 @@ unavailable names, including under `python -O`. An override can remove or replac
 - Construction performs no dataset reads. Storage errors propagate through the read methods.
 - Storage lifetime belongs to the caller. Reader access is valid while the borrowed store remains open.
 - Invalid storage type -> `TypeError`; empty/non-string block name -> `ValueError`.
+- Optional `rows=(start, stop)` restricts reads to a valid half-open block-row interval. Reader indices
+  are relative to that interval, including negative indices. Invalid intervals/steps raise `ValueError`.
+  Whole-block readers retain existing indexing/error behavior.
 
 `ExtractionContext` is a frozen, keyword-only dataclass in `feature_extractor.py`.
 
@@ -367,7 +369,7 @@ Structural value violations raise `ValueError`; non-iterable sequences and inval
 **CALLER PRE:** source paths identify validated inputs; residue/atom membership matches the topology.
 Dependencies are completed, validated outputs for exactly the current feature's `requires`.
 Context construction validates structure and snapshots inputs. Input preparation validates sources and
-topology membership. `.featurize()` will enforce dependency semantics and resource ownership.
+topology membership. `.featurize()` enforces dependency semantics and resource ownership.
 
 ### Feature outputs
 
@@ -375,7 +377,7 @@ topology membership. `.featurize()` will enforce dependency semantics and resour
 
 **PRE:** discovered feature method and valid `ExtractionContext`; declarations fixed during extraction.
 Feature methods accept `(self, ctx)` and return an ndarray. Dependencies are accessed through `ctx`.
-Validation is explicit. The planned `.featurize()` calls this check before writing each output.
+Validation is explicit. `.featurize()` calls this check before writing each output.
 
 | Kind | Scope | Callable output shape | Archive block shape |
 | --- | --- | --- | --- |
@@ -395,9 +397,8 @@ or NaN/inf -> `ValueError`. Checks remain active under `python -O`.
 
 **Residue ordering:** both pairwise axes index `ctx.residue_ids`, including cross-molecule pairs.
 Feature implementations must validate/map backend atom/residue/frame IDs to the context before returning.
-Reference tests must detect permutations. A bare ndarray carries no identity labels, so generic validation
-checks axis sizes and cannot determine whether values were permuted. Symmetry/diagonals and physical
-units/statistics require feature-specific specifications and independent numerical tests.
+A bare ndarray carries no identity labels; generic validation checks axis sizes and cannot detect
+permutations. Physical meaning, symmetry/diagonals, and identity alignment are feature-author obligations.
 
 ### Input preparation
 
@@ -433,37 +434,47 @@ missing/non-file source -> `FileNotFoundError`; non-executable CPPTRAJ -> `Permi
 failed executable verification -> `CpptrajNotFound`; malformed frame-count output -> `RuntimeError`.
 CPPTRAJ/parser errors propagate. Validation remains active under `python -O`.
 
-### Execution — planned
+### Extraction and publication
 
-- `.featurize(...)` accepts trajectory, topology, CPPTRAJ executable, fixed selection, frame/window settings,
-  and destination. Require at least one discovered feature.
+`featurize(topology_file, trajectory_file, cpptraj_path, selection, output_path, *, frame_range=None,
+frame_stride=1, window_size=1, batch_size=1, compression_level=3) -> str`
+
+- Require an explicit `.zip` destination, at least one discovered feature, positive nonboolean batch size,
+  and nonboolean integer compression level in `[0,9]`. Invalid settings raise `ValueError` before extraction.
 - Every feature computes from the selected atoms. Parser public APIs remain preserved.
 - Validate source-frame bounds and requested windows independently of returned arrays. Source/identity
   order is fixed across features; batch boundaries preserve requested windows and sample correspondence.
-- Proposed feature-major execution completes each feature before the next. Window methods process
-  batches, trajectory methods run once, and contexts expose exactly their declared completed dependencies.
+- Complete each feature before starting the next. Window methods process batches, trajectory methods run
+  once, and contexts expose exactly their declared completed dependencies. Window consumers see matching
+  rows of window dependencies; trajectory consumers see complete blocks. Trajectory dependencies expose
+  their single row to every consumer. Dependency readers use indices relative to the exposed rows.
 - Validate outputs before incremental `ArrayStorage` writes. Feature code owns its temporary resources.
   Backend/parser failures abort extraction with their original error.
+- Snapshot declarations/provenance and construct identity arrays from the prepared context. Revalidate the
+  finished store against that independent reference, including type-sensitive metadata comparisons and
+  bounded rereads of stored identities/features. Extra inert metadata is permitted by the format.
+- Return the resolved ZIP path after successful compression/publication through `compress_and_cleanup`.
+  Pre-publication failure preserves destination bytes. Store close and cleanup are attempted.
+  Post-publication cleanup failure can propagate after the archive has been replaced, as specified by the CM.
 
-### Statistics and physical features — planned
+### Custom feature semantics
 
-- Each feature implements its declared statistic with a matching native CPPTRAJ summary or Python
-  reduction of per-frame values. Unsupported configurations raise `ValueError`.
-- Window granularity and computational batch size are independent; batching preserves the statistic.
-  Combine partial means with `sum(n_b * mean_b) / sum(n_b)` using actual frame counts.
-- Persist source frames/counts/statistic/weighting/normalization. Missing frames are errors.
-  Per-frame dependencies require per-frame information. Local intermediates remain feature-owned.
-- Generally `mean(distance(COM_r, COM_s)) != distance(mean(COM_r), mean(COM_s))`.
-  Mean H-bond count and the fraction of frames with any bond are distinct statistics.
-- Native behavior requires installed-CPPTRAJ reference tests. Relevant actions include
-  [trajin](https://amberhub.chpc.utah.edu/trajin/), [pairwise](https://amberhub.chpc.utah.edu/pairwise/),
-  and [vector](https://amberhub.chpc.utah.edu/vector/).
-- Initial physical methods cover COM distances and separate signed electrostatic/vdW interactions.
-  COMs are internal intermediates; hydrogen bonds are future work.
+| Choice | Existing interface |
+| --- | --- |
+| Physical definition and coordinate processing | Feature implementation and its documentation |
+| Units | Required `@feature(units=...)`; persisted in manifest |
+| Reduction | Feature implementation; required `@feature(statistic=...)` describes the statistic in manifest |
+| CPPTRAJ invocation and selected system | `ctx` supplies executable/source paths, selected identities, frames/windows, and dependencies |
+
+Each feature computes its declared statistic using a matching CPPTRAJ summary or Python reduction.
+Unsupported configurations raise `ValueError`. Computational batch size must preserve window semantics.
+Local intermediates remain feature-owned. The framework validates structure and persists declarations.
+Predefined methods, their physical specifications, and feature-specific numerical tests are deferred to
+the next release.
 
 ### V2 archive format — version 1
 
-**STATUS:** format specified; writer/reader implementation planned.
+**STATUS:** format specified; extraction writer and final-store validation implement this contract.
 
 **INV:** common flat `ArrayStorage` layout. Published ZIPs contain immediate root arrays and JSON root
 attributes. `N` residues, `A` selected atoms, `F` selected frames, `W` windows, and `K` features are positive.
@@ -512,7 +523,7 @@ Shape/dtype/units/statistic remain fixed per feature. Explicit zero-sized global
 declared shapes and normal positive sample counts. Declarations are inert JSON. Validation uses application
 code. A dependency reader returns stored sample rows; `read(0)` removes the sample axis.
 
-**VALIDATION/PUBLICATION — planned:**
+**VALIDATION/PUBLICATION:**
 
 - Validate schema markers before dataset lookup, then root fields/manifest and exact required dataset set.
   Validate storage metadata against actual item shapes, logical dtypes, and chunk lengths.
@@ -520,15 +531,15 @@ code. A dependency reader returns stored sample rows; `read(0)` removes the samp
   value in bounded reads. For nonnull `frame_range`, `frame_ids == range(first, last+1, frame_stride)`.
   For `null`, frames start at `1`; final source coverage is checked against the prepared input context.
 - Before publication, compare identities, frames, windows, declarations, and order with the independently
-  prepared request. Feature implementations/reference tests establish physical meanings and axis alignment.
+  prepared request. Feature implementations establish physical meanings and axis alignment.
 - Malformed structure/metadata/identities or missing/extra datasets -> `ValueError`; unsupported/mismatched
   dtype -> `TypeError`; nonfinite values -> `ValueError`. Checks survive `python -O`.
 - Use `ArrayStorage.compress_and_cleanup`; completed validation precedes publication. Extraction/validation
   failures propagate inside the context. Keep outputs archive-backed and release working batches.
-  Compression retains its documented full-array memory limit until streaming copy is implemented.
+  Compression copies aligned chunks with bounded working data.
 
-**Unresolved:** concrete physical units/dtypes/tolerances,
-energy definitions/diagonals, COM imaging/unwrapping and batch-boundary state; subprocess environment/timeout.
+**Feature-owned:** physical units/dtypes/tolerances, energy definitions/diagonals, coordinate processing,
+reduction state, and feature subprocess environment/timeout choices.
 
 ## Verification obligations and limits
 
@@ -540,11 +551,11 @@ energy definitions/diagonals, COM imaging/unwrapping and batch-boundary state; s
 | `test_rin.py` | Script composition/rendering; mask IDs/order/duplicates/errors; executable priority/dedup/timeout/bypass/exhaustion; subprocess forwarding/termination/errors; finite pairwise output; channels/metadata/frame selection/partial COM means/atom sums/normalization floor |
 | `test_sawnergy_util.py` | Empty/nonempty batching/ranges/wrappers; sequential/thread ordering/completion/arguments/errors/defaults; environment isolation; files/temporary ownership; composition/sharing/failures; clocks/process helpers |
 | Walk/embedding/visual suites | Every node/frame transition; ordered paths/counts/IDs/empty channels/time-aware layout; embedding values/seeds/warm starts; plotting data flow; real empty/populated/cleared edge rendering |
-| `tests/v2/` | Decorator declarations/identity; discovery/order/overrides/dependencies; frozen context/IDs/snapshots; fixed selection/source/frame/window/batch preparation; native input preparation with spaced filenames; local/ZIP dependency reads; output shapes/dtypes/finiteness/masks; optimized validation |
-| Remaining V2 tests | Backend identity/order alignment; window/batch correspondence; validation blocks publication; independent physical references; native/Python reduction equivalence; unequal partial counts; unsupported statistics/summary dependencies; full archive validation |
+| `tests/v2/` | Declaration/discovery/inheritance contracts; frozen context/IDs; fixed input preparation; native preparation and input-to-archive execution; aligned dependency readers; all output kinds/scopes; archive metadata/data round trips; corrupt-store and failure rejection; optimized-mode publication/validation |
 
 **LIMITS:** coverage incomplete; physical CPPTRAJ/shared-memory pipelines mocked; native input preparation
 and real renderer tests retained. Native input tests require `CPPTRAJ` or an executable on PATH.
-Physical extraction/process-worker, biological, power-loss, and guaranteed-cleanup validation remain pending.
+Predefined V2 physical features and their numerical verification are deferred to the next release.
+Process-worker, biological, power-loss, and guaranteed-cleanup validation remain outside verified coverage.
 Local Torch validation unavailable with missing `libtorch_cpu.dylib`; stub archives do not validate Torch.
 Optimized storage-stub tests do not resolve Zarr 3.1.2's real-reopening failure.
