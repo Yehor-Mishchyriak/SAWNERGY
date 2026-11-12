@@ -10,7 +10,7 @@
 | RAISES | Required failure behavior |
 | LIMIT | Excluded guarantee or dependency limitation |
 | V1 | Implemented: archive formats, reusable utilities, prerequisite fixes, schema validation, API freeze |
-| V2 | Design draft: proposed interfaces; implementation/tests pending |
+| V2 | Implemented foundations below; input preparation, extraction, archive format, and physical features planned |
 
 - Scope: V1 archives/reusable utilities; V2 extraction/publication.
 - Exclusions: exhaustive V1 internals, legacy chunking/neural implementations, V2 learning.
@@ -290,160 +290,154 @@
 - Ranges: 0-based consumption `(start,stop_exclusive)`/`(start,end_inclusive)`, wrapped by `out_as`; flag ignored for data; not CPPTRAJ IDs. Slice sequences; materialize generic input, including ranges; nonpositive size unbounded-memory.
 - Composition: tuple length/callability checked at construction (`TypeError`); kwargs conversion at invocation; nested mutable kwargs remain shared.
 
-## V2 extraction contracts — design draft
+## V2 extraction contracts
 
 ### Feature decorator — implemented contract
 
-`feature(*, kind: str, scope: str)` decorates subclass methods `(self, ctx)`.
+`feature(*, kind, scope, shape, dtype, units, statistic, requires=())` decorates subclass methods `(self, ctx)`.
 
 **PRE:** `kind` in `{"pairwise", "global"}`; `scope` in `{"window", "trajectory"}`.
+All output declarations are required.
 
-**RAISES:** invalid kind/scope -> `ValueError`, including under `python -O`.
-
-**POST:** return the original method with `feature_kind == kind` and `feature_scope == scope`.
-Do not execute or wrap the method; preserve signature, instance binding, return values, and exceptions.
-No global registration. Shape/dtype/statistic/dependency contracts remain pending.
-
-The remaining draft below predates the subclassing plan in `V2_migration.md` and awaits revision.
-
-| Ownership | Proposed components |
+| Declaration | Contract |
 | --- | --- |
-| `feature_extractor.py` | Instantiable/configurable `FeatureExtractor`; `ExtractionContext` |
-| `reprs.py` | `FeatureSpec`; `FrameRepresentation`; frame/trajectory contracts |
-| Feature | Callable + specification; no required subclass/decorator hierarchy |
+| `shape` | Per-sample tuple; pairwise exactly `("N", "N")`; global nonnegative nonboolean integer dimensions, including scalar `()`; `N = len(ctx.residue_ids)` |
+| `dtype` | Explicit NumPy real numeric/bool dtype, normalized with `np.dtype`; exact output match |
+| `units` | Nonblank string; dimensionless `"1"` |
+| `statistic` | Nonblank string describing quantity and reduction order; implemented by feature method |
+| `requires=()` | Tuple of distinct nonempty strings naming earlier feature attributes |
 
-### Selection and context
+**POST:** return the original method with `feature_kind`, `feature_scope`, `feature_shape`, `feature_dtype`,
+`feature_units`, `feature_statistic`, and `feature_requires` metadata. Preserve signature/binding/behavior.
 
-**PRE:** nonempty `selection: molecule_id -> nonempty list[residue_id]`; positive nonboolean integers; distinct residues/molecule; valid topology membership.
+**RAISES:** invalid dtype -> `TypeError`; invalid other declarations -> `ValueError` at decorator creation.
+Missing required arguments -> `TypeError`. Checks remain active under `python -O`.
 
-**RAISES:** invalid types -> `TypeError`; unknown/wrong-molecule IDs -> `ValueError`.
+### Feature discovery
 
-**POST/INV:**
+`FeatureExtractor._feature_methods(self) -> dict[str, MethodType]`
 
-- `residue_ids`: immutable `(molecule_id,residue_id)` tuples, flattened mapping/list order.
-- `atom_ids`: sorted complete atom tuples per residue, aligned with `residue_ids`; no discards/partial residues.
-- Pairwise: include cross-molecule pairs; topology IDs != zero-based positions.
-- Selection: resolve once, independently of outputs; new helper/method; parser API unchanged.
+**POST:** fresh ordered mapping of feature names to methods bound to `self`.
 
-| `ExtractionContext` field | Contract |
+- Inspect class dictionaries in reverse Python MRO, preserving declaration order within each class.
+- Include ordinary instance functions carrying both `feature_kind` and `feature_scope`.
+- Inherited features precede subclass additions. Decorated overrides retain their existing position.
+- An undecorated override, including a non-method attribute, removes the inherited feature.
+  Decorating that name again in a later subclass appends it as a new feature.
+- Discovery evaluates class dictionaries only. Feature and property bodies remain unevaluated.
+- Returned mappings belong to individual calls. Editing a returned mapping leaves later discovery intact.
+- After resolving inheritance, every required name must identify an earlier feature in the final order.
+  This also rejects cycles. Preserve discovery order.
+
+**RAISES:** missing, self, or later dependencies -> `ValueError` identifying the dependent feature and
+unavailable names, including under `python -O`. An override can remove or replace dependency declarations.
+
+### Extraction context and dependency readers
+
+`DependencyReader(storage: ArrayStorage, block_name: str)` borrows an open store and binds one block.
+
+- Public reads delegate to `storage.read(block_name, ids)` through `read(ids=None)` and to
+  `storage.block_iter(block_name, step=step)` through `block_iter(*, step=1)`.
+- Indices select zero-based stored rows. Reads and batches return independent ndarray copies.
+- Construction performs no dataset reads. Storage errors propagate through the read methods.
+- Storage lifetime belongs to the caller. Reader access is valid while the borrowed store remains open.
+- Invalid storage type -> `TypeError`; empty/non-string block name -> `ValueError`.
+
+`ExtractionContext` is a frozen, keyword-only dataclass in `feature_extractor.py`.
+
+| Field | Contract |
 | --- | --- |
-| `cpptraj` | Resolved executable |
-| `topology_file`, `trajectory_file` | Source paths |
-| `windows` | Ordered batch tuple of source windows; each window nonempty/distinct original 1-based frame IDs within source range |
-| `residue_ids`, `atom_ids` | Aligned immutable selection |
-| `subprocess_env`, `timeout` | Forwarded child environment/limit |
+| `cpptraj`, `topology_file`, `trajectory_file` | `str`/`Path` inputs snapshotted as resolved `Path` objects |
+| `selection_mask` | Nonblank CPPTRAJ mask string, preserved verbatim |
+| `residue_ids` | Nonempty topology-ordered `(molecule_id, residue_id)` pairs; positive nonboolean integers; strictly increasing topology residue IDs |
+| `atom_ids` | One nonempty, strictly increasing tuple of positive nonboolean atom IDs per residue; disjoint across residues |
+| `frame_ids` | Nonempty, strictly increasing tuple of positive nonboolean 1-based source-frame IDs for this call |
+| `windows=()` | Ordered source-frame tuples; each nonempty/strictly increasing; when present, their union equals `frame_ids`; overlaps allowed |
+| `dependencies={}` | Snapshot mapping of nonempty feature names to `DependencyReader` objects |
 
-**INV:** snapshotted/read-only context; fixed source/identities; consecutive requested-window batch slice; no omission/duplication/relabeling; identical frames across features/sample.
+**POST/INV:** nested identity/frame sequences are snapshotted as tuples; the dependency mapping is copied
+and read-only. Field reassignment raises `FrozenInstanceError`; dependency-map mutation raises `TypeError`.
+Structural value violations raise `ValueError`; non-iterable sequences and invalid path types raise
+`TypeError`. Checks remain active under `python -O`.
 
-### Window statistics
+**CALLER PRE:** source paths identify validated inputs; the mask has been resolved to the supplied complete
+residues/atoms. Dependencies are completed, validated outputs for exactly the current feature's `requires`.
+These semantic checks and resource ownership will be enforced by `.featurize()`; context construction
+validates structure and snapshots inputs without launching CPPTRAJ or opening source files.
 
-**INV:** one output/window; singleton = original frame; statistic invariant to computational batching.
+### Feature outputs
 
-| Backend capability | Required action |
-| --- | --- |
-| Matching native window statistic | Use directly; exact window/denominator; no second reduction |
-| Per-frame values | Accumulate/reduce in Python to declared statistic |
-| Neither | `ValueError`; no substitute quantity |
+`FeatureExtractor._validate_output(self, method, values, ctx) -> None`
 
-- CPPTRAJ: [trajin](https://amberhub.chpc.utah.edu/trajin/) selects frames; [pairwise](https://amberhub.chpc.utah.edu/pairwise/) EMAP/VMAP averages processed frames; [vector center](https://amberhub.chpc.utah.edu/vector/) outputs COM trajectories. No universal averaging/per-window summaries; installed-backend reference tests required.
-- Partial means: `mean = sum_b(n_b * mean_b)/sum_b(n_b)` using actual counts; other statistics require valid combination rules.
-- Persist source frames/counts/statistic/weighting/normalization; missing frames -> error, unchanged denominator policy.
-- Aggregation order fixed: generally `mean(distance(COM_r,COM_s)) != distance(mean(COM_r),mean(COM_s))`; mean H-bond count != fraction with any bond.
-- No summary substitution for required per-frame dependencies; local intermediates permitted; cross-feature reuse requires explicit interface.
-- No full-source-frame retention requirement; backend atomic-matrix memory unconstrained.
+**PRE:** discovered feature method and valid `ExtractionContext`; declarations fixed during extraction.
+Feature methods accept `(self, ctx)` and return an ndarray. Dependencies are accessed through `ctx`.
+Validation is explicit. The planned `.featurize()` calls this check before writing each output.
 
-### Features and registration
+| Kind | Scope | Required output shape |
+| --- | --- | --- |
+| Pairwise | Window | `(B, N, N)` |
+| Global | Window | `(B, *shape)` |
+| Pairwise | Trajectory | `(N, N)` |
+| Global | Trajectory | `shape` |
 
-```python
-FeatureSpec(shape, dtype, units, statistic, requires=(), validate=None)
-add_feature(self, name: str, extractor: FeatureCallable, specification: FeatureSpec) -> None
-supported_features(self) -> tuple[str, ...]
-```
+`B = len(ctx.windows) > 0` for window features. Trajectory features produce one result per call.
 
-| Field/state | INV |
-| --- | --- |
-| `shape` | Dimensions: nonnegative integers or `"N"`; `N` = selected residue count; >=1 residue axis; COM `("N",3)`; pairwise distance/energy `("N","N")` |
-| `dtype` | Explicit NumPy real numeric/bool dtype; no implicit default |
-| `units` | Nonempty string; dimensionless `"1"` |
-| `statistic` | Explicit quantity/aggregation order |
-| `requires` | Distinct, previously registered names; no missing/self dependency |
-| Declarations/contracts | Snapshot identities/specifications; expectations invariant to caller mutation |
-| Registry | Per instance; unique nonempty string names; callable extractors; valid specifications; registration order = execution/output order |
-| Extraction | Registry fixed; >=1 feature; every registered dependency also stored; no implicit/hidden features |
+**POST:** ndarray with exact declared dtype/shape; unmasked; every value finite; values unchanged;
+return `None`. Scalars use zero-dimensional ndarrays. Explicit zero-sized global dimensions are allowed.
 
-**INV:** resolved shape/dtype/units/statistic constant per feature/trajectory; all residue axes share selection order.
+**RAISES:** non-ndarray/masked array/dtype mismatch -> `TypeError`; missing windows, shape mismatch,
+or NaN/inf -> `ValueError`. Checks remain active under `python -O`.
 
-**POST:** ordered registered-name tuple; failure leaves registry unchanged; no cross-instance/class mutation.
+**Residue ordering:** both pairwise axes index `ctx.residue_ids`, including cross-molecule pairs.
+Feature implementations must validate/map backend atom/residue/frame IDs to the context before returning.
+Reference tests must detect permutations. A bare ndarray carries no identity labels, so generic validation
+checks axis sizes and cannot determine whether values were permuted. Symmetry/diagonals and physical
+units/statistics require feature-specific specifications and independent numerical tests.
 
-**RAISES `ValueError`:** duplicate names, missing/self dependencies. Proposed instance `add_feature` supersedes class-level `new_feature` stub.
+### Selection and execution — planned
 
-### Feature callable and validator
+- `.featurize(...)` accepts trajectory, topology, CPPTRAJ executable, mask, frame/window settings,
+  and destination. Require at least one discovered feature.
+- Resolve the mask to complete residues/atoms in topology order; reject empty/partial/unknown selections.
+  Every feature computes from the selected atoms. Parser public APIs remain preserved.
+- Validate source-frame bounds and requested windows independently of returned arrays. Source/identity
+  order is fixed across features; batch boundaries preserve requested windows and sample correspondence.
+- Proposed feature-major execution completes each feature before the next. Window methods process
+  batches, trajectory methods run once, and contexts expose exactly their declared completed dependencies.
+- Validate outputs before incremental `ArrayStorage` writes. Feature code owns its temporary resources.
+  Backend/parser failures abort extraction with their original error.
 
-```python
-extract_feature(context: ExtractionContext, dependencies: Mapping[str, np.ndarray]) -> np.ndarray
-validate(values: np.ndarray, dependencies: Mapping[str, np.ndarray]) -> None
-```
+### Statistics and physical features — planned
 
-**Callable PRE:** independent valid context; `set(dependencies)=set(requires)`; dependencies validated for current batch/windows/residue order and their declared statistics; borrowed/read-only, no retained mutation.
+- Each feature implements its declared statistic with a matching native CPPTRAJ summary or Python
+  reduction of per-frame values. Unsupported configurations raise `ValueError`.
+- Window granularity and computational batch size are independent; batching preserves the statistic.
+  Combine partial means with `sum(n_b * mean_b) / sum(n_b)` using actual frame counts.
+- Persist source frames/counts/statistic/weighting/normalization. Missing frames are errors.
+  Per-frame dependencies require per-frame information. Local intermediates remain feature-owned.
+- Generally `mean(distance(COM_r, COM_s)) != distance(mean(COM_r), mean(COM_s))`.
+  Mean H-bond count and the fraction of frames with any bond are distinct statistics.
+- Native behavior requires installed-CPPTRAJ reference tests. Relevant actions include
+  [trajin](https://amberhub.chpc.utah.edu/trajin/), [pairwise](https://amberhub.chpc.utah.edu/pairwise/),
+  and [vector](https://amberhub.chpc.utah.edu/vector/).
+- Initial physical methods cover COM distances and separate signed electrostatic/vdW interactions.
+  COMs are internal intermediates; hydrogen bonds are future work.
 
-**Callable POST:** `B=len(context.windows)`; ndarray `(B,*resolved_shape)`; exact dtype; finite; `result[k]=statistic(window[k])`; axes follow `context.residue_ids`. Ownership -> extractor; no later mutation, implicit conversion/padding/missing values/aggregation.
+### Archive validation and publication — planned
 
-**Validation:** generic type/shape/dtype/finiteness -> per-sample validator -> write; validator gets exact same-window dependencies; no mutation; success -> `None`.
+- Specify schema markers, dataset names, stored sample axes, and metadata before implementation.
+- Request/feature declarations independently determine expected identities, feature names, shapes,
+  dtypes, units, statistics, dependencies, source frames, windows, counts, and sample order.
+- Validate metadata/structure, then reread every stored value in bounded batches. Reject missing,
+  extra, duplicated, relabeled, or malformed outputs. Validators are application code.
+- Use `ArrayStorage.compress_and_cleanup`; publish only after completed archive validation.
+  Extraction/validation failure propagates inside the context and triggers existing cleanup behavior.
+- Keep completed outputs archive-backed and release working batches; backend working memory is
+  determined by the concrete feature implementation.
 
-**RAISES:** type/dtype -> `TypeError`; shape/nonfinite -> `ValueError`; backend/parser/custom errors propagate/abort. Callable cleans owned temporary resources.
-
-**Backend:** validate/map source frame/entity/run-local IDs; row counts insufficient; semantic identity requires independent reference tests.
-
-### Frame representation and contract
-
-```python
-FrameRepresentation(source_frame_ids, residue_ids, features)
-FrameContract(residue_ids, features)  # Mapping[str, FeatureSpec]
-FrameContract.validate(self, frame: FrameRepresentation) -> None
-```
-
-**INV:** one window/sample; source tuple labels original frames/aggregates; features -> sample arrays; units/statistics in contract; expectations from independent selection/registration, never checked arrays.
-
-**Validation POST:** source IDs nonempty/distinct/positive integers; residue tuple = expected tuple; feature names = expected set; valid shapes/dtypes/finiteness/feature predicates.
-
-**LIMIT:** position/window equality deferred to extractor/trajectory contract; borrowed slices permitted; frozen records do not imply immutable/correct arrays. No mutation between validation/write; post-caller-mutation validity unspecified.
-
-### Trajectory contract
-
-```python
-TrajectoryContract(windows, frame_contract)
-TrajectoryContract.validate(self, storage: ArrayStorage, *, batch_size: int = 1) -> None
-```
-
-**Representation:** `ArrayStorage` arrays/metadata; no full-RAM class.
-
-**PRE:** nonempty windows, source-frame bounds validated before extraction; positive integer validation batch size.
-
-**Validation POST:**
-
-- Stored windows/counts/order = request; no missing/extra/duplicated/relabeled samples.
-- Stored residue identities and feature names/shapes/dtypes/units/statistics/dependencies = contract.
-- Every feature block shape `(S,*resolved_shape)`, `S=len(windows)`; equal channel lengths.
-- Every stored sample satisfies frame/dependency predicates; metadata/structure before values; bounded reads; return `None`; mismatch raises.
-- Validators: application code only; no archive-directed execution/imports.
-
-### Extraction lifecycle
-
-1. Validate registration, windows, selection; construct independent contracts.
-2. Enter `ArrayStorage.compress_and_cleanup`; execute window batches/features in order.
-3. Validate sample/window/frame contracts; append values and aligned identity/unit metadata incrementally.
-4. Validate completed stored trajectory in bounded reads, including actual stored values.
-5. Normal context exit -> publish; extraction/validation failure -> raise inside context, skip publication, attempt cleanup.
-
-**Memory:** release completed batches/dependencies; batch size controls working data, windows/statistics aggregation.
-
-### Unresolved V2 specifications
-
-- Window construction, stride, overlap, final partial-window policy.
-- Exact archive dataset/metadata keys and schema markers before trajectory-validator implementation.
-- Built-in units/dtypes, tolerances, physical energy definitions/diagonals, missing-value policy.
-- COM imaging/unwrapping and batch-boundary state; distance = Euclidean per-frame COM distance under agreed V1 coordinate processing, with explicit window aggregation order.
-- Separate signed electrostatic/vdW features. Hydrogen-bond definitions/extraction: future work.
+**Unresolved:** trajectory scope vs selected frames; window stride/overlap/partial-window policy;
+distance-mask reference/membership; exact archive layout/schema; concrete physical units/dtypes/tolerances,
+energy definitions/diagonals, COM imaging/unwrapping and batch-boundary state; subprocess environment/timeout.
 
 ## Verification obligations and limits
 
@@ -455,6 +449,7 @@ TrajectoryContract.validate(self, storage: ArrayStorage, *, batch_size: int = 1)
 | `test_rin.py` | Script composition/rendering; mask IDs/order/duplicates/errors; executable priority/dedup/timeout/bypass/exhaustion; subprocess forwarding/termination/errors; finite pairwise output; channels/metadata/frame selection/partial COM means/atom sums/normalization floor |
 | `test_sawnergy_util.py` | Empty/nonempty batching/ranges/wrappers; sequential/thread ordering/completion/arguments/errors/defaults; environment isolation; files/temporary ownership; composition/sharing/failures; clocks/process helpers |
 | Walk/embedding/visual suites | Every node/frame transition; ordered paths/counts/IDs/empty channels/time-aware layout; embedding values/seeds/warm starts; plotting data flow; real empty/populated/cleared edge rendering |
-| Required V2 tests before implementation | Instance isolation; failed-registration state; dependencies; window/batch identity; frame/trajectory mismatches; validation blocks publication; independent physical references; native/Python reduction equivalence; unequal partial counts; unsupported statistics/summary dependencies |
+| `tests/v2/` | Decorator declarations/identity; discovery/order/overrides/dependencies; frozen context/IDs/snapshots; local/ZIP dependency reads; scope-dependent output shapes/dtypes/finiteness/masks; optimized validation |
+| Remaining V2 tests | Backend identity/order alignment; window/batch correspondence; validation blocks publication; independent physical references; native/Python reduction equivalence; unequal partial counts; unsupported statistics/summary dependencies; full archive validation |
 
 **LIMITS:** coverage incomplete; CPPTRAJ/shared-memory pipelines mocked; most GUI setup replaced; real renderer test retained. No native-extraction/process-worker, biological, power-loss, or guaranteed-cleanup proof. Local Torch validation unavailable with missing `libtorch_cpu.dylib`; stub archives do not validate Torch. Optimized storage-stub tests do not resolve Zarr 3.1.2's real-reopening failure.

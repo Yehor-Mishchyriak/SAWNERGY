@@ -28,54 +28,39 @@
 
 *V2 work:*
 
-- [x] Create `src/sawnergy/v2/` directory, therein will be:
-    - `traj_features/`
-        - `feature_extractor.py`
-        - `reprs.py`
-- [x] Include package `__init__.py` files and update `.gitignore` to include the new source and test directories.
+Keep correctness and conciseness equally important. Specify contracts, write targeted tests, then implement
+the smallest clear change. Reuse existing helpers and keep essential validation active under `python -O`.
 
-### Feature extractor plan
+### Implemented
 
-1. **Subclass `FeatureExtractor`.** Mark feature methods with a global `@feature(...)` decorator;
-   it records metadata, without a global feature registry or instance `.add_feature` API.
-2. **Declare each feature's contract.** Include kind (`pairwise` or `global`), scope (`window` or
-   `trajectory`), shape, dtype, units, statistic, and dependencies. All four kind/scope combinations
-   are allowed. Pairwise outputs describe every selected residue pair, including cross-molecule pairs.
-   Global outputs describe the selected system. COMs are not an initial output feature.
-3. **Call `.featurize(...)`.** Supply trajectory, topology, CPPTRAJ executable path, selection mask,
-   frame/window settings, and archive destination. The base class handles validation and archive creation.
-4. **Resolve the mask.** Select complete residues across any number of molecules. Reject empty or
-   partial-residue selections. Use topology residue order for every feature and save the identity mapping.
-   All features compute using only the selected atoms, including global features.
-5. **Run decorated methods in declaration order.** Each receives an explicit `ctx` containing input paths,
-   selection, relevant frames/windows, and declared dependencies. Dependencies must appear earlier.
-   Inherited features run first; decorated overrides retain their position and new features append.
-6. **Validate and store results.** Methods return ndarrays. Window methods process batches; trajectory
-   methods return one result. Validate results against their contracts, write incrementally with
-   `ArrayStorage`, validate the completed archive, then compress and clean up.
+- [x] V2 source/test packages and `.gitignore` entries.
+- [x] Subclass-based `FeatureExtractor` with metadata-only `@feature`.
+- [x] Ordered discovery, inherited features, and decorated/undecorated overrides.
+- [x] Explicit `requires=()` with earlier-dependency validation after inheritance.
+- [x] Frozen `ExtractionContext` and read-only `DependencyReader` using `ArrayStorage`.
 
-Each feature implements its own statistic: use a matching CPPTRAJ summary, otherwise reduce per-frame
-values in Python, otherwise reject the configuration. The base class does not average automatically.
-Batch size is separate from window size. Preserve source-frame/window correspondence and keep physical
-channels separate; V1 `build_rin` combines/transforms interactions and is not a V2 feature extractor.
+### Remaining implementation order
 
-**Proposed execution:** finish a feature over all selected frames before starting the next. This lets
-trajectory features depend on completed window features. Read dependencies from storage in slices/batches
-so the full trajectory's outputs need not fit in RAM.
+1. [x] **Feature output contracts.** Require shape, dtype, units, and statistic in `@feature`.
+   Validate ndarray outputs, scope-dependent shapes, exact dtype, and finite/unmasked values.
+   Feature implementations must align backend residue IDs with `ctx.residue_ids`, verified by tests.
+   Replace the older specification sections with the current subclass-based contracts.
+2. [ ] **Input preparation.** Validate trajectory/topology/CPPTRAJ, resolve masks to complete residues and
+   atoms in topology order, and construct frames/windows/batches. Settle distance-mask membership,
+   trajectory scope, and partial-window handling. All computation uses the selected atoms.
+3. [ ] **V2 archive format.** Specify schema markers, feature blocks, residue/atom identities,
+   frame/window metadata, and feature declarations.
+4. [ ] **`.featurize()`.** Accept sources, CPPTRAJ path, mask, frame/window settings, and destination.
+   Prepare contexts, run features in declaration order, expose completed dependencies, validate/write
+   incrementally, validate the finished archive, then compress and clean up through `ArrayStorage`.
+   Proposed execution completes each feature before starting the next, supporting trajectory features
+   that consume window outputs through archive readers.
+5. [ ] **Concrete feature methods.** Implement distances, separate signed electrostatic interactions,
+   and vdW interactions after specifying their physical definitions, units, and reduction rules.
+   COMs may be internal intermediates. Hydrogen bonds remain future work.
+6. [ ] **Integration and numerical verification.** Check independent CPPTRAJ references, batching
+   consistency, archive round trips, and failure cleanup. Run the relevant tests at every step.
 
-**Still to confirm:** archive-backed dependency access; whether trajectory scope means the frames selected
-by range/stride; and how distance-based masks establish fixed residue membership.
-
-### Implementation order
-
-- [ ] Finalize contracts in `docs/specifications.md`, replacing the earlier instance-registration design.
-    Specify feature meanings, units, shapes, identities/order, frame/window selection, missing values,
-    and archive metadata/layout.
-- [ ] Write targeted contract tests in `tests/v2/` before implementation.
-- [ ] Implement the decorator, context, and base `.featurize` with `icontract` conditions/invariants.
-    Keep essential input/archive validation active under `python -O`.
-- [ ] Reuse suitable `rin_util.py` and `sawnergy_util.py` helpers without changing V1 public APIs.
-    Use `reprs.py` only if shared representation/validation code is needed.
-- [ ] Complete incremental archive writing and failure cleanup; run the relevant tests.
-
-Representation learning is outside the current scope.
+Each feature implements its declared statistic using a matching CPPTRAJ summary or Python reduction,
+rejecting unsupported configurations. Window granularity is independent of computational batch size.
+Kind (`pairwise`/`global`) and scope (`window`/`trajectory`) are independent. Use `reprs.py` only if needed.
