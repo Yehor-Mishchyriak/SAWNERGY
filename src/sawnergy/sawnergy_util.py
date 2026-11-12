@@ -614,7 +614,11 @@ class ArrayStorage:
                     )
 
                     dst.attrs.update(_attrs_dict(src.attrs))
-                    dst[...] = src[...]
+                    chunk_grid = tuple((size + chunk - 1) // chunk for size, chunk in zip(src.shape, src.chunks))
+                    for index in np.ndindex(chunk_grid):
+                        selection = tuple(slice(i * chunk, min((i + 1) * chunk, size))
+                                          for i, chunk, size in zip(index, src.chunks, src.shape))
+                        dst[selection] = src[selection]
                     copied += 1
                     _logger.debug("Compressed array '%s' shape=%s dtype=%s", key, src.shape, src.dtype)
 

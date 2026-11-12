@@ -252,9 +252,12 @@
 
 ### `compress(into=None, *, compression_level)`
 
-- PRE (local): open store, writable destination, `int(level) ∈ [0,9]`; immediate arrays; copy memory = full source array.
+- PRE (local): open store, writable destination, `int(level) ∈ [0,9]`; immediate arrays.
 - Destination: `None` -> source `.zip`; explicit case-insensitive `.zip` -> file; otherwise directory/source ZIP name. Create explicit parents.
 - POST: preserve common round-trip fields; Blosc Zstd/shuffle at level (`0` still Blosc); return path string; source usable.
+- Copy one chunk-aligned multidimensional slice at a time, interleaving source reads and destination writes.
+  Scalars copy once; zero-sized arrays retain metadata without data reads. Working data is bounded by one
+  source chunk plus codec buffers. Each destination data chunk is written once.
 - Publication: temporary sibling ZIP -> copy -> successful close -> atomic replacement. Existing destinations replaced on success only.
 - Pre-replacement failure: preserve destination bytes/absence; propagate creation/copy/close/replace/conversion errors; invalid range -> `ValueError`; attempt unlink even on interruption; ordinary removal errors logged, original preserved.
 - ZIP source: return existing path; ignore destination/level, no validation/copy.

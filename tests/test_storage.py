@@ -589,6 +589,50 @@ def test_compress_publishes_complete_archive(tmp_path, monkeypatch, destination,
         assert archive.list_blocks() == ["BLOCK", "OTHER"]
 
 
+@pytest.mark.parametrize("shape,chunks", [((5, 4, 3), (2, 3, 2)), ((), ()),
+                                         ((0, 4), (2, 2)), ((3, 0), (2, 1))])
+def test_compress_streams_each_chunk_once(tmp_path, monkeypatch, shape, chunks):
+    import zipfile
+
+    data = (np.arange(np.prod(shape, dtype=int), dtype=np.float32) + 1).reshape(shape)
+    events = []
+    getitem = sawnergy_util.zarr.Array.__getitem__
+    setitem = sawnergy_util.zarr.Array.__setitem__
+    with sawnergy_util.ArrayStorage(tmp_path / "source", "w") as storage:
+        source_store = storage.store
+        storage.root.create_array("BLOCK", data=data, chunks=chunks)
+
+        def read(self, selection):
+            if self.store is source_store and self.path == "BLOCK":
+                assert isinstance(selection, tuple)
+                assert len(selection) == len(shape)
+                assert all(isinstance(index, slice) and index.start % chunk == 0
+                           and index.stop - index.start <= chunk for index, chunk in zip(selection, chunks))
+                assert len(events) % 2 == 0
+                events.append("read")
+            return getitem(self, selection)
+
+        def write(self, selection, values):
+            if isinstance(self.store, sawnergy_util.ZipStore) and self.path == "BLOCK":
+                assert len(events) % 2 == 1
+                assert np.asarray(values).nbytes <= np.prod(chunks, dtype=int) * data.dtype.itemsize
+                events.append("write")
+            return setitem(self, selection, values)
+
+        monkeypatch.setattr(sawnergy_util.zarr.Array, "__getitem__", read)
+        monkeypatch.setattr(sawnergy_util.zarr.Array, "__setitem__", write)
+        archive = storage.compress(tmp_path / "archive.zip", compression_level=0)
+    expected_chunks = int(np.prod([(size + chunk - 1) // chunk for size, chunk in zip(shape, chunks)]))
+    assert events == ["read", "write"] * expected_chunks
+    with zipfile.ZipFile(archive) as zipped:
+        names = [entry.filename for entry in zipped.infolist()
+                 if "/c/" in entry.filename or entry.filename.endswith("/c")]
+        assert len(names) == len(set(names)) == expected_chunks
+    with sawnergy_util.ArrayStorage(archive, "r") as storage:
+        actual = storage.root["BLOCK"][()] if shape == () else storage.read("BLOCK")
+        np.testing.assert_array_equal(actual, data)
+
+
 @pytest.mark.parametrize("existing_output", [False, True])
 @pytest.mark.parametrize("stage,error_type", [
     ("temporary file", OSError), ("metadata", OSError), ("copy", OSError),
